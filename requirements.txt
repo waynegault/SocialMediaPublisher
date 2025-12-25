@@ -1,5 +1,11 @@
-google-generativeai
-python-dotenv
-requests
-schedule
-Pillow
+# Google AI SDK for Gemini and Imagen
+google-generativeai>=0.8.0
+
+# Environment variable management
+python-dotenv>=1.0.0
+
+# HTTP requests for LinkedIn API
+requests>=2.31.0
+
+# Image processing
+Pillow>=10.0.0
