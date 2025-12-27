@@ -5,7 +5,7 @@ import time
 import logging
 from pathlib import Path
 
-import google.generativeai as genai
+from google import genai
 
 from config import Config
 from database import Database, Story
@@ -16,17 +16,11 @@ logger = logging.getLogger(__name__)
 class ImageGenerator:
     """Generate images for stories using Google's Imagen model."""
 
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, client: genai.Client):
         """Initialize the image generator."""
         self.db = database
-        self._configure_genai()
+        self.client = client
         self._ensure_image_directory()
-
-    def _configure_genai(self) -> None:
-        """Configure the Gemini API."""
-        if not Config.GEMINI_API_KEY:
-            raise ValueError("GEMINI_API_KEY is not configured")
-        genai.configure(api_key=Config.GEMINI_API_KEY)  # type: ignore[attr-defined]
 
     def _ensure_image_directory(self) -> None:
         """Ensure the image directory exists."""
@@ -70,18 +64,18 @@ class ImageGenerator:
 
         try:
             # Use Imagen model for image generation
-            # Note: The exact API may vary based on the google-generativeai version
-            image_model = genai.ImageGenerationModel(Config.MODEL_IMAGE)  # type: ignore[attr-defined]
-
-            result = image_model.generate_images(
+            response = self.client.models.generate_images(
+                model=Config.MODEL_IMAGE,
                 prompt=prompt,
-                number_of_images=1,
-                safety_filter_level="block_only_high",
-                person_generation="allow_adult",
-                aspect_ratio="16:9",  # Good for social media
+                config={
+                    "number_of_images": 1,
+                    "safety_filter_level": "block_only_high",
+                    "person_generation": "allow_adult",
+                    "aspect_ratio": "16:9",
+                },
             )
 
-            if not result.images:
+            if not response.generated_images:
                 logger.warning(f"No image generated for story {story.id}")
                 return None
 
@@ -89,15 +83,14 @@ class ImageGenerator:
             filename = f"story_{story.id}_{int(time.time())}.png"
             filepath = os.path.join(Config.IMAGE_DIR, filename)
 
-            result.images[0].save(filepath)
+            response.generated_images[0].image.save(filepath)
             logger.debug(f"Saved image to {filepath}")
 
             return filepath
 
-        except AttributeError:
-            # Fallback for different API versions
-            return self._generate_image_fallback(story, prompt)
         except Exception as e:
+            logger.error(f"Image generation error for story {story.id}: {e}")
+            return None
             logger.error(f"Image generation error: {e}")
             return None
 

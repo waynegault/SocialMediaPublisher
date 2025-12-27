@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-import google.generativeai as genai
+from google import genai
 from PIL import Image
 
 from config import Config
@@ -15,18 +15,10 @@ logger = logging.getLogger(__name__)
 class ContentVerifier:
     """Verify content quality and appropriateness before publishing."""
 
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, client: genai.Client):
         """Initialize the content verifier."""
         self.db = database
-        self._configure_genai()
-
-    def _configure_genai(self) -> None:
-        """Configure the Gemini API."""
-        if not Config.GEMINI_API_KEY:
-            raise ValueError("GEMINI_API_KEY is not configured")
-        genai.configure(api_key=Config.GEMINI_API_KEY)  # type: ignore[attr-defined]
-        # Use a potentially different model for verification
-        self.model = genai.GenerativeModel(Config.MODEL_VERIFICATION)  # type: ignore[attr-defined]
+        self.client = client
 
     def verify_pending_content(self) -> tuple[int, int]:
         """
@@ -91,7 +83,10 @@ class ContentVerifier:
         try:
             image = Image.open(str(story.image_path))
 
-            response = self.model.generate_content([prompt, image])
+            response = self.client.models.generate_content(
+                model=Config.MODEL_VERIFICATION,
+                contents=[prompt, image]
+            )
             return self._parse_verification_response(response.text)
 
         except Exception as e:
@@ -100,7 +95,10 @@ class ContentVerifier:
 
     def _verify_text_only(self, prompt: str) -> bool:
         """Verify story content without image."""
-        response = self.model.generate_content(prompt)
+        response = self.client.models.generate_content(
+            model=Config.MODEL_VERIFICATION,
+            contents=prompt
+        )
         return self._parse_verification_response(response.text)
 
     def _build_verification_prompt(self, story: Story) -> str:

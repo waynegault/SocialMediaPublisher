@@ -1,5 +1,5 @@
 # Google AI SDK for Gemini and Imagen
-google-generativeai>=0.8.0
+google-genai>=1.0.0
 
 # Environment variable management
 python-dotenv>=1.0.0
