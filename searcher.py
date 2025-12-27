@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 
-from google import genai
+from google import genai  # type: ignore
 
 from config import Config
 from database import Database, Story

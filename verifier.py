@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from google import genai
+from google import genai  # type: ignore
 from PIL import Image
 
 from config import Config
@@ -84,8 +84,7 @@ class ContentVerifier:
             image = Image.open(str(story.image_path))
 
             response = self.client.models.generate_content(
-                model=Config.MODEL_VERIFICATION,
-                contents=[prompt, image]
+                model=Config.MODEL_VERIFICATION, contents=[prompt, image]
             )
             return self._parse_verification_response(response.text)
 
@@ -96,8 +95,7 @@ class ContentVerifier:
     def _verify_text_only(self, prompt: str) -> bool:
         """Verify story content without image."""
         response = self.client.models.generate_content(
-            model=Config.MODEL_VERIFICATION,
-            contents=prompt
+            model=Config.MODEL_VERIFICATION, contents=prompt
         )
         return self._parse_verification_response(response.text)
 
