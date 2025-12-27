@@ -9,6 +9,8 @@ import logging
 import argparse
 from datetime import datetime, timedelta
 
+from google import genai
+
 from config import Config
 from database import Database
 from searcher import StorySearcher
@@ -39,10 +41,15 @@ class ContentEngine:
         # Initialize database
         self.db = Database()
 
+        # Initialize GenAI client
+        if not Config.GEMINI_API_KEY:
+            raise ValueError("GEMINI_API_KEY is not configured")
+        self.genai_client = genai.Client(api_key=Config.GEMINI_API_KEY)
+
         # Initialize components
-        self.searcher = StorySearcher(self.db)
-        self.image_generator = ImageGenerator(self.db)
-        self.verifier = ContentVerifier(self.db)
+        self.searcher = StorySearcher(self.db, self.genai_client)
+        self.image_generator = ImageGenerator(self.db, self.genai_client)
+        self.verifier = ContentVerifier(self.db, self.genai_client)
         self.scheduler = Scheduler(self.db)
         self.publisher = LinkedInPublisher(self.db)
 

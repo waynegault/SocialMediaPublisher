@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 
-import google.generativeai as genai
+from google import genai
 
 from config import Config
 from database import Database, Story
@@ -15,17 +15,10 @@ logger = logging.getLogger(__name__)
 class StorySearcher:
     """Search for and process news stories using Gemini AI."""
 
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, client: genai.Client):
         """Initialize the story searcher."""
         self.db = database
-        self._configure_genai()
-
-    def _configure_genai(self) -> None:
-        """Configure the Gemini API."""
-        if not Config.GEMINI_API_KEY:
-            raise ValueError("GEMINI_API_KEY is not configured")
-        genai.configure(api_key=Config.GEMINI_API_KEY)  # type: ignore[attr-defined]
-        self.model = genai.GenerativeModel(Config.MODEL_TEXT)  # type: ignore[attr-defined]
+        self.client = client
 
     def get_search_start_date(self) -> datetime:
         """
@@ -60,10 +53,13 @@ class StorySearcher:
 
         try:
             # Use Gemini with Google Search grounding
-            response = self.model.generate_content(
-                prompt,
-                tools="google_search_retrieval",
-                generation_config={"response_mime_type": "application/json"},
+            response = self.client.models.generate_content(
+                model=Config.MODEL_TEXT,
+                contents=prompt,
+                config={
+                    "tools": [{"google_search": {}}],
+                    "response_mime_type": "application/json",
+                },
             )
 
             stories_data = self._parse_response(response.text)
