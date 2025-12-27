@@ -99,12 +99,20 @@ Copy `.env.example` to `.env` and configure the following:
 
 ## Usage
 
-### Continuous Mode (Default)
+### Interactive Menu (Default)
+
+Run the application with an interactive menu for testing and manual operations:
+
+```bash
+python main.py
+```
+
+### Continuous Mode
 
 Run the application continuously, checking for due publications every minute:
 
 ```bash
-python main.py
+python main.py --continuous
 ```
 
 ### Single Cycle
