@@ -1,17 +1,26 @@
 # Social Media Publisher
 
-An automated Python application that discovers news stories, generates AI images, verifies content quality, and publishes to LinkedIn on a configurable schedule.
+An automated Python application that discovers news stories, generates AI images,
+verifies content quality, and publishes to LinkedIn on a configurable schedule.
 
 ## Features
 
-- **Automated Story Discovery**: Searches the internet for news stories matching your criteria using Google's Gemini AI with Search grounding
-- **Smart Deduplication**: Groups multiple sources covering the same story together
-- **Quality Scoring**: Rates stories 1-10 based on relevance, significance, and source credibility
-- **AI Image Generation**: Creates professional illustrations for each story using Google's Imagen model
-- **Content Verification**: Uses a separate AI pass to verify professionalism, decency, and adherence to your criteria
-- **Smart Scheduling**: Publishes stories spread evenly across your preferred hours with configurable jitter
-- **LinkedIn Integration**: Posts stories with images, source links, and your signature block
-- **Automatic Cleanup**: Removes old unused stories after a configurable exclusion period
+- **Automated Story Discovery**: Searches the internet for news stories matching
+  your criteria using Google's Gemini AI with Search grounding
+- **Smart Deduplication**: Groups multiple sources covering the same story
+  together
+- **Quality Scoring**: Rates stories 1-10 based on relevance, significance, and
+  source credibility
+- **AI Image Generation**: Creates professional illustrations for each story
+  using Google's Imagen model
+- **Content Verification**: Uses a separate AI pass to verify professionalism,
+  decency, and adherence to your criteria
+- **Smart Scheduling**: Publishes stories spread evenly across your preferred
+  hours with configurable jitter
+- **LinkedIn Integration**: Posts stories with images, source links, and your
+  signature block
+- **Automatic Cleanup**: Removes old unused stories after a configurable
+  exclusion period
 
 ## How It Works
 
@@ -25,23 +34,27 @@ An automated Python application that discovers news stories, generates AI images
 ## Installation
 
 1. Clone the repository:
+
    ```bash
    git clone https://github.com/waynegault/SocialMediaPublisher.git
    cd SocialMediaPublisher
    ```
 
 2. Create a virtual environment:
+
    ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
 3. Install dependencies:
+
    ```bash
    pip install -r requirements.txt
    ```
 
 4. Set up environment variables:
+
    ```bash
    cp .env.example .env
    # Edit .env with your API keys and configuration
@@ -53,49 +66,49 @@ Copy `.env.example` to `.env` and configure the following:
 
 ### Required API Keys
 
-| Variable | Description |
-|----------|-------------|
-| `GEMINI_API_KEY` | Google AI API key from [AI Studio](https://aistudio.google.com/) |
+| Variable                | Description                                                   |
+| ----------------------- | ------------------------------------------------------------- |
+| `GEMINI_API_KEY`        | Google AI API key from [AI Studio](https://aistudio.google.com/) |
 | `LINKEDIN_ACCESS_TOKEN` | OAuth token from [LinkedIn Developer](https://developer.linkedin.com/) |
-| `LINKEDIN_AUTHOR_URN` | Your LinkedIn URN (e.g., `urn:li:person:ABC123`) |
+| `LINKEDIN_AUTHOR_URN`   | Your LinkedIn URN (e.g., `urn:li:person:ABC123`)              |
 
 ### Search Settings
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SEARCH_PROMPT` | - | The prompt describing what stories to search for |
-| `SEARCH_LOOKBACK_DAYS` | 7 | Days to look back when searching |
-| `USE_LAST_CHECKED_DATE` | True | Use last check time instead of lookback days |
-| `SEARCH_CYCLE_HOURS` | 24 | How often to run search cycles |
+| Variable                | Default | Description                                   |
+| ----------------------- | ------- | --------------------------------------------- |
+| `SEARCH_PROMPT`         | -       | The prompt describing what stories to search for |
+| `SEARCH_LOOKBACK_DAYS`  | 7       | Days to look back when searching              |
+| `USE_LAST_CHECKED_DATE` | True    | Use last check time instead of lookback days  |
+| `SEARCH_CYCLE_HOURS`    | 24      | How often to run search cycles                |
 
 ### Content Settings
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SUMMARY_WORD_COUNT` | 250 | Target word count for summaries |
-| `MIN_QUALITY_SCORE` | 7 | Minimum score (1-10) for publication |
+| Variable             | Default | Description                        |
+| -------------------- | ------- | ---------------------------------- |
+| `SUMMARY_WORD_COUNT` | 250     | Target word count for summaries    |
+| `MIN_QUALITY_SCORE`  | 7       | Minimum score (1-10) for publication |
 
 ### Publication Settings
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `STORIES_PER_CYCLE` | 3 | Maximum stories to publish per cycle |
-| `PUBLISH_WINDOW_HOURS` | 24 | Window to spread publications over |
-| `PUBLISH_START_HOUR` | 8 | Earliest hour to publish (0-23) |
-| `PUBLISH_END_HOUR` | 20 | Latest hour to publish (0-23) |
-| `JITTER_MINUTES` | 30 | Random variance in publish time (+/-) |
+| Variable               | Default | Description                        |
+| ---------------------- | ------- | ---------------------------------- |
+| `STORIES_PER_CYCLE`    | 3       | Maximum stories to publish per cycle |
+| `PUBLISH_WINDOW_HOURS` | 24      | Window to spread publications over |
+| `PUBLISH_START_HOUR`   | 8       | Earliest hour to publish (0-23)    |
+| `PUBLISH_END_HOUR`     | 20      | Latest hour to publish (0-23)      |
+| `JITTER_MINUTES`       | 30      | Random variance in publish time (+/-) |
 
 ### Cleanup Settings
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `EXCLUSION_PERIOD_DAYS` | 30 | Days before unused stories are deleted |
+| Variable                | Default | Description                             |
+| ----------------------- | ------- | --------------------------------------- |
+| `EXCLUSION_PERIOD_DAYS` | 30      | Days before unused stories are deleted |
 
 ### Signature Block
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SIGNATURE_BLOCK` | - | Text/hashtags appended to each post |
+| Variable          | Default | Description                        |
+| ----------------- | ------- | ---------------------------------- |
+| `SIGNATURE_BLOCK` | -       | Text/hashtags appended to each post |
 
 ## Usage
 
@@ -149,7 +162,7 @@ python main.py --config
 
 ## Project Structure
 
-```
+```text
 SocialMediaPublisher/
 ├── main.py              # Main entry point and orchestration
 ├── config.py            # Configuration management
@@ -196,6 +209,7 @@ Stories are stored in SQLite with the following fields:
 ### Verification Process
 
 Before publication, a separate AI review checks:
+
 - Adherence to original search criteria
 - Professional tone
 - Appropriateness for all audiences
@@ -204,6 +218,7 @@ Before publication, a separate AI review checks:
 ### Scheduling Logic
 
 Stories are scheduled to:
+
 - Only publish between `PUBLISH_START_HOUR` and `PUBLISH_END_HOUR`
 - Spread evenly across the `PUBLISH_WINDOW_HOURS`
 - Have random jitter of +/- `JITTER_MINUTES`
@@ -211,21 +226,25 @@ Stories are scheduled to:
 ### Backfill Behavior
 
 If fewer than `STORIES_PER_CYCLE` new stories are found:
+
 - Previously approved but unpublished stories are used to fill the gap
 - Stories are always selected by quality score (highest first)
 
 ## Troubleshooting
 
 ### No stories found
+
 - Check your `SEARCH_PROMPT` is specific but not too narrow
 - Verify `SEARCH_LOOKBACK_DAYS` covers recent news
 - Ensure your Gemini API key has search grounding enabled
 
 ### Images not generating
+
 - Verify your API key has Imagen access
 - Check `MIN_QUALITY_SCORE` isn't too high
 
 ### LinkedIn posting fails
+
 - Verify `LINKEDIN_ACCESS_TOKEN` is valid and not expired
 - Check `LINKEDIN_AUTHOR_URN` format
 - Ensure token has `w_member_social` permission
