@@ -583,6 +583,11 @@ def main():
         action="store_true",
         help="Run interactive debug menu",
     )
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Run in continuous mode (scheduler)",
+    )
 
     args = parser.parse_args()
 
@@ -617,8 +622,12 @@ def main():
         engine.run_once()
         return 0
 
-    # Default: run continuously
-    engine.run_continuous()
+    if args.continuous:
+        engine.run_continuous()
+        return 0
+
+    # Default: run interactive menu
+    interactive_menu(engine)
     return 0
 
 
