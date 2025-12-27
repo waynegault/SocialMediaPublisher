@@ -5,7 +5,7 @@ import time
 import logging
 from pathlib import Path
 
-from google import genai
+from google import genai  # type: ignore
 
 from config import Config
 from database import Database, Story

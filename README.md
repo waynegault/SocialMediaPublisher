@@ -66,49 +66,49 @@ Copy `.env.example` to `.env` and configure the following:
 
 ### Required API Keys
 
-| Variable                | Description                                                   |
-| ----------------------- | ------------------------------------------------------------- |
-| `GEMINI_API_KEY`        | Google AI API key from [AI Studio](https://aistudio.google.com/) |
+| Variable | Description |
+| :--- | :--- |
+| `GEMINI_API_KEY` | Google AI API key from [AI Studio](https://aistudio.google.com/) |
 | `LINKEDIN_ACCESS_TOKEN` | OAuth token from [LinkedIn Developer](https://developer.linkedin.com/) |
-| `LINKEDIN_AUTHOR_URN`   | Your LinkedIn URN (e.g., `urn:li:person:ABC123`)              |
+| `LINKEDIN_AUTHOR_URN` | Your LinkedIn URN (e.g., `urn:li:person:ABC123`) |
 
 ### Search Settings
 
-| Variable                | Default | Description                                   |
-| ----------------------- | ------- | --------------------------------------------- |
-| `SEARCH_PROMPT`         | -       | The prompt describing what stories to search for |
-| `SEARCH_LOOKBACK_DAYS`  | 7       | Days to look back when searching              |
-| `USE_LAST_CHECKED_DATE` | True    | Use last check time instead of lookback days  |
-| `SEARCH_CYCLE_HOURS`    | 24      | How often to run search cycles                |
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `SEARCH_PROMPT` | - | The prompt describing what stories to search for |
+| `SEARCH_LOOKBACK_DAYS` | 7 | Days to look back when searching |
+| `USE_LAST_CHECKED_DATE` | True | Use last check time instead of lookback |
+| `SEARCH_CYCLE_HOURS` | 24 | How often to run search cycles |
 
 ### Content Settings
 
-| Variable             | Default | Description                        |
-| -------------------- | ------- | ---------------------------------- |
-| `SUMMARY_WORD_COUNT` | 250     | Target word count for summaries    |
-| `MIN_QUALITY_SCORE`  | 7       | Minimum score (1-10) for publication |
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `SUMMARY_WORD_COUNT` | 250 | Target word count for summaries |
+| `MIN_QUALITY_SCORE` | 7 | Minimum score (1-10) for publication |
 
 ### Publication Settings
 
-| Variable               | Default | Description                        |
-| ---------------------- | ------- | ---------------------------------- |
-| `STORIES_PER_CYCLE`    | 3       | Maximum stories to publish per cycle |
-| `PUBLISH_WINDOW_HOURS` | 24      | Window to spread publications over |
-| `PUBLISH_START_HOUR`   | 8       | Earliest hour to publish (0-23)    |
-| `PUBLISH_END_HOUR`     | 20      | Latest hour to publish (0-23)      |
-| `JITTER_MINUTES`       | 30      | Random variance in publish time (+/-) |
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `STORIES_PER_CYCLE` | 3 | Maximum stories to publish per cycle |
+| `PUBLISH_WINDOW_HOURS` | 24 | Window to spread publications over |
+| `PUBLISH_START_HOUR` | 8 | Earliest hour to publish (0-23) |
+| `PUBLISH_END_HOUR` | 20 | Latest hour to publish (0-23) |
+| `JITTER_MINUTES` | 30 | Random variance in publish time (+/-) |
 
 ### Cleanup Settings
 
-| Variable                | Default | Description                             |
-| ----------------------- | ------- | --------------------------------------- |
-| `EXCLUSION_PERIOD_DAYS` | 30      | Days before unused stories are deleted |
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `EXCLUSION_PERIOD_DAYS` | 30 | Days before unused stories are deleted |
 
 ### Signature Block
 
-| Variable          | Default | Description                        |
-| ----------------- | ------- | ---------------------------------- |
-| `SIGNATURE_BLOCK` | -       | Text/hashtags appended to each post |
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `SIGNATURE_BLOCK` | - | Text/hashtags appended to each post |
 
 ## Usage
 
