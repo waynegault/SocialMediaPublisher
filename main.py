@@ -215,6 +215,344 @@ class ContentEngine:
         print("=" * 60 + "\n")
 
 
+def interactive_menu(engine: ContentEngine) -> None:
+    """Run interactive CLI menu for component testing."""
+    while True:
+        print("\n" + "=" * 60)
+        print("Social Media Publisher - Debug Menu")
+        print("=" * 60)
+        print("\n  Component Testing:")
+        print("    1. Test Story Search")
+        print("    2. Test Image Generation")
+        print("    3. Test Content Verification")
+        print("    4. Test Scheduling")
+        print("    5. Test LinkedIn Connection")
+        print("    6. Test LinkedIn Publish (due stories)")
+        print("\n  Database Operations:")
+        print("    7. View Database Statistics")
+        print("    8. List All Stories")
+        print("    9. List Pending Stories")
+        print("   10. List Scheduled Stories")
+        print("   11. Cleanup Old Stories")
+        print("\n  Configuration:")
+        print("   12. Show Configuration")
+        print("   13. Show Full Status")
+        print("\n  Pipeline:")
+        print("   14. Run Full Search Cycle")
+        print("\n   0. Exit")
+        print("=" * 60)
+
+        try:
+            choice = input("\nEnter choice: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nExiting...")
+            break
+
+        if choice == "0":
+            print("Exiting...")
+            break
+        elif choice == "1":
+            _test_search(engine)
+        elif choice == "2":
+            _test_image_generation(engine)
+        elif choice == "3":
+            _test_verification(engine)
+        elif choice == "4":
+            _test_scheduling(engine)
+        elif choice == "5":
+            _test_linkedin_connection(engine)
+        elif choice == "6":
+            _test_linkedin_publish(engine)
+        elif choice == "7":
+            _show_database_stats(engine)
+        elif choice == "8":
+            _list_all_stories(engine)
+        elif choice == "9":
+            _list_pending_stories(engine)
+        elif choice == "10":
+            _list_scheduled_stories(engine)
+        elif choice == "11":
+            _cleanup_old_stories(engine)
+        elif choice == "12":
+            Config.print_config()
+        elif choice == "13":
+            engine.status()
+        elif choice == "14":
+            _run_full_cycle(engine)
+        else:
+            print("Invalid choice. Please try again.")
+
+        input("\nPress Enter to continue...")
+
+
+def _test_search(engine: ContentEngine) -> None:
+    """Test the story search component."""
+    print("\n--- Testing Story Search ---")
+    print(f"Search prompt: {Config.SEARCH_PROMPT[:80]}...")
+    print(f"Lookback days: {Config.SEARCH_LOOKBACK_DAYS}")
+    print(f"Use last checked date: {Config.USE_LAST_CHECKED_DATE}")
+
+    confirm = input("\nProceed with search? (y/n): ").strip().lower()
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    try:
+        start_date = engine.searcher.get_search_start_date()
+        print(f"Searching for stories since: {start_date}")
+
+        new_count = engine.searcher.search_and_process()
+        print(f"\nResult: Found and saved {new_count} new stories")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Search test failed")
+
+
+def _test_image_generation(engine: ContentEngine) -> None:
+    """Test the image generation component."""
+    print("\n--- Testing Image Generation ---")
+
+    stories = engine.db.get_stories_needing_images(Config.MIN_QUALITY_SCORE)
+    print(f"Stories needing images: {len(stories)}")
+
+    if not stories:
+        print("No stories need images.")
+        return
+
+    for story in stories[:5]:  # Show first 5
+        print(f"  - [{story.id}] {story.title[:50]}... (score: {story.quality_score})")
+
+    confirm = input("\nGenerate images for these stories? (y/n): ").strip().lower()
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    try:
+        count = engine.image_generator.generate_images_for_stories()
+        print(f"\nResult: Generated {count} images")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Image generation test failed")
+
+
+def _test_verification(engine: ContentEngine) -> None:
+    """Test the content verification component."""
+    print("\n--- Testing Content Verification ---")
+
+    stories = engine.db.get_stories_needing_verification()
+    print(f"Stories pending verification: {len(stories)}")
+
+    if not stories:
+        print("No stories need verification.")
+        return
+
+    for story in stories[:5]:  # Show first 5
+        print(f"  - [{story.id}] {story.title[:50]}...")
+
+    confirm = input("\nVerify these stories? (y/n): ").strip().lower()
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    try:
+        approved, rejected = engine.verifier.verify_pending_content()
+        print(f"\nResult: {approved} approved, {rejected} rejected")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Verification test failed")
+
+
+def _test_scheduling(engine: ContentEngine) -> None:
+    """Test the scheduling component."""
+    print("\n--- Testing Scheduling ---")
+    print(f"Stories per cycle: {Config.STORIES_PER_CYCLE}")
+    print(f"Publish window: {Config.PUBLISH_WINDOW_HOURS} hours")
+    print(
+        f"Publish hours: {Config.PUBLISH_START_HOUR}:00 - {Config.PUBLISH_END_HOUR}:00"
+    )
+    print(f"Jitter: ±{Config.JITTER_MINUTES} minutes")
+
+    available = engine.db.count_unpublished_stories()
+    print(f"\nAvailable approved stories: {available}")
+
+    if available == 0:
+        print("No approved stories available to schedule.")
+        return
+
+    confirm = input("\nSchedule stories? (y/n): ").strip().lower()
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    try:
+        scheduled = engine.scheduler.schedule_stories()
+        print(f"\nResult: Scheduled {len(scheduled)} stories")
+        print(engine.scheduler.get_schedule_summary())
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Scheduling test failed")
+
+
+def _test_linkedin_connection(engine: ContentEngine) -> None:
+    """Test LinkedIn API connection."""
+    print("\n--- Testing LinkedIn Connection ---")
+    print(f"Author URN: {Config.LINKEDIN_AUTHOR_URN or 'NOT SET'}")
+    print(f"Access Token: {'SET' if Config.LINKEDIN_ACCESS_TOKEN else 'NOT SET'}")
+
+    if not Config.LINKEDIN_ACCESS_TOKEN or not Config.LINKEDIN_AUTHOR_URN:
+        print("\nLinkedIn credentials not configured.")
+        return
+
+    print("\nTesting connection...")
+    try:
+        if engine.publisher.test_connection():
+            print("✓ Connection successful!")
+            profile = engine.publisher.get_profile_info()
+            if profile:
+                print(
+                    f"  Profile: {profile.get('localizedFirstName', '')} "
+                    f"{profile.get('localizedLastName', '')}"
+                )
+        else:
+            print("✗ Connection failed. Check your credentials.")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("LinkedIn connection test failed")
+
+
+def _test_linkedin_publish(engine: ContentEngine) -> None:
+    """Test publishing due stories to LinkedIn."""
+    print("\n--- Testing LinkedIn Publish ---")
+
+    due = engine.db.get_scheduled_stories_due()
+    print(f"Stories due for publication: {len(due)}")
+
+    if not due:
+        print("No stories are due for publication.")
+        return
+
+    for story in due:
+        print(f"  - [{story.id}] {story.title[:50]}...")
+
+    confirm = input("\nPublish these stories now? (y/n): ").strip().lower()
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    try:
+        success, failures = engine.publisher.publish_due_stories()
+        print(f"\nResult: {success} published, {failures} failed")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("LinkedIn publish test failed")
+
+
+def _show_database_stats(engine: ContentEngine) -> None:
+    """Show database statistics."""
+    print("\n--- Database Statistics ---")
+    stats = engine.db.get_statistics()
+    print(f"  Total stories: {stats['total_stories']}")
+    print(f"  Published: {stats['published_count']}")
+    print(f"  Scheduled: {stats['scheduled_count']}")
+    print(f"  Available (approved, unpublished): {stats['available_count']}")
+    print(f"  Pending verification: {stats['pending_verification']}")
+
+
+def _list_all_stories(engine: ContentEngine) -> None:
+    """List all stories in the database."""
+    print("\n--- All Stories ---")
+    with engine.db._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, title, quality_score, verification_status, publish_status, acquire_date
+            FROM stories ORDER BY acquire_date DESC LIMIT 20
+        """)
+        rows = cursor.fetchall()
+
+    if not rows:
+        print("No stories in database.")
+        return
+
+    print(f"{'ID':<4} {'Score':<5} {'Verify':<10} {'Publish':<12} {'Title':<40}")
+    print("-" * 75)
+    for row in rows:
+        title = row["title"][:38] + ".." if len(row["title"]) > 40 else row["title"]
+        print(
+            f"{row['id']:<4} {row['quality_score']:<5} {row['verification_status']:<10} "
+            f"{row['publish_status']:<12} {title:<40}"
+        )
+
+    if len(rows) == 20:
+        print("\n(Showing first 20 stories)")
+
+
+def _list_pending_stories(engine: ContentEngine) -> None:
+    """List stories pending verification."""
+    print("\n--- Stories Pending Verification ---")
+    stories = engine.db.get_stories_needing_verification()
+
+    if not stories:
+        print("No stories pending verification.")
+        return
+
+    for story in stories:
+        has_image = "✓" if story.image_path else "✗"
+        print(
+            f"  [{story.id}] {has_image} {story.title[:50]}... (score: {story.quality_score})"
+        )
+
+
+def _list_scheduled_stories(engine: ContentEngine) -> None:
+    """List scheduled stories."""
+    print("\n--- Scheduled Stories ---")
+    print(engine.scheduler.get_schedule_summary())
+
+
+def _cleanup_old_stories(engine: ContentEngine) -> None:
+    """Clean up old unused stories."""
+    print("\n--- Cleanup Old Stories ---")
+    print(f"Exclusion period: {Config.EXCLUSION_PERIOD_DAYS} days")
+
+    cutoff = datetime.now() - timedelta(days=Config.EXCLUSION_PERIOD_DAYS)
+    print(f"Will delete unpublished stories acquired before: {cutoff.date()}")
+
+    confirm = input("\nProceed with cleanup? (y/n): ").strip().lower()
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    try:
+        deleted = engine.db.delete_old_unused_stories(cutoff)
+        orphaned = engine.image_generator.cleanup_orphaned_images()
+        print(f"\nResult: Deleted {deleted} stories, {orphaned} orphaned images")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Cleanup failed")
+
+
+def _run_full_cycle(engine: ContentEngine) -> None:
+    """Run the full search cycle."""
+    print("\n--- Run Full Search Cycle ---")
+    print("This will:")
+    print("  1. Search for new stories")
+    print("  2. Generate images")
+    print("  3. Verify content")
+    print("  4. Schedule for publication")
+    print("  5. Clean up old stories")
+
+    confirm = input("\nProceed? (y/n): ").strip().lower()
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    try:
+        engine.run_search_cycle()
+        print("\nSearch cycle completed successfully.")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Search cycle failed")
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -240,13 +578,23 @@ def main():
         action="store_true",
         help="Show configuration and exit",
     )
+    parser.add_argument(
+        "--menu",
+        action="store_true",
+        help="Run interactive debug menu",
+    )
 
     args = parser.parse_args()
 
     # Create engine
     engine = ContentEngine()
 
-    # Validate configuration
+    # Handle menu first (doesn't require full validation)
+    if args.menu:
+        interactive_menu(engine)
+        return 0
+
+    # Validate configuration for other operations
     if not engine.validate_configuration():
         logger.error("Configuration validation failed. Please check your .env file.")
         return 1
