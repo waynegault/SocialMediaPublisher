@@ -1,9 +1,12 @@
 """Content verification using AI to ensure quality and appropriateness."""
 
 import logging
+import base64
 from pathlib import Path
+from io import BytesIO
 
 from google import genai  # type: ignore
+from openai import OpenAI
 from PIL import Image
 
 from config import Config
@@ -15,10 +18,16 @@ logger = logging.getLogger(__name__)
 class ContentVerifier:
     """Verify content quality and appropriateness before publishing."""
 
-    def __init__(self, database: Database, client: genai.Client):
+    def __init__(
+        self,
+        database: Database,
+        client: genai.Client,
+        local_client: OpenAI | None = None,
+    ):
         """Initialize the content verifier."""
         self.db = database
         self.client = client
+        self.local_client = local_client
 
     def verify_pending_content(self) -> tuple[int, int]:
         """
@@ -74,6 +83,13 @@ class ContentVerifier:
                 return self._verify_text_only(prompt)
 
         except Exception as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                logger.error(
+                    f"Verification failed: API quota exceeded (429 RESOURCE_EXHAUSTED)"
+                )
+                raise RuntimeError(
+                    "API quota exceeded during verification. Please try again later."
+                ) from e
             logger.error(f"Verification error for story {story.id}: {e}")
             # Default to rejection on error for safety
             return False
@@ -81,8 +97,49 @@ class ContentVerifier:
     def _verify_with_image(self, story: Story, prompt: str) -> bool:
         """Verify story content with its associated image."""
         try:
-            image = Image.open(str(story.image_path))
+            if not story.image_path:
+                return self._verify_text_only(prompt)
 
+            image_path = Path(story.image_path)
+            if not image_path.exists():
+                return self._verify_text_only(prompt)
+
+            # Use local LLM if available
+            if self.local_client:
+                try:
+                    logger.info("Using local LLM for image verification...")
+                    with open(image_path, "rb") as image_file:
+                        base64_image = base64.b64encode(image_file.read()).decode(
+                            "utf-8"
+                        )
+
+                    response = self.local_client.chat.completions.create(
+                        model=Config.LM_STUDIO_MODEL,
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": prompt},
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:image/jpeg;base64,{base64_image}"
+                                        },
+                                    },
+                                ],
+                            }
+                        ],
+                    )
+                    content = response.choices[0].message.content
+                    if content:
+                        return self._parse_verification_response(content)
+                except Exception as e:
+                    logger.warning(
+                        f"Local image verification failed: {e}. Falling back to Gemini."
+                    )
+
+            # Fallback to Gemini
+            image = Image.open(str(image_path))
             response = self.client.models.generate_content(
                 model=Config.MODEL_VERIFICATION, contents=[prompt, image]
             )
@@ -97,6 +154,23 @@ class ContentVerifier:
 
     def _verify_text_only(self, prompt: str) -> bool:
         """Verify story content without image."""
+        # Use local LLM if available
+        if self.local_client:
+            try:
+                logger.info("Using local LLM for text verification...")
+                response = self.local_client.chat.completions.create(
+                    model=Config.LM_STUDIO_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                content = response.choices[0].message.content
+                if content:
+                    return self._parse_verification_response(content)
+            except Exception as e:
+                logger.warning(
+                    f"Local text verification failed: {e}. Falling back to Gemini."
+                )
+
+        # Fallback to Gemini
         response = self.client.models.generate_content(
             model=Config.MODEL_VERIFICATION, contents=prompt
         )
