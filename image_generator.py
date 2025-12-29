@@ -7,6 +7,7 @@ from pathlib import Path
 
 from google import genai
 from google.genai import types
+from openai import OpenAI
 
 from config import Config
 from database import Database, Story
@@ -17,10 +18,16 @@ logger = logging.getLogger(__name__)
 class ImageGenerator:
     """Generate images for stories using Google's Imagen model."""
 
-    def __init__(self, database: Database, client: genai.Client):
+    def __init__(
+        self,
+        database: Database,
+        client: genai.Client,
+        local_client: OpenAI | None = None,
+    ):
         """Initialize the image generator."""
         self.db = database
         self.client = client
+        self.local_client = local_client
         self._ensure_image_directory()
 
     def _ensure_image_directory(self) -> None:
@@ -95,6 +102,13 @@ class ImageGenerator:
                 return None
 
         except Exception as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                logger.error(
+                    f"Image generation failed: API quota exceeded (429 RESOURCE_EXHAUSTED)"
+                )
+                raise RuntimeError(
+                    "API quota exceeded during image generation. Please try again later."
+                ) from e
             logger.error(f"Image generation error for story {story.id}: {e}")
             return None
             logger.error(f"Image generation error: {e}")
@@ -129,23 +143,56 @@ class ImageGenerator:
             return None
 
     def _build_image_prompt(self, story: Story) -> str:
-        """Build a prompt for image generation based on the story."""
-        # Create a detailed prompt that will generate a relevant, professional image
-        base_prompt = f"""
-Create a photorealistic, professional news illustration for a story titled:
-"{story.title}"
-
-Context: {story.summary[:200]}...
-
-Requirements:
-- Modern, clean visual style suitable for professional social media
-- No text or words in the image
-- High quality, editorial photograph style
-- Relevant to the story topic
-- Appropriate lighting and composition
-- Safe for work / professional audience
+        """Build a prompt for image generation using an LLM for refinement."""
+        context = f"""
+Story Title: {story.title}
+Summary: {story.summary}
 """
-        return base_prompt.strip()
+
+        refinement_prompt = f"""
+You are an expert AI image prompt engineer.
+Based on the news story below, create a detailed, high-quality prompt for an image generation model (like Imagen or Stable Diffusion).
+
+STORY:
+{context}
+
+REQUIREMENTS for the prompt you generate:
+- Focus on a single, powerful visual metaphor or scene.
+- Style: Professional, editorial photography, high resolution, 8k.
+- NO TEXT or labels in the image.
+- Avoid people's faces if possible, focus on objects, environments, or symbolic representations.
+- Lighting: Cinematic, professional.
+- Aspect ratio: 16:9.
+
+Respond with ONLY the refined prompt text.
+"""
+
+        try:
+            if self.local_client:
+                logger.info("Using local LLM to refine image prompt...")
+                response = self.local_client.chat.completions.create(
+                    model=Config.LM_STUDIO_MODEL,
+                    messages=[{"role": "user", "content": refinement_prompt}],
+                )
+                refined = response.choices[0].message.content
+                if refined:
+                    return refined.strip()
+
+            # Fallback to Gemini for refinement
+            logger.info("Using Gemini to refine image prompt...")
+            response = self.client.models.generate_content(
+                model=Config.MODEL_TEXT, contents=refinement_prompt
+            )
+            if response.text:
+                return response.text.strip()
+
+        except Exception as e:
+            logger.warning(f"Prompt refinement failed: {e}. Using base prompt.")
+
+        # Ultimate fallback
+        return (
+            f"Professional news illustration for: {story.title}. {story.summary[:100]}"
+        )
 
     def get_stories_with_images_count(self) -> int:
         """Get count of stories that have images."""
