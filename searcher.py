@@ -62,6 +62,10 @@ class StorySearcher:
                 },
             )
 
+            if not response.text:
+                logger.warning("Empty response from Gemini")
+                return 0
+
             stories_data = self._parse_response(response.text)
             if not stories_data:
                 logger.warning("No stories found in search results")
