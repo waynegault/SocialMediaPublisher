@@ -161,7 +161,7 @@ Return ONLY the JSON array.
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
             if "json" in Config.LM_STUDIO_MODEL.lower()
-            else None,
+            else {"type": "text"},
         )
 
         content = response.choices[0].message.content
