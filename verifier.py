@@ -86,6 +86,9 @@ class ContentVerifier:
             response = self.client.models.generate_content(
                 model=Config.MODEL_VERIFICATION, contents=[prompt, image]
             )
+            if not response.text:
+                logger.warning("Empty response from Gemini during image verification")
+                return False
             return self._parse_verification_response(response.text)
 
         except Exception as e:
@@ -97,6 +100,9 @@ class ContentVerifier:
         response = self.client.models.generate_content(
             model=Config.MODEL_VERIFICATION, contents=prompt
         )
+        if not response.text:
+            logger.warning("Empty response from Gemini during text verification")
+            return False
         return self._parse_verification_response(response.text)
 
     def _build_verification_prompt(self, story: Story) -> str:

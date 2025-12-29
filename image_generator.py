@@ -5,7 +5,8 @@ import time
 import logging
 from pathlib import Path
 
-from google import genai  # type: ignore
+from google import genai
+from google.genai import types
 
 from config import Config
 from database import Database, Story
@@ -67,15 +68,15 @@ class ImageGenerator:
             response = self.client.models.generate_images(
                 model=Config.MODEL_IMAGE,
                 prompt=prompt,
-                config={
-                    "number_of_images": 1,
-                    "safety_filter_level": "block_only_high",
-                    "person_generation": "allow_adult",
-                    "aspect_ratio": "16:9",
-                },
+                config=types.GenerateImagesConfig(
+                    number_of_images=1,
+                    safety_filter_level=types.SafetyFilterLevel.BLOCK_ONLY_HIGH,
+                    person_generation=types.PersonGeneration.ALLOW_ADULT,
+                    aspect_ratio="16:9",
+                ),
             )
 
-            if not response.generated_images:
+            if not response.generated_images or not response.generated_images[0].image:
                 logger.warning(f"No image generated for story {story.id}")
                 return None
 
@@ -83,10 +84,15 @@ class ImageGenerator:
             filename = f"story_{story.id}_{int(time.time())}.png"
             filepath = os.path.join(Config.IMAGE_DIR, filename)
 
-            response.generated_images[0].image.save(filepath)
-            logger.debug(f"Saved image to {filepath}")
-
-            return filepath
+            image_data = response.generated_images[0].image.image_bytes
+            if image_data:
+                with open(filepath, "wb") as f:
+                    f.write(image_data)
+                logger.debug(f"Saved image to {filepath}")
+                return filepath
+            else:
+                logger.warning(f"No image bytes for story {story.id}")
+                return None
 
         except Exception as e:
             logger.error(f"Image generation error for story {story.id}: {e}")
