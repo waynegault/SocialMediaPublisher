@@ -32,6 +32,10 @@ class Config:
 
     # --- API Keys ---
     GEMINI_API_KEY: str = _get_str("GEMINI_API_KEY")
+    # Support either HUGGINGFACE_API_TOKEN or HUGGINGFACE_API_KEY
+    HUGGINGFACE_API_TOKEN: str = _get_str("HUGGINGFACE_API_TOKEN") or _get_str(
+        "HUGGINGFACE_API_KEY"
+    )
     LINKEDIN_ACCESS_TOKEN: str = _get_str("LINKEDIN_ACCESS_TOKEN")
     LINKEDIN_AUTHOR_URN: str = _get_str("LINKEDIN_AUTHOR_URN")
 
@@ -45,11 +49,29 @@ class Config:
     MODEL_VERIFICATION: str = _get_str("MODEL_VERIFICATION", "gemini-2.0-flash")
     MODEL_IMAGE: str = _get_str("MODEL_IMAGE", "imagen-4.0-generate-001")
 
+    # --- Hugging Face Image Generation ---
+    # Default to a broadly available SDXL model on the Inference API
+    HF_TTI_MODEL: str = _get_str(
+        "HF_TTI_MODEL", "stabilityai/stable-diffusion-xl-base-1.0"
+    )
+    # Optional: use a dedicated Inference Endpoint URL instead of the public models route
+    HF_INFERENCE_ENDPOINT: str = _get_str("HF_INFERENCE_ENDPOINT", "")
+    # Optional negative prompt to reduce unwanted artifacts
+    HF_NEGATIVE_PROMPT: str = _get_str(
+        "HF_NEGATIVE_PROMPT",
+        "text, watermark, logo, blurry, low quality, artifacts, jpeg artifacts, nsfw",
+    )
+    # Automatically prefer Hugging Face for images when a token is present
+    HF_PREFER_IF_CONFIGURED: bool = _get_bool("HF_PREFER_IF_CONFIGURED", True)
+
     # --- Search Settings ---
     SEARCH_PROMPT: str = _get_str(
         "SEARCH_PROMPT",
         "Find news stories about technology breakthroughs and innovations",
     )
+    # Optional template for the full search instruction prompt.
+    # Supports placeholders: {criteria}, {since_date}, {summary_words}
+    SEARCH_PROMPT_TEMPLATE: str = _get_str("SEARCH_PROMPT_TEMPLATE", "")
     SEARCH_LOOKBACK_DAYS: int = _get_int("SEARCH_LOOKBACK_DAYS", 7)
     USE_LAST_CHECKED_DATE: bool = _get_bool("USE_LAST_CHECKED_DATE", True)
 
@@ -119,12 +141,21 @@ class Config:
         print("=== Social Media Publisher Configuration ===")
         print(f"  GEMINI_API_KEY: {'*' * 8 if cls.GEMINI_API_KEY else 'NOT SET'}")
         print(
+            f"  HUGGINGFACE_API_TOKEN: {'*' * 8 if cls.HUGGINGFACE_API_TOKEN else 'NOT SET'}"
+        )
+        print(
             f"  LINKEDIN_ACCESS_TOKEN: {'*' * 8 if cls.LINKEDIN_ACCESS_TOKEN else 'NOT SET'}"
         )
         print(f"  LINKEDIN_AUTHOR_URN: {cls.LINKEDIN_AUTHOR_URN or 'NOT SET'}")
         print(f"  MODEL_TEXT: {cls.MODEL_TEXT}")
         print(f"  MODEL_IMAGE: {cls.MODEL_IMAGE}")
+        if cls.HUGGINGFACE_API_TOKEN:
+            print(
+                f"  HF_TTI_MODEL: {cls.HF_TTI_MODEL} (prefer={cls.HF_PREFER_IF_CONFIGURED})"
+            )
         print(f"  SEARCH_PROMPT: {cls.SEARCH_PROMPT[:50]}...")
+        if cls.SEARCH_PROMPT_TEMPLATE:
+            print("  SEARCH_PROMPT_TEMPLATE: custom (from .env)")
         print(f"  SEARCH_LOOKBACK_DAYS: {cls.SEARCH_LOOKBACK_DAYS}")
         print(f"  USE_LAST_CHECKED_DATE: {cls.USE_LAST_CHECKED_DATE}")
         print(f"  SUMMARY_WORD_COUNT: {cls.SUMMARY_WORD_COUNT}")

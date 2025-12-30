@@ -74,10 +74,12 @@ class ContentEngine:
 
         logger.info(f"Checking for LM Studio at {Config.LM_STUDIO_BASE_URL}...")
 
-        # Try to connect first
-        client = self._get_lm_studio_client()
-        if client:
-            return client
+        # Try to connect first (poll for a short period in case it's starting)
+        for _ in range(10):  # ~20 seconds
+            client = self._get_lm_studio_client()
+            if client:
+                return client
+            time.sleep(2)
 
         # If not running, try to start it
         logger.info("LM Studio not detected. Attempting to locate and start it...")
@@ -88,9 +90,10 @@ class ContentEngine:
                 logger.info(f"Starting LM Studio from {lm_studio_path}...")
                 subprocess.Popen([lm_studio_path], start_new_session=True)
 
-                # Wait for it to start (up to 30 seconds)
-                logger.info("Waiting for LM Studio to initialize...")
-                for _ in range(15):
+                # Whether we started a new instance or another instance is already running,
+                # just poll until the local server becomes available.
+                logger.info("Waiting for LM Studio to initialize or detect existing instance...")
+                for _ in range(30):  # up to ~60 seconds
                     time.sleep(2)
                     client = self._get_lm_studio_client()
                     if client:
@@ -111,17 +114,13 @@ class ContentEngine:
             if response.status_code == 200:
                 models = response.json().get("data", [])
                 if not models:
-                    print("\n" + "=" * 50)
-                    print("LM Studio is running but NO MODEL IS LOADED.")
-                    print("Please load a model in LM Studio to use local LLM features.")
-                    print("=" * 50 + "\n")
-                    input(
-                        "Press Enter once you have loaded a model to continue, or Ctrl+C to skip..."
+                    logger.warning(
+                        "LM Studio server detected but no models are loaded. You may need to load a model in the LM Studio UI."
                     )
-                    # Re-check after user input
-                    return self._get_lm_studio_client()
-
-                logger.info(f"LM Studio detected with {len(models)} model(s) loaded")
+                else:
+                    logger.info(
+                        f"LM Studio detected with {len(models)} model(s) loaded"
+                    )
                 return OpenAI(base_url=Config.LM_STUDIO_BASE_URL, api_key="lm-studio")
         except requests.exceptions.RequestException:
             pass
