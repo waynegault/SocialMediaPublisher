@@ -401,6 +401,18 @@ def _test_search(engine: ContentEngine) -> None:
 
         new_count = engine.searcher.search_and_process()
         print(f"\nResult: Found and saved {new_count} new stories")
+
+        if new_count > 0:
+            print("\nNewly saved stories:")
+            # Get the most recent stories
+            with engine.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT id, title, quality_score FROM stories ORDER BY id DESC LIMIT ?",
+                    (new_count,),
+                )
+                for row in cursor.fetchall():
+                    print(f"  - [{row[0]}] {row[1][:60]}... (Score: {row[2]})")
     except RuntimeError as e:
         if "quota exceeded" in str(e).lower():
             print(f"\n[!] API Quota Exceeded: {e}")
@@ -420,12 +432,30 @@ def _test_image_generation(engine: ContentEngine) -> None:
     print("\n--- Testing Image Generation ---")
 
     stories = engine.db.get_stories_needing_images(Config.MIN_QUALITY_SCORE)
-    print(f"Stories needing images: {len(stories)}")
 
     if not stories:
-        print("No stories need images.")
+        # Check if there are stories that were skipped due to quality score
+        all_pending = engine.db.get_stories_needing_images(0)
+        if all_pending:
+            print(
+                f"Found {len(all_pending)} stories needing images, but NONE meet the minimum quality score of {Config.MIN_QUALITY_SCORE}."
+            )
+            for story in all_pending[:5]:
+                print(
+                    f"  - [{story.id}] {story.title[:50]}... (score: {story.quality_score})"
+                )
+            print(
+                "\nYou can lower MIN_QUALITY_SCORE in your .env file to include these."
+            )
+        else:
+            print(
+                "No stories in the database need images (all have images or none found)."
+            )
         return
 
+    print(
+        f"Stories meeting quality threshold ({Config.MIN_QUALITY_SCORE}+): {len(stories)}"
+    )
     for story in stories[:5]:  # Show first 5
         print(f"  - [{story.id}] {story.title[:50]}... (score: {story.quality_score})")
 
@@ -455,12 +485,19 @@ def _test_verification(engine: ContentEngine) -> None:
     print("\n--- Testing Content Verification ---")
 
     stories = engine.db.get_stories_needing_verification()
-    print(f"Stories pending verification: {len(stories)}")
 
     if not stories:
-        print("No stories need verification.")
+        # Check why none are pending
+        all_pending = engine.db.get_stories_needing_images(0)
+        if all_pending:
+            print(
+                "Stories are in the database, but they first need images generated (Choice 2)."
+            )
+        else:
+            print("No stories are currently pending verification.")
         return
 
+    print(f"Stories pending verification: {len(stories)}")
     for story in stories[:5]:  # Show first 5
         print(f"  - [{story.id}] {story.title[:50]}...")
 

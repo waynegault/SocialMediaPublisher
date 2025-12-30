@@ -41,9 +41,9 @@ class Config:
     PREFER_LOCAL_LLM: bool = _get_bool("PREFER_LOCAL_LLM", True)
 
     # --- AI Models ---
-    MODEL_TEXT: str = _get_str("MODEL_TEXT", "gemini-2.0-flash-exp")
-    MODEL_VERIFICATION: str = _get_str("MODEL_VERIFICATION", "gemini-2.0-flash-exp")
-    MODEL_IMAGE: str = _get_str("MODEL_IMAGE", "imagen-3.0-generate-001")
+    MODEL_TEXT: str = _get_str("MODEL_TEXT", "gemini-2.0-flash")
+    MODEL_VERIFICATION: str = _get_str("MODEL_VERIFICATION", "gemini-2.0-flash")
+    MODEL_IMAGE: str = _get_str("MODEL_IMAGE", "imagen-4.0-generate-001")
 
     # --- Search Settings ---
     SEARCH_PROMPT: str = _get_str(
