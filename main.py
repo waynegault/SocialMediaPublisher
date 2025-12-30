@@ -7,7 +7,13 @@ Automated news story discovery, image generation, and LinkedIn publishing.
 import time
 import logging
 import argparse
+import requests
+import os
+import subprocess
 from datetime import datetime, timedelta
+
+from google import genai  # type: ignore
+from openai import OpenAI
 
 from config import Config
 from database import Database
@@ -39,10 +45,20 @@ class ContentEngine:
         # Initialize database
         self.db = Database()
 
+        # Initialize GenAI client
+        if not Config.GEMINI_API_KEY:
+            raise ValueError("GEMINI_API_KEY is not configured")
+        self.genai_client = genai.Client(api_key=Config.GEMINI_API_KEY)
+
+        # Initialize Local LLM client (LM Studio)
+        self.local_client = self._initialize_local_client()
+
         # Initialize components
-        self.searcher = StorySearcher(self.db)
-        self.image_generator = ImageGenerator(self.db)
-        self.verifier = ContentVerifier(self.db)
+        self.searcher = StorySearcher(self.db, self.genai_client, self.local_client)
+        self.image_generator = ImageGenerator(
+            self.db, self.genai_client, self.local_client
+        )
+        self.verifier = ContentVerifier(self.db, self.genai_client, self.local_client)
         self.scheduler = Scheduler(self.db)
         self.publisher = LinkedInPublisher(self.db)
 
@@ -50,6 +66,81 @@ class ContentEngine:
         self._last_search_cycle: datetime | None = None
 
         logger.info("Content Engine initialized successfully")
+
+    def _initialize_local_client(self) -> OpenAI | None:
+        """Check if LM Studio is running, start it if necessary, and return a client."""
+        if not Config.PREFER_LOCAL_LLM:
+            return None
+
+        logger.info(f"Checking for LM Studio at {Config.LM_STUDIO_BASE_URL}...")
+
+        # Try to connect first
+        client = self._get_lm_studio_client()
+        if client:
+            return client
+
+        # If not running, try to start it
+        logger.info("LM Studio not detected. Attempting to locate and start it...")
+        lm_studio_path = self._find_lm_studio_executable()
+
+        if lm_studio_path:
+            try:
+                logger.info(f"Starting LM Studio from {lm_studio_path}...")
+                subprocess.Popen([lm_studio_path], start_new_session=True)
+
+                # Wait for it to start (up to 30 seconds)
+                logger.info("Waiting for LM Studio to initialize...")
+                for _ in range(15):
+                    time.sleep(2)
+                    client = self._get_lm_studio_client()
+                    if client:
+                        return client
+            except Exception as e:
+                logger.error(f"Failed to start LM Studio: {e}")
+        else:
+            logger.warning(
+                "Could not find LM Studio executable. Please start it manually."
+            )
+
+        return None
+
+    def _get_lm_studio_client(self) -> OpenAI | None:
+        """Attempt to get an OpenAI client for LM Studio and verify a model is loaded."""
+        try:
+            response = requests.get(f"{Config.LM_STUDIO_BASE_URL}/models", timeout=2)
+            if response.status_code == 200:
+                models = response.json().get("data", [])
+                if not models:
+                    print("\n" + "=" * 50)
+                    print("LM Studio is running but NO MODEL IS LOADED.")
+                    print("Please load a model in LM Studio to use local LLM features.")
+                    print("=" * 50 + "\n")
+                    input(
+                        "Press Enter once you have loaded a model to continue, or Ctrl+C to skip..."
+                    )
+                    # Re-check after user input
+                    return self._get_lm_studio_client()
+
+                logger.info(f"LM Studio detected with {len(models)} model(s) loaded")
+                return OpenAI(base_url=Config.LM_STUDIO_BASE_URL, api_key="lm-studio")
+        except requests.exceptions.RequestException:
+            pass
+        return None
+
+    def _find_lm_studio_executable(self) -> str | None:
+        """Search for LM Studio executable in common Windows locations."""
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        program_files = os.environ.get("ProgramFiles", "")
+
+        potential_paths = [
+            os.path.join(local_app_data, "Programs", "lm-studio", "LM Studio.exe"),
+            os.path.join(program_files, "LM Studio", "LM Studio.exe"),
+        ]
+
+        for path in potential_paths:
+            if os.path.exists(path):
+                return path
+        return None
 
     def validate_configuration(self) -> bool:
         """Validate all required configuration is present."""
@@ -117,6 +208,13 @@ class ContentEngine:
             logger.info(f"  Available: {stats['available_count']}")
             logger.info(f"  Pending verification: {stats['pending_verification']}")
 
+        except RuntimeError as e:
+            if "quota exceeded" in str(e).lower():
+                logger.warning(f"Search cycle interrupted: {e}")
+                print(f"\n[!] API Quota Exceeded: {e}")
+            else:
+                logger.error(f"Search cycle failed: {e}")
+                raise
         except Exception as e:
             logger.error(f"Search cycle failed: {e}")
             raise
@@ -303,6 +401,27 @@ def _test_search(engine: ContentEngine) -> None:
 
         new_count = engine.searcher.search_and_process()
         print(f"\nResult: Found and saved {new_count} new stories")
+
+        if new_count > 0:
+            print("\nNewly saved stories:")
+            # Get the most recent stories
+            with engine.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT id, title, quality_score FROM stories ORDER BY id DESC LIMIT ?",
+                    (new_count,),
+                )
+                for row in cursor.fetchall():
+                    print(f"  - [{row[0]}] {row[1][:60]}... (Score: {row[2]})")
+    except RuntimeError as e:
+        if "quota exceeded" in str(e).lower():
+            print(f"\n[!] API Quota Exceeded: {e}")
+            print(
+                "The search could not be completed because the Google GenAI API quota has been reached."
+            )
+            print("Please wait a few minutes or check your API usage limits.")
+        else:
+            print(f"\nError: {e}")
     except Exception as e:
         print(f"\nError: {e}")
         logger.exception("Search test failed")
@@ -313,12 +432,30 @@ def _test_image_generation(engine: ContentEngine) -> None:
     print("\n--- Testing Image Generation ---")
 
     stories = engine.db.get_stories_needing_images(Config.MIN_QUALITY_SCORE)
-    print(f"Stories needing images: {len(stories)}")
 
     if not stories:
-        print("No stories need images.")
+        # Check if there are stories that were skipped due to quality score
+        all_pending = engine.db.get_stories_needing_images(0)
+        if all_pending:
+            print(
+                f"Found {len(all_pending)} stories needing images, but NONE meet the minimum quality score of {Config.MIN_QUALITY_SCORE}."
+            )
+            for story in all_pending[:5]:
+                print(
+                    f"  - [{story.id}] {story.title[:50]}... (score: {story.quality_score})"
+                )
+            print(
+                "\nYou can lower MIN_QUALITY_SCORE in your .env file to include these."
+            )
+        else:
+            print(
+                "No stories in the database need images (all have images or none found)."
+            )
         return
 
+    print(
+        f"Stories meeting quality threshold ({Config.MIN_QUALITY_SCORE}+): {len(stories)}"
+    )
     for story in stories[:5]:  # Show first 5
         print(f"  - [{story.id}] {story.title[:50]}... (score: {story.quality_score})")
 
@@ -330,6 +467,14 @@ def _test_image_generation(engine: ContentEngine) -> None:
     try:
         count = engine.image_generator.generate_images_for_stories()
         print(f"\nResult: Generated {count} images")
+    except RuntimeError as e:
+        if "quota exceeded" in str(e).lower():
+            print(f"\n[!] API Quota Exceeded: {e}")
+            print(
+                "Image generation could not be completed because the API quota has been reached."
+            )
+        else:
+            print(f"\nError: {e}")
     except Exception as e:
         print(f"\nError: {e}")
         logger.exception("Image generation test failed")
@@ -340,12 +485,19 @@ def _test_verification(engine: ContentEngine) -> None:
     print("\n--- Testing Content Verification ---")
 
     stories = engine.db.get_stories_needing_verification()
-    print(f"Stories pending verification: {len(stories)}")
 
     if not stories:
-        print("No stories need verification.")
+        # Check why none are pending
+        all_pending = engine.db.get_stories_needing_images(0)
+        if all_pending:
+            print(
+                "Stories are in the database, but they first need images generated (Choice 2)."
+            )
+        else:
+            print("No stories are currently pending verification.")
         return
 
+    print(f"Stories pending verification: {len(stories)}")
     for story in stories[:5]:  # Show first 5
         print(f"  - [{story.id}] {story.title[:50]}...")
 
@@ -357,6 +509,14 @@ def _test_verification(engine: ContentEngine) -> None:
     try:
         approved, rejected = engine.verifier.verify_pending_content()
         print(f"\nResult: {approved} approved, {rejected} rejected")
+    except RuntimeError as e:
+        if "quota exceeded" in str(e).lower():
+            print(f"\n[!] API Quota Exceeded: {e}")
+            print(
+                "Content verification could not be completed because the API quota has been reached."
+            )
+        else:
+            print(f"\nError: {e}")
     except Exception as e:
         print(f"\nError: {e}")
         logger.exception("Verification test failed")
@@ -583,6 +743,11 @@ def main():
         action="store_true",
         help="Run interactive debug menu",
     )
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Run in continuous mode (scheduler)",
+    )
 
     args = parser.parse_args()
 
@@ -617,8 +782,12 @@ def main():
         engine.run_once()
         return 0
 
-    # Default: run continuously
-    engine.run_continuous()
+    if args.continuous:
+        engine.run_continuous()
+        return 0
+
+    # Default: run interactive menu
+    interactive_menu(engine)
     return 0
 
 

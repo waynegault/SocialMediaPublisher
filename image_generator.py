@@ -5,7 +5,9 @@ import time
 import logging
 from pathlib import Path
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
+from openai import OpenAI
 
 from config import Config
 from database import Database, Story
@@ -16,17 +18,17 @@ logger = logging.getLogger(__name__)
 class ImageGenerator:
     """Generate images for stories using Google's Imagen model."""
 
-    def __init__(self, database: Database):
+    def __init__(
+        self,
+        database: Database,
+        client: genai.Client,
+        local_client: OpenAI | None = None,
+    ):
         """Initialize the image generator."""
         self.db = database
-        self._configure_genai()
+        self.client = client
+        self.local_client = local_client
         self._ensure_image_directory()
-
-    def _configure_genai(self) -> None:
-        """Configure the Gemini API."""
-        if not Config.GEMINI_API_KEY:
-            raise ValueError("GEMINI_API_KEY is not configured")
-        genai.configure(api_key=Config.GEMINI_API_KEY)  # type: ignore[attr-defined]
 
     def _ensure_image_directory(self) -> None:
         """Ensure the image directory exists."""
@@ -70,18 +72,18 @@ class ImageGenerator:
 
         try:
             # Use Imagen model for image generation
-            # Note: The exact API may vary based on the google-generativeai version
-            image_model = genai.ImageGenerationModel(Config.MODEL_IMAGE)  # type: ignore[attr-defined]
-
-            result = image_model.generate_images(
+            response = self.client.models.generate_images(
+                model=Config.MODEL_IMAGE,
                 prompt=prompt,
-                number_of_images=1,
-                safety_filter_level="block_only_high",
-                person_generation="allow_adult",
-                aspect_ratio="16:9",  # Good for social media
+                config=types.GenerateImagesConfig(
+                    number_of_images=1,
+                    safety_filter_level=types.SafetyFilterLevel.BLOCK_ONLY_HIGH,
+                    person_generation=types.PersonGeneration.ALLOW_ADULT,
+                    aspect_ratio="16:9",
+                ),
             )
 
-            if not result.images:
+            if not response.generated_images or not response.generated_images[0].image:
                 logger.warning(f"No image generated for story {story.id}")
                 return None
 
@@ -89,16 +91,35 @@ class ImageGenerator:
             filename = f"story_{story.id}_{int(time.time())}.png"
             filepath = os.path.join(Config.IMAGE_DIR, filename)
 
-            result.images[0].save(filepath)
-            logger.debug(f"Saved image to {filepath}")
+            image_data = response.generated_images[0].image.image_bytes
+            if image_data:
+                with open(filepath, "wb") as f:
+                    f.write(image_data)
+                logger.debug(f"Saved image to {filepath}")
+                return filepath
+            else:
+                logger.warning(f"No image bytes for story {story.id}")
+                return None
 
-            return filepath
-
-        except AttributeError:
-            # Fallback for different API versions
-            return self._generate_image_fallback(story, prompt)
         except Exception as e:
-            logger.error(f"Image generation error: {e}")
+            error_msg = str(e)
+            if "billed users" in error_msg.lower():
+                print("\n" + "-" * 60)
+                print("Notice: Google's Imagen API requires a billed account.")
+                print("I'll try to use your local LLM/Image generator instead...")
+                print("-" * 60 + "\n")
+
+                # Try local fallback
+                return self._generate_local_image(story, prompt)
+
+            if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                logger.error(
+                    f"Image generation failed: API quota exceeded (429 RESOURCE_EXHAUSTED)"
+                )
+                raise RuntimeError(
+                    "API quota exceeded during image generation. Please try again later."
+                ) from e
+            logger.error(f"Image generation error for story {story.id}: {e}")
             return None
 
     def _generate_image_fallback(self, story: Story, prompt: str) -> str | None:
@@ -106,7 +127,7 @@ class ImageGenerator:
         try:
             # Try using the Gemini multimodal model for image generation
             # This is a fallback if ImageGenerationModel is not available
-            model = genai.GenerativeModel("gemini-2.0-flash-exp")  # type: ignore[attr-defined]
+            model = genai.GenerativeModel("gemini-2.0-flash")  # type: ignore[attr-defined]
 
             response = model.generate_content(
                 f"Generate a professional news illustration image for: {prompt}",
@@ -129,24 +150,107 @@ class ImageGenerator:
             logger.error(f"Fallback image generation failed: {e}")
             return None
 
+    def _generate_local_image(self, story: Story, prompt: str) -> str | None:
+        """Attempt to generate an image using the local OpenAI-compatible client."""
+        if not self.local_client:
+            logger.warning("No local client available for image generation")
+            return None
+
+        logger.info(f"Attempting local image generation for story {story.id}...")
+        try:
+            # Some local servers (like LocalAI or custom OpenAI proxies) support this
+            response = self.local_client.images.generate(
+                model=Config.LM_STUDIO_MODEL,
+                prompt=prompt,
+                n=1,
+                size="1024x1024",
+                response_format="b64_json",
+            )
+
+            if response.data and response.data[0].b64_json:
+                import base64
+
+                image_data = base64.b64decode(response.data[0].b64_json)
+
+                filename = f"story_{story.id}_{int(time.time())}_local.png"
+                filepath = os.path.join(Config.IMAGE_DIR, filename)
+
+                with open(filepath, "wb") as f:
+                    f.write(image_data)
+
+                logger.info(f"Successfully generated local image: {filepath}")
+                return filepath
+
+        except Exception as e:
+            logger.warning(f"Local image generation failed: {e}")
+            print(
+                f"Local image generation is not supported by your current local model ({Config.LM_STUDIO_MODEL})."
+            )
+            print(
+                "Most local LLMs only support text. For local images, you would need a service like Stable Diffusion with an OpenAI-compatible API."
+            )
+
+        return None
+
     def _build_image_prompt(self, story: Story) -> str:
-        """Build a prompt for image generation based on the story."""
-        # Create a detailed prompt that will generate a relevant, professional image
-        base_prompt = f"""
-Create a photorealistic, professional news illustration for a story titled:
-"{story.title}"
-
-Context: {story.summary[:200]}...
-
-Requirements:
-- Modern, clean visual style suitable for professional social media
-- No text or words in the image
-- High quality, editorial photograph style
-- Relevant to the story topic
-- Appropriate lighting and composition
-- Safe for work / professional audience
+        """Build a prompt for image generation using an LLM for refinement."""
+        sources_text = (
+            "\n".join(story.source_links)
+            if story.source_links
+            else "No sources provided"
+        )
+        context = f"""
+Story Title: {story.title}
+Summary: {story.summary}
+Sources:
+{sources_text}
 """
-        return base_prompt.strip()
+
+        refinement_prompt = f"""
+You are an expert AI image prompt engineer.
+Based on the news story and sources below, create a detailed, high-quality prompt for an image generation model (like Imagen or Stable Diffusion).
+
+STORY:
+{context}
+
+REQUIREMENTS for the prompt you generate:
+- Focus on a single, powerful visual metaphor or scene.
+- Style: Professional, editorial photography, high resolution, 8k.
+- NO TEXT or labels in the image.
+- Avoid people's faces if possible, focus on objects, environments, or symbolic representations.
+- Lighting: Cinematic, professional.
+- Aspect ratio: 16:9.
+- Use the story title, summary, and source links to identify key visual elements or specific locations/technologies mentioned.
+
+Respond with ONLY the refined prompt text.
+"""
+
+        try:
+            if self.local_client:
+                logger.info("Using local LLM to refine image prompt...")
+                response = self.local_client.chat.completions.create(
+                    model=Config.LM_STUDIO_MODEL,
+                    messages=[{"role": "user", "content": refinement_prompt}],
+                )
+                refined = response.choices[0].message.content
+                if refined:
+                    return refined.strip()
+
+            # Fallback to Gemini for refinement
+            logger.info("Using Gemini to refine image prompt...")
+            response = self.client.models.generate_content(
+                model=Config.MODEL_TEXT, contents=refinement_prompt
+            )
+            if response.text:
+                return response.text.strip()
+
+        except Exception as e:
+            logger.warning(f"Prompt refinement failed: {e}. Using base prompt.")
+
+        # Ultimate fallback
+        return (
+            f"Professional news illustration for: {story.title}. {story.summary[:100]}"
+        )
 
     def get_stories_with_images_count(self) -> int:
         """Get count of stories that have images."""

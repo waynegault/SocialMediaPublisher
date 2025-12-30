@@ -1,11 +1,15 @@
 # Google AI SDK for Gemini and Imagen
-google-generativeai>=0.8.0
+google-genai>=1.0.0
 
 # Environment variable management
 python-dotenv>=1.0.0
 
 # HTTP requests for LinkedIn API
 requests>=2.31.0
+
+# Local LLM support
+openai>=1.0.0
+ddgs>=1.0.0
 
 # Image processing
 Pillow>=10.0.0
