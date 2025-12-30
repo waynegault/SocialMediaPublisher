@@ -4,6 +4,7 @@ import os
 import time
 import logging
 from pathlib import Path
+import requests
 
 from google import genai
 from google.genai import types
@@ -71,13 +72,24 @@ class ImageGenerator:
         prompt = self._build_image_prompt(story)
 
         try:
+            # Provider selection diagnostics
+            logger.debug(
+                f"HF token present={bool(Config.HUGGINGFACE_API_TOKEN)}, prefer_hf={Config.HF_PREFER_IF_CONFIGURED}"
+            )
+            # If a Hugging Face token is configured and preferred, try it first
+            if Config.HUGGINGFACE_API_TOKEN and Config.HF_PREFER_IF_CONFIGURED:
+                hf_path = self._generate_huggingface_image(story, prompt)
+                if hf_path:
+                    return hf_path
+
             # Use Imagen model for image generation
             response = self.client.models.generate_images(
                 model=Config.MODEL_IMAGE,
                 prompt=prompt,
                 config=types.GenerateImagesConfig(
                     number_of_images=1,
-                    safety_filter_level=types.SafetyFilterLevel.BLOCK_ONLY_HIGH,
+                    # API requires "block_low_and_above"
+                    safety_filter_level=types.SafetyFilterLevel.BLOCK_LOW_AND_ABOVE,
                     person_generation=types.PersonGeneration.ALLOW_ADULT,
                     aspect_ratio="16:9",
                 ),
@@ -106,6 +118,11 @@ class ImageGenerator:
             if "billed users" in error_msg.lower():
                 print("\n" + "-" * 60)
                 print("Notice: Google's Imagen API requires a billed account.")
+                if Config.HUGGINGFACE_API_TOKEN:
+                    print("I'll try Hugging Face Inference instead...")
+                    hf_path = self._generate_huggingface_image(story, prompt)
+                    if hf_path:
+                        return hf_path
                 print("I'll try to use your local LLM/Image generator instead...")
                 print("-" * 60 + "\n")
 
@@ -120,6 +137,99 @@ class ImageGenerator:
                     "API quota exceeded during image generation. Please try again later."
                 ) from e
             logger.error(f"Image generation error for story {story.id}: {e}")
+            return None
+
+    def _generate_huggingface_image(self, story: Story, prompt: str) -> str | None:
+        """Generate an image using Hugging Face Inference API."""
+        if not Config.HUGGINGFACE_API_TOKEN:
+            return None
+
+        logger.info(
+            f"Attempting Hugging Face image generation via model '{Config.HF_TTI_MODEL}'"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {Config.HUGGINGFACE_API_TOKEN}",
+        }
+
+        # Choose endpoint: custom inference endpoint or public models route
+        if Config.HF_INFERENCE_ENDPOINT:
+            url = Config.HF_INFERENCE_ENDPOINT.rstrip("/")
+        else:
+            url = f"https://api-inference.huggingface.co/models/{Config.HF_TTI_MODEL}"
+
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "negative_prompt": Config.HF_NEGATIVE_PROMPT,
+                # Aim for 16:9 while keeping sizes reasonable for free tiers
+                "width": 1024,
+                "height": 576,
+            },
+            "options": {"wait_for_model": True},
+        }
+
+        try:
+            # Some models stream or return raw bytes; set stream=False for simplicity
+            response = requests.post(url, headers=headers, json=payload, timeout=120)
+
+            # Model cold-start: 503 while loading. Try a short backoff/poll.
+            retries = 0
+            while response.status_code == 503 and retries < 3:
+                time.sleep(5 * (retries + 1))
+                response = requests.post(
+                    url, headers=headers, json=payload, timeout=120
+                )
+                retries += 1
+
+            if response.status_code == 200 and response.headers.get(
+                "content-type", ""
+            ).startswith("image/"):
+                filename = f"story_{story.id}_{int(time.time())}_hf.png"
+                filepath = os.path.join(Config.IMAGE_DIR, filename)
+                with open(filepath, "wb") as f:
+                    f.write(response.content)
+                logger.info(f"Successfully generated HF image: {filepath}")
+                return filepath
+
+            # Some models may return JSON with an image in base64
+            if response.headers.get("content-type", "").startswith(
+                "application/json"
+            ):
+                try:
+                    data = response.json()
+                    if isinstance(data, dict):
+                        # common error message format
+                        error_msg = data.get("error") or data.get("message")
+                        if error_msg:
+                            logger.warning(
+                                f"Hugging Face API responded with error: {error_msg}"
+                            )
+                        # handle b64 image if present
+                        b64 = data.get("image") or data.get("data")
+                        if b64:
+                            import base64
+
+                            image_bytes = base64.b64decode(b64)
+                            filename = (
+                                f"story_{story.id}_{int(time.time())}_hf_b64.png"
+                            )
+                            filepath = os.path.join(Config.IMAGE_DIR, filename)
+                            with open(filepath, "wb") as f:
+                                f.write(image_bytes)
+                            logger.info(
+                                f"Successfully generated HF image (b64): {filepath}"
+                            )
+                            return filepath
+                except Exception:
+                    pass
+
+            logger.warning(
+                f"Hugging Face generation failed (status {response.status_code})"
+            )
+            return None
+        except requests.RequestException as e:
+            logger.warning(f"Hugging Face request failed: {e}")
             return None
 
     def _generate_image_fallback(self, story: Story, prompt: str) -> str | None:

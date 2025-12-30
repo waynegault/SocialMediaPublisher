@@ -12,7 +12,7 @@ verifies content quality, and publishes to LinkedIn on a configurable schedule.
 - **Quality Scoring**: Rates stories 1-10 based on relevance, significance, and
   source credibility
 - **AI Image Generation**: Creates professional illustrations for each story
-  using Google's Imagen model
+  using Google's Imagen model or Hugging Face Inference API
 - **Content Verification**: Uses a separate AI pass to verify professionalism,
   decency, and adherence to your criteria
 - **Smart Scheduling**: Publishes stories spread evenly across your preferred
@@ -72,11 +72,24 @@ Copy `.env.example` to `.env` and configure the following:
 | `LINKEDIN_ACCESS_TOKEN` | OAuth token from [LinkedIn Developer](https://developer.linkedin.com/) |
 | `LINKEDIN_AUTHOR_URN` | Your LinkedIn URN (e.g., `urn:li:person:ABC123`) |
 
+### Optional: Hugging Face Image Generation
+
+If you have a Hugging Face token, the app can generate images via the Inference API. When a token is configured, the app will prefer Hugging Face for image generation.
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `HUGGINGFACE_API_TOKEN` or `HUGGINGFACE_API_KEY` | - | Your HF access token |
+| `HF_TTI_MODEL` | stabilityai/stable-diffusion-xl-base-1.0 | Text-to-image model id |
+| `HF_INFERENCE_ENDPOINT` | - | Custom endpoint URL (optional) |
+| `HF_PREFER_IF_CONFIGURED` | True | Prefer HF when token present |
+| `HF_NEGATIVE_PROMPT` | text, watermark, logo, blurry... | Negative prompt used |
+
 ### Search Settings
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `SEARCH_PROMPT` | - | The prompt describing what stories to search for |
+| `SEARCH_PROMPT_TEMPLATE` | - | Optional full instruction template with placeholders `{criteria}`, `{since_date}`, `{summary_words}` |
 | `SEARCH_LOOKBACK_DAYS` | 7 | Days to look back when searching |
 | `USE_LAST_CHECKED_DATE` | True | Use last check time instead of lookback |
 | `SEARCH_CYCLE_HOURS` | 24 | How often to run search cycles |

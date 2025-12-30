@@ -269,7 +269,20 @@ Return ONLY the JSON object.
         self, search_prompt: str, since_date: datetime, summary_words: int
     ) -> str:
         """Build the prompt for story search."""
-        return f"""
+        # Allow overriding the full instruction via .env with placeholders
+        if Config.SEARCH_PROMPT_TEMPLATE:
+            try:
+                return Config.SEARCH_PROMPT_TEMPLATE.format(
+                    criteria=search_prompt,
+                    since_date=since_date.strftime("%Y-%m-%d"),
+                    summary_words=summary_words,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"SEARCH_PROMPT_TEMPLATE formatting failed: {e}. Using default template."
+                )
+
+                return f"""
 You are a professional news aggregator and analyst.
 
 TASK:
@@ -283,21 +296,21 @@ For each story, provide:
 - A list of all source URLs covering this story
 - A comprehensive summary of exactly {summary_words} words that captures the key facts
 - A quality score from 1-10 based on:
-  - Relevance to the search criteria (weight: 40%)
-  - Significance and newsworthiness (weight: 30%)
-  - Source credibility and coverage (weight: 20%)
-  - Timeliness and freshness (weight: 10%)
+    - Relevance to the search criteria (weight: 40%)
+    - Significance and newsworthiness (weight: 30%)
+    - Source credibility and coverage (weight: 20%)
+    - Timeliness and freshness (weight: 10%)
 
 OUTPUT FORMAT (strict JSON):
 {{
-  "stories": [
-    {{
-      "title": "Clear Descriptive Story Title",
-      "sources": ["https://source1.com/article", "https://source2.com/article"],
-      "summary": "The complete {summary_words}-word summary...",
-      "quality_score": 8
-    }}
-  ]
+    "stories": [
+        {{
+            "title": "Clear Descriptive Story Title",
+            "sources": ["https://source1.com/article", "https://source2.com/article"],
+            "summary": "The complete {summary_words}-word summary...",
+            "quality_score": 8
+        }}
+    ]
 }}
 
 Return an empty array in the "stories" key if no relevant stories are found.
