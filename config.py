@@ -35,10 +35,15 @@ class Config:
     LINKEDIN_ACCESS_TOKEN: str = _get_str("LINKEDIN_ACCESS_TOKEN")
     LINKEDIN_AUTHOR_URN: str = _get_str("LINKEDIN_AUTHOR_URN")
 
+    # --- Local LLM (LM Studio) ---
+    LM_STUDIO_BASE_URL: str = _get_str("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
+    LM_STUDIO_MODEL: str = _get_str("LM_STUDIO_MODEL", "local-model")
+    PREFER_LOCAL_LLM: bool = _get_bool("PREFER_LOCAL_LLM", True)
+
     # --- AI Models ---
-    MODEL_TEXT: str = _get_str("MODEL_TEXT", "gemini-2.0-flash-exp")
-    MODEL_VERIFICATION: str = _get_str("MODEL_VERIFICATION", "gemini-2.0-flash-exp")
-    MODEL_IMAGE: str = _get_str("MODEL_IMAGE", "imagen-3.0-generate-001")
+    MODEL_TEXT: str = _get_str("MODEL_TEXT", "gemini-2.0-flash")
+    MODEL_VERIFICATION: str = _get_str("MODEL_VERIFICATION", "gemini-2.0-flash")
+    MODEL_IMAGE: str = _get_str("MODEL_IMAGE", "imagen-4.0-generate-001")
 
     # --- Search Settings ---
     SEARCH_PROMPT: str = _get_str(
