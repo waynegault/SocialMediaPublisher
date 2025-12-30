@@ -102,7 +102,17 @@ class ImageGenerator:
                 return None
 
         except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            error_msg = str(e)
+            if "billed users" in error_msg.lower():
+                print("\n" + "-" * 60)
+                print("Notice: Google's Imagen API requires a billed account.")
+                print("I'll try to use your local LLM/Image generator instead...")
+                print("-" * 60 + "\n")
+
+                # Try local fallback
+                return self._generate_local_image(story, prompt)
+
+            if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
                 logger.error(
                     f"Image generation failed: API quota exceeded (429 RESOURCE_EXHAUSTED)"
                 )
@@ -111,15 +121,13 @@ class ImageGenerator:
                 ) from e
             logger.error(f"Image generation error for story {story.id}: {e}")
             return None
-            logger.error(f"Image generation error: {e}")
-            return None
 
     def _generate_image_fallback(self, story: Story, prompt: str) -> str | None:
         """Fallback image generation using alternative API approach."""
         try:
             # Try using the Gemini multimodal model for image generation
             # This is a fallback if ImageGenerationModel is not available
-            model = genai.GenerativeModel("gemini-2.0-flash-exp")  # type: ignore[attr-defined]
+            model = genai.GenerativeModel("gemini-2.0-flash")  # type: ignore[attr-defined]
 
             response = model.generate_content(
                 f"Generate a professional news illustration image for: {prompt}",
@@ -142,16 +150,65 @@ class ImageGenerator:
             logger.error(f"Fallback image generation failed: {e}")
             return None
 
+    def _generate_local_image(self, story: Story, prompt: str) -> str | None:
+        """Attempt to generate an image using the local OpenAI-compatible client."""
+        if not self.local_client:
+            logger.warning("No local client available for image generation")
+            return None
+
+        logger.info(f"Attempting local image generation for story {story.id}...")
+        try:
+            # Some local servers (like LocalAI or custom OpenAI proxies) support this
+            response = self.local_client.images.generate(
+                model=Config.LM_STUDIO_MODEL,
+                prompt=prompt,
+                n=1,
+                size="1024x1024",
+                response_format="b64_json",
+            )
+
+            if response.data and response.data[0].b64_json:
+                import base64
+
+                image_data = base64.b64decode(response.data[0].b64_json)
+
+                filename = f"story_{story.id}_{int(time.time())}_local.png"
+                filepath = os.path.join(Config.IMAGE_DIR, filename)
+
+                with open(filepath, "wb") as f:
+                    f.write(image_data)
+
+                logger.info(f"Successfully generated local image: {filepath}")
+                return filepath
+
+        except Exception as e:
+            logger.warning(f"Local image generation failed: {e}")
+            print(
+                f"Local image generation is not supported by your current local model ({Config.LM_STUDIO_MODEL})."
+            )
+            print(
+                "Most local LLMs only support text. For local images, you would need a service like Stable Diffusion with an OpenAI-compatible API."
+            )
+
+        return None
+
     def _build_image_prompt(self, story: Story) -> str:
         """Build a prompt for image generation using an LLM for refinement."""
+        sources_text = (
+            "\n".join(story.source_links)
+            if story.source_links
+            else "No sources provided"
+        )
         context = f"""
 Story Title: {story.title}
 Summary: {story.summary}
+Sources:
+{sources_text}
 """
 
         refinement_prompt = f"""
 You are an expert AI image prompt engineer.
-Based on the news story below, create a detailed, high-quality prompt for an image generation model (like Imagen or Stable Diffusion).
+Based on the news story and sources below, create a detailed, high-quality prompt for an image generation model (like Imagen or Stable Diffusion).
 
 STORY:
 {context}
@@ -163,6 +220,7 @@ REQUIREMENTS for the prompt you generate:
 - Avoid people's faces if possible, focus on objects, environments, or symbolic representations.
 - Lighting: Cinematic, professional.
 - Aspect ratio: 16:9.
+- Use the story title, summary, and source links to identify key visual elements or specific locations/technologies mentioned.
 
 Respond with ONLY the refined prompt text.
 """

@@ -9,7 +9,7 @@ requests>=2.31.0
 
 # Local LLM support
 openai>=1.0.0
-duckduckgo-search>=6.0.0
+ddgs>=1.0.0
 
 # Image processing
 Pillow>=10.0.0
