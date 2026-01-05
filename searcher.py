@@ -4,6 +4,7 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta
+from typing import Any
 from ddgs import DDGS
 
 from google import genai  # type: ignore
@@ -88,6 +89,7 @@ class StorySearcher:
             config={
                 "tools": [{"google_search": {}}],
                 "response_mime_type": "application/json",
+                "max_output_tokens": 8192,
             },
         )
 
@@ -95,14 +97,118 @@ class StorySearcher:
             logger.warning("Empty response from Gemini")
             return 0
 
+        logger.debug(f"Gemini response length: {len(response.text)} chars")
         stories_data = self._parse_response(response.text)
         return self._process_stories_data(stories_data)
+
+    def _get_search_query(self, search_prompt: str) -> str:
+        """Convert a conversational prompt into a concise search query using Local LLM."""
+        if not self.local_client:
+            return search_prompt
+
+        # If the prompt is already short (e.g. < 8 words), just use it
+        if len(search_prompt.split()) < 8:
+            return search_prompt
+
+        logger.info("Distilling conversational prompt into search keywords...")
+        prompt = f"""
+Convert the following conversational request into a concise, effective search engine query (keywords only).
+Request: "{search_prompt}"
+Search Query:"""
+
+        try:
+            response = self.local_client.chat.completions.create(
+                model=Config.LM_STUDIO_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a search query optimizer. Convert long requests into 3-5 keyword search terms.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Extract search keywords from: {search_prompt}",
+                    },
+                ],
+                max_tokens=50,
+                temperature=0.1,
+                timeout=30,
+            )
+            content = response.choices[0].message.content
+            if not content:
+                logger.warning("Local LLM returned empty content for distillation")
+                return self._manual_distill(search_prompt)
+
+            logger.info(f"LLM distillation raw output: '{content.strip()}'")
+
+            query = content.strip().strip('"').strip()
+            # Remove common prefixes LLMs add
+            query = re.sub(
+                r"^(Search Query:|Keywords:|Query:)\s*", "", query, flags=re.IGNORECASE
+            )
+
+            # If the LLM just echoed the whole thing or returned something too long, manual distill
+            if len(query.split()) > 10:
+                logger.info("LLM output too long, using manual distillation")
+                return self._manual_distill(search_prompt)
+
+            if not query:
+                return self._manual_distill(search_prompt)
+
+            logger.info(f"Distilled query: {query}")
+            return query
+        except Exception as e:
+            logger.warning(
+                f"Failed to distill search query: {e}. Using manual distillation."
+            )
+            return self._manual_distill(search_prompt)
+
+    def _manual_distill(self, text: str) -> str:
+        """Fallback to extract keywords if LLM fails."""
+        # Remove common conversational filler
+        fillers = [
+            "i'm a",
+            "i am a",
+            "looking for",
+            "the latest",
+            "stories i can",
+            "summarise for",
+            "publication on",
+            "my linkedin profile",
+            "professional",
+            "please",
+            "find",
+            "search for",
+            "latest",
+        ]
+
+        query = text.lower()
+        for filler in fillers:
+            query = query.replace(filler, " ")
+
+        # Clean up whitespace and take first 8 words
+        words = [w for w in query.split() if len(w) >= 2]
+
+        # If we have very few words, try to keep them all
+        if len(words) <= 3:
+            result = " ".join(words).strip()
+        else:
+            result = " ".join(words[:8]).strip()
+
+        if not result:
+            # Last resort: just take the first 5 words of original
+            result = " ".join(text.split()[:5])
+
+        logger.info(f"Manual distillation result: {result}")
+        return result
 
     def _search_local(
         self, search_prompt: str, since_date: datetime, summary_words: int
     ) -> int:
         """Search using DuckDuckGo and process with Local LLM."""
         logger.info("Using Local LLM with DuckDuckGo search...")
+
+        # Distill conversational prompt into keywords for better search results
+        search_query = self._get_search_query(search_prompt)
 
         # Calculate timelimit based on since_date
         days_diff = (datetime.now() - since_date).days
@@ -118,13 +224,13 @@ class StorySearcher:
         # 1. Search DuckDuckGo
         search_results = []
         try:
-            logger.info(f"Querying DuckDuckGo (timelimit={timelimit}): {search_prompt}")
+            logger.info(f"Querying DuckDuckGo (timelimit={timelimit}): {search_query}")
             with DDGS() as ddgs:
                 # Try News search first as it's more relevant for "stories"
                 logger.info("Attempting DuckDuckGo News search...")
                 results = list(
                     ddgs.news(
-                        search_prompt,
+                        search_query,
                         timelimit=timelimit,
                         max_results=10,
                     )
@@ -135,7 +241,7 @@ class StorySearcher:
                     logger.info("No news results, trying regular text search...")
                     results = list(
                         ddgs.text(
-                            search_prompt,
+                            search_query,
                             timelimit=timelimit,
                             max_results=10,
                         )
@@ -146,7 +252,7 @@ class StorySearcher:
                     logger.info("No results with timelimit, trying without...")
                     results = list(
                         ddgs.text(
-                            search_prompt,
+                            search_query,
                             timelimit=None,
                             max_results=10,
                         )
@@ -169,7 +275,10 @@ class StorySearcher:
                 f"DuckDuckGo search complete. Found {len(search_results)} results."
             )
         except Exception as e:
-            logger.error(f"DuckDuckGo search failed: {e}")
+            if "no results" in str(e).lower():
+                logger.warning(f"DuckDuckGo search returned no results: {e}")
+            else:
+                logger.error(f"DuckDuckGo search failed: {e}")
             return 0
 
         if not search_results:
@@ -282,39 +391,26 @@ Return ONLY the JSON object.
                     f"SEARCH_PROMPT_TEMPLATE formatting failed: {e}. Using default template."
                 )
 
-                return f"""
-You are a professional news aggregator and analyst.
+        return f"""
+You are a news curator. Find 3-5 recent news stories matching: "{search_prompt}"
 
-TASK:
-1. Search for recent news stories that match this criteria: "{search_prompt}"
-2. Only include stories published after {since_date.strftime("%Y-%m-%d")}.
-3. Identify distinct stories. If multiple sources cover the same event/topic, group them as one story with multiple sources.
-4. Focus on significant, newsworthy stories that are relevant and well-sourced.
+REQUIREMENTS:
+- Stories must be from after {since_date.strftime("%Y-%m-%d")}
+- Each story needs: title, sources (URLs), summary ({summary_words} words max), quality_score (1-10)
 
-For each story, provide:
-- A clear, professional title
-- A list of all source URLs covering this story
-- A comprehensive summary of exactly {summary_words} words that captures the key facts
-- A quality score from 1-10 based on:
-    - Relevance to the search criteria (weight: 40%)
-    - Significance and newsworthiness (weight: 30%)
-    - Source credibility and coverage (weight: 20%)
-    - Timeliness and freshness (weight: 10%)
-
-OUTPUT FORMAT (strict JSON):
+RESPOND WITH ONLY THIS JSON FORMAT:
 {{
-    "stories": [
-        {{
-            "title": "Clear Descriptive Story Title",
-            "sources": ["https://source1.com/article", "https://source2.com/article"],
-            "summary": "The complete {summary_words}-word summary...",
-            "quality_score": 8
-        }}
-    ]
+  "stories": [
+    {{
+      "title": "Story Title",
+      "sources": ["https://example.com/article"],
+      "summary": "Brief summary here.",
+      "quality_score": 8
+    }}
+  ]
 }}
 
-Return an empty array in the "stories" key if no relevant stories are found.
-Only include stories that truly match the criteria with quality score >= 5.
+IMPORTANT: Return complete, valid JSON. Keep summaries concise.
 """
 
     def _parse_response(self, response_text: str) -> list[dict]:
@@ -323,58 +419,106 @@ Only include stories that truly match the criteria with quality score >= 5.
             logger.error("Empty response text provided to _parse_response")
             return []
 
+        text = response_text.strip()
+
+        # 1. Try to find JSON block in markdown (more permissive)
+        match = re.search(r"```\w*\s*([\s\S]*?)\s*```", text)
+        if match:
+            text = match.group(1).strip()
+
+        # 2. Try to parse as is
         try:
-            # 1. Try direct parsing
-            text = response_text.strip()
+            data = json.loads(text)
+            return self._normalize_stories(data)
+        except json.JSONDecodeError as e:
+            logger.debug(f"Direct JSON parse failed: {e}")
 
-            # Remove markdown code blocks if present
-            if "```" in text:
-                # Try to find content between ```json and ``` or just ``` and ```
-                json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
-                if json_match:
-                    text = json_match.group(1).strip()
-                else:
-                    # If no closing block, just strip the opening one
-                    text = re.sub(r"```(?:json)?", "", text).strip()
+        # 3. Try to find the outermost JSON object or array
+        start_brace = text.find("{")
+        start_bracket = text.find("[")
 
-            # 2. If it's still not valid, try to find the first [ and last ]
-            if not (text.startswith("[") and text.endswith("]")):
-                start_idx = text.find("[")
-                end_idx = text.rfind("]")
-                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                    text = text[start_idx : end_idx + 1]
+        start_idx = -1
+        if start_brace != -1 and start_bracket != -1:
+            start_idx = min(start_brace, start_bracket)
+        elif start_brace != -1:
+            start_idx = start_brace
+        elif start_bracket != -1:
+            start_idx = start_bracket
 
-            stories = json.loads(text)
-            if not isinstance(stories, list):
-                # If it's a single object, wrap it in a list
-                if isinstance(stories, dict):
-                    # Check if it's a wrapper object like {"stories": [...]}
-                    for key in ["stories", "results", "items"]:
-                        if key in stories and isinstance(stories[key], list):
-                            return stories[key]
-                    return [stories]
+        if start_idx != -1:
+            # Find the corresponding last brace/bracket
+            end_idx = max(text.rfind("}"), text.rfind("]"))
+            if end_idx > start_idx:
+                candidate = text[start_idx : end_idx + 1]
+                try:
+                    data = json.loads(candidate)
+                    return self._normalize_stories(data)
+                except json.JSONDecodeError as e:
+                    logger.debug(f"Outermost JSON extraction failed: {e}")
 
-                logger.error(f"Response is not a list or valid object: {type(stories)}")
-                return []
+        # 4. Fallback: Try to find ANY list in the text
+        try:
+            match = re.search(r"\[\s*\{.*\}\s*\]", text, re.DOTALL)
+            if match:
+                data = json.loads(match.group(0))
+                return self._normalize_stories(data)
+        except Exception as e:
+            logger.debug(f"List regex extraction failed: {e}")
 
+        # 5. Salvage: Try to extract individual story objects
+        logger.info("Attempting to salvage individual story objects from response...")
+        stories = []
+
+        # Look specifically for story objects by finding patterns like {"title" or { "title"
+        # This skips the outer wrapper and finds actual story objects
+        story_starts = []
+        for match in re.finditer(r'\{\s*"title"\s*:', text):
+            story_starts.append(match.start())
+
+        logger.debug(f"Found {len(story_starts)} potential story start positions")
+
+        for start in story_starts:
+            # Try to find the matching closing brace for this story object
+            balance = 0
+            for i in range(start, len(text)):
+                if text[i] == "{":
+                    balance += 1
+                elif text[i] == "}":
+                    balance -= 1
+                    if balance == 0:
+                        # Found a complete object
+                        candidate = text[start : i + 1]
+                        try:
+                            obj = json.loads(candidate)
+                            if isinstance(obj, dict) and "title" in obj:
+                                stories.append(obj)
+                                logger.info(
+                                    f"Salvaged story: {obj.get('title', 'Unknown')[:60]}"
+                                )
+                        except json.JSONDecodeError as e:
+                            logger.debug(f"Failed to parse story candidate: {e}")
+                        break
+
+        if stories:
+            logger.info(f"Salvaged {len(stories)} stories")
             return stories
 
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON response: {e}")
-            logger.info(
-                f"Raw response content (first 1000 chars):\n{response_text[:1000]}"
-            )
+        logger.error("Failed to parse JSON response")
+        logger.info(f"Raw response content (first 1000 chars):\n{response_text[:1000]}")
+        return []
 
-            # Last ditch effort: try to find anything that looks like a JSON array using regex
-            try:
-                # This is very loose but might catch some cases
-                array_match = re.search(r"\[\s*\{.*\}\s*\]", response_text, re.DOTALL)
-                if array_match:
-                    return json.loads(array_match.group(0))
-            except:
-                pass
-
-            return []
+    def _normalize_stories(self, data: Any) -> list[dict]:
+        """Helper to extract stories list from various JSON structures."""
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            for key in ["stories", "results", "items", "news"]:
+                if key in data and isinstance(data[key], list):
+                    return data[key]
+            # Maybe the dict itself is a story?
+            if "title" in data:
+                return [data]
+        return []
 
     def _save_stories(self, stories_data: list[dict]) -> int:
         """Save stories to database, avoiding duplicates. Returns count of new stories."""
