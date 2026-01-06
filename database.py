@@ -23,6 +23,8 @@ class Story:
     source_links: list[str] = field(default_factory=list)
     acquire_date: Optional[datetime] = None
     quality_score: int = 0
+    category: str = "Other"  # Technology, Business, Science, AI, Other
+    quality_justification: str = ""  # Reasoning for the quality score
     image_path: Optional[str] = None
     verification_status: str = "pending"  # pending, approved, rejected
     publish_status: str = "unpublished"  # unpublished, scheduled, published
@@ -41,6 +43,8 @@ class Story:
             if self.acquire_date
             else None,
             "quality_score": self.quality_score,
+            "category": self.category,
+            "quality_justification": self.quality_justification,
             "image_path": self.image_path,
             "verification_status": self.verification_status,
             "publish_status": self.publish_status,
@@ -63,6 +67,9 @@ class Story:
             except json.JSONDecodeError:
                 source_links = [row["source_links"]]
 
+        # Handle optional columns that may not exist in older databases
+        keys = row.keys()
+
         return cls(
             id=row["id"],
             title=row["title"],
@@ -70,6 +77,10 @@ class Story:
             source_links=source_links,
             acquire_date=_parse_datetime(row["acquire_date"]),
             quality_score=row["quality_score"],
+            category=row["category"] if "category" in keys else "Other",
+            quality_justification=row["quality_justification"]
+            if "quality_justification" in keys
+            else "",
             image_path=row["image_path"],
             verification_status=row["verification_status"],
             publish_status=row["publish_status"],
@@ -111,6 +122,19 @@ class Database:
         finally:
             conn.close()
 
+    def _migrate_add_column(
+        self, cursor: sqlite3.Cursor, column_name: str, column_def: str
+    ) -> None:
+        """Add a column to the stories table if it doesn't exist."""
+        try:
+            cursor.execute(f"ALTER TABLE stories ADD COLUMN {column_name} {column_def}")
+            logger.info(f"Added column '{column_name}' to stories table")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e).lower():
+                pass  # Column already exists
+            else:
+                raise
+
     def _init_db(self) -> None:
         """Initialize database tables."""
         with self._get_connection() as conn:
@@ -125,6 +149,8 @@ class Database:
                     source_links TEXT,
                     acquire_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     quality_score INTEGER DEFAULT 0,
+                    category TEXT DEFAULT 'Other',
+                    quality_justification TEXT DEFAULT '',
                     image_path TEXT,
                     verification_status TEXT DEFAULT 'pending',
                     publish_status TEXT DEFAULT 'unpublished',
@@ -133,6 +159,10 @@ class Database:
                     linkedin_post_id TEXT
                 )
             """)
+
+            # Migrate existing databases: add new columns if they don't exist
+            self._migrate_add_column(cursor, "category", "TEXT DEFAULT 'Other'")
+            self._migrate_add_column(cursor, "quality_justification", "TEXT DEFAULT ''")
 
             # System state table for tracking last check date, etc.
             cursor.execute("""
@@ -151,6 +181,10 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_stories_quality
                 ON stories(quality_score DESC)
             """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_stories_category
+                ON stories(category)
+            """)
 
             logger.info("Database initialized successfully")
 
@@ -164,8 +198,9 @@ class Database:
                 """
                 INSERT INTO stories
                 (title, summary, source_links, acquire_date, quality_score,
-                 image_path, verification_status, publish_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 category, quality_justification, image_path, verification_status,
+                 publish_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     story.title,
@@ -173,6 +208,8 @@ class Database:
                     json.dumps(story.source_links),
                     story.acquire_date or datetime.now(),
                     story.quality_score,
+                    story.category,
+                    story.quality_justification,
                     story.image_path,
                     story.verification_status,
                     story.publish_status,
@@ -198,6 +235,13 @@ class Database:
             row = cursor.fetchone()
             return Story.from_row(row) if row else None
 
+    def get_all_story_titles(self) -> list[tuple[int, str]]:
+        """Get all story IDs and titles for semantic deduplication."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, title FROM stories")
+            return [(row["id"], row["title"]) for row in cursor.fetchall()]
+
     def update_story(self, story: Story) -> bool:
         """Update an existing story."""
         if story.id is None:
@@ -212,6 +256,8 @@ class Database:
                     summary = ?,
                     source_links = ?,
                     quality_score = ?,
+                    category = ?,
+                    quality_justification = ?,
                     image_path = ?,
                     verification_status = ?,
                     publish_status = ?,
@@ -225,6 +271,8 @@ class Database:
                     story.summary,
                     json.dumps(story.source_links),
                     story.quality_score,
+                    story.category,
+                    story.quality_justification,
                     story.image_path,
                     story.verification_status,
                     story.publish_status,
