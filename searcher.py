@@ -3,9 +3,13 @@
 import json
 import logging
 import re
+import time
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Callable
+from urllib.parse import urlparse
+from functools import wraps
 from ddgs import DDGS
+import requests
 
 from google import genai  # type: ignore
 from openai import OpenAI
@@ -16,6 +20,204 @@ from database import Database, Story
 logger = logging.getLogger(__name__)
 
 
+def retry_with_backoff(
+    max_retries: int | None = None,
+    base_delay: float | None = None,
+    retryable_exceptions: tuple = (requests.exceptions.RequestException,),
+) -> Callable:
+    """
+    Decorator for retry with exponential backoff.
+    Uses Config values if not specified.
+    """
+    _max_retries = max_retries if max_retries is not None else Config.API_RETRY_COUNT
+    _base_delay = base_delay if base_delay is not None else Config.API_RETRY_DELAY
+
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception: Exception | None = None
+            for attempt in range(_max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except retryable_exceptions as e:
+                    last_exception = e
+                    if attempt < _max_retries:
+                        delay = _base_delay * (2**attempt)
+                        logger.warning(
+                            f"Attempt {attempt + 1} failed: {e}. "
+                            f"Retrying in {delay:.1f}s..."
+                        )
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"All {_max_retries + 1} attempts failed.")
+                        raise
+            # This should never be reached, but satisfies type checker
+            if last_exception:
+                raise last_exception
+            raise RuntimeError("Retry logic error")
+
+        return wrapper
+
+    return decorator
+
+
+def calculate_similarity(text1: str, text2: str) -> float:
+    """
+    Calculate Jaccard similarity between two texts using word sets.
+    Returns a value between 0.0 (no similarity) and 1.0 (identical).
+    """
+    # Normalize: lowercase, remove punctuation, split into words
+    words1 = set(re.sub(r"[^\w\s]", "", text1.lower()).split())
+    words2 = set(re.sub(r"[^\w\s]", "", text2.lower()).split())
+
+    # Remove very common words that don't carry meaning
+    stopwords = {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "can",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+    }
+    words1 -= stopwords
+    words2 -= stopwords
+
+    if not words1 or not words2:
+        return 0.0
+
+    intersection = words1 & words2
+    union = words1 | words2
+
+    return len(intersection) / len(union) if union else 0.0
+
+
+def validate_url(url: str) -> bool:
+    """
+    Validate a URL format and optionally check accessibility.
+    Returns True if URL is valid and accessible.
+    """
+    if not url:
+        return False
+
+    # Parse URL
+    try:
+        parsed = urlparse(url)
+        if not all([parsed.scheme, parsed.netloc]):
+            return False
+        if parsed.scheme not in ("http", "https"):
+            return False
+    except Exception:
+        return False
+
+    # Optional: Check accessibility (HEAD request with short timeout)
+    if Config.VALIDATE_SOURCE_URLS:
+        try:
+            response = requests.head(url, timeout=5, allow_redirects=True)
+            return response.status_code < 400
+        except requests.exceptions.RequestException:
+            # If we can't reach it, still accept it (might be temporary)
+            logger.debug(f"URL accessibility check failed for {url}")
+            return True
+
+    return True
+
+
+def extract_article_date(story_data: dict) -> datetime | None:
+    """
+    Extract article date from story data.
+    Looks for common date fields and parses various formats.
+    Returns None if no valid date found.
+    """
+    # Common date field names
+    date_fields = [
+        "date",
+        "published_date",
+        "publish_date",
+        "article_date",
+        "created_at",
+    ]
+
+    for field in date_fields:
+        if field in story_data and story_data[field]:
+            date_str = story_data[field]
+            # Try various date formats
+            formats = [
+                "%Y-%m-%d",
+                "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%dT%H:%M:%SZ",
+                "%Y-%m-%dT%H:%M:%S.%fZ",
+                "%B %d, %Y",
+                "%b %d, %Y",
+                "%d %B %Y",
+                "%d %b %Y",
+            ]
+            for fmt in formats:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+
+    return None
+
+
+def filter_stories_by_date(stories: list[dict], since_date: datetime) -> list[dict]:
+    """
+    Filter stories to only include those published after since_date.
+    Stories without a parseable date are included (benefit of the doubt).
+    """
+    filtered = []
+    for story in stories:
+        article_date = extract_article_date(story)
+        if article_date is None:
+            # No date found, include it
+            filtered.append(story)
+        elif article_date >= since_date:
+            filtered.append(story)
+        else:
+            logger.debug(
+                f"Filtered out story (too old): {story.get('title', 'Unknown')[:50]} "
+                f"(date: {article_date.date()})"
+            )
+    return filtered
+
+
 class StorySearcher:
     """Search for and process news stories using Gemini AI or Local LLM."""
 
@@ -24,11 +226,23 @@ class StorySearcher:
         database: Database,
         client: genai.Client,
         local_client: OpenAI | None = None,
+        progress_callback: Callable[[str], None] | None = None,
     ):
         """Initialize the story searcher."""
         self.db = database
         self.client = client
         self.local_client = local_client
+        self.progress_callback = progress_callback
+        # Cache for preview mode - stores discovered stories before save
+        self._preview_stories: list[dict] = []
+        # Cache for raw search results (for retry without re-fetching)
+        self._cached_search_results: list[dict] = []
+
+    def _report_progress(self, message: str) -> None:
+        """Report progress via callback if available."""
+        if self.progress_callback:
+            self.progress_callback(message)
+        logger.info(message)
 
     def get_search_start_date(self) -> datetime:
         """
@@ -99,7 +313,7 @@ class StorySearcher:
 
         logger.debug(f"Gemini response length: {len(response.text)} chars")
         stories_data = self._parse_response(response.text)
-        return self._process_stories_data(stories_data)
+        return self._process_stories_data(stories_data, since_date)
 
     def _get_search_query(self, search_prompt: str) -> str:
         """Convert a conversational prompt into a concise search query using Local LLM."""
@@ -111,10 +325,6 @@ class StorySearcher:
             return search_prompt
 
         logger.info("Distilling conversational prompt into search keywords...")
-        prompt = f"""
-Convert the following conversational request into a concise, effective search engine query (keywords only).
-Request: "{search_prompt}"
-Search Query:"""
 
         try:
             response = self.local_client.chat.completions.create(
@@ -290,9 +500,10 @@ Search Query:"""
             logger.error("Local client not available in _search_local")
             return 0
 
-        logger.info(
+        self._report_progress(
             f"Processing {len(search_results)} results with Local LLM ({Config.LM_STUDIO_MODEL})..."
         )
+        max_stories = Config.MAX_STORIES_PER_SEARCH
         prompt = f"""
 You are a news curator. I have found the following search results for the query: "{search_prompt}"
 
@@ -300,13 +511,14 @@ SEARCH RESULTS:
 {json.dumps(search_results, indent=2)}
 
 TASK:
-1. Select the most relevant and interesting stories.
+1. Select up to {max_stories} of the most relevant and interesting stories.
 2. For each story, provide:
    - title: A catchy headline
    - summary: A {summary_words}-word summary
    - sources: A list containing the original link
    - category: One of: Technology, Business, Science, AI, Other
    - quality_score: A score from 1-10 based on relevance and significance
+   - quality_justification: Brief explanation of the score
 
 Return the results as a JSON object with a "stories" key containing an array of story objects.
 Example:
@@ -317,7 +529,8 @@ Example:
       "summary": "This is a summary...",
       "sources": ["https://example.com"],
       "category": "Technology",
-      "quality_score": 8
+      "quality_score": 8,
+      "quality_justification": "Highly relevant, reputable source"
     }}
   ]
 }}
@@ -355,15 +568,30 @@ Return ONLY the JSON object.
 
         logger.info("Local LLM processing complete.")
         stories_data = self._parse_response(content)
-        return self._process_stories_data(stories_data)
+        return self._process_stories_data(stories_data, since_date)
 
-    def _process_stories_data(self, stories_data: list) -> int:
+    def _process_stories_data(
+        self, stories_data: list, since_date: datetime | None = None
+    ) -> int:
         """Common logic to save stories and update state."""
         if not stories_data:
             logger.warning("No stories found in search results")
             return 0
 
         logger.info(f"Found {len(stories_data)} potential stories")
+
+        # Apply date post-filtering if since_date provided
+        if since_date:
+            original_count = len(stories_data)
+            stories_data = filter_stories_by_date(stories_data, since_date)
+            if len(stories_data) < original_count:
+                logger.info(
+                    f"Date filter: {original_count} -> {len(stories_data)} stories"
+                )
+
+        if not stories_data:
+            logger.warning("No stories remain after date filtering")
+            return 0
 
         # Save new stories to database
         new_count = self._save_stories(stories_data)
@@ -378,6 +606,8 @@ Return ONLY the JSON object.
         self, search_prompt: str, since_date: datetime, summary_words: int
     ) -> str:
         """Build the prompt for story search."""
+        max_stories = Config.MAX_STORIES_PER_SEARCH
+
         # Allow overriding the full instruction via .env with placeholders
         if Config.SEARCH_PROMPT_TEMPLATE:
             try:
@@ -385,6 +615,7 @@ Return ONLY the JSON object.
                     criteria=search_prompt,
                     since_date=since_date.strftime("%Y-%m-%d"),
                     summary_words=summary_words,
+                    max_stories=max_stories,
                 )
             except Exception as e:
                 logger.warning(
@@ -392,11 +623,17 @@ Return ONLY the JSON object.
                 )
 
         return f"""
-You are a news curator. Find 3-5 recent news stories matching: "{search_prompt}"
+You are a news curator. Find {max_stories} recent news stories matching: "{search_prompt}"
 
 REQUIREMENTS:
 - Stories must be from after {since_date.strftime("%Y-%m-%d")}
-- Each story needs: title, sources (URLs), summary ({summary_words} words max), quality_score (1-10)
+- Each story needs:
+  * title: A clear, engaging headline
+  * sources: Array of source URLs
+  * summary: {summary_words} words max
+  * category: One of: Technology, Business, Science, AI, Other
+  * quality_score: 1-10 rating
+  * quality_justification: Brief explanation of the score (e.g., "High relevance, reputable source, timely")
 
 RESPOND WITH ONLY THIS JSON FORMAT:
 {{
@@ -405,12 +642,14 @@ RESPOND WITH ONLY THIS JSON FORMAT:
       "title": "Story Title",
       "sources": ["https://example.com/article"],
       "summary": "Brief summary here.",
-      "quality_score": 8
+      "category": "Technology",
+      "quality_score": 8,
+      "quality_justification": "Highly relevant topic, from reputable source, published today"
     }}
   ]
 }}
 
-IMPORTANT: Return complete, valid JSON. Keep summaries concise.
+IMPORTANT: Return complete, valid JSON. Keep summaries concise. Include quality justification.
 """
 
     def _parse_response(self, response_text: str) -> list[dict]:
@@ -503,7 +742,20 @@ IMPORTANT: Return complete, valid JSON. Keep summaries concise.
             logger.info(f"Salvaged {len(stories)} stories")
             return stories
 
-        logger.error("Failed to parse JSON response")
+        # 6. Last resort: Try LLM-based JSON repair
+        logger.info("Attempting LLM-based JSON repair...")
+        repaired = self._repair_json_with_llm(response_text)
+        if repaired:
+            try:
+                data = json.loads(repaired)
+                stories = self._normalize_stories(data)
+                if stories:
+                    logger.info(f"LLM repair successful: {len(stories)} stories")
+                    return stories
+            except json.JSONDecodeError:
+                logger.debug("LLM repair produced invalid JSON")
+
+        logger.error("Failed to parse JSON response after all attempts")
         logger.info(f"Raw response content (first 1000 chars):\n{response_text[:1000]}")
         return []
 
@@ -524,22 +776,41 @@ IMPORTANT: Return complete, valid JSON. Keep summaries concise.
         """Save stories to database, avoiding duplicates. Returns count of new stories."""
         new_count = 0
 
-        for data in stories_data:
+        # Get existing titles for semantic deduplication
+        existing_titles = self.db.get_all_story_titles()
+        similarity_threshold = Config.DEDUP_SIMILARITY_THRESHOLD
+
+        for i, data in enumerate(stories_data):
             try:
                 title = data.get("title", "").strip()
                 if not title:
                     continue
 
+                self._report_progress(
+                    f"Processing story {i + 1}/{len(stories_data)}: {title[:50]}..."
+                )
+
                 # Get sources from either 'sources' or 'source_links'
                 sources = data.get("sources") or data.get("source_links") or []
 
-                # Check for existing story with same title
+                # Validate URLs if enabled
+                if Config.VALIDATE_SOURCE_URLS and sources:
+                    valid_sources = [url for url in sources if validate_url(url)]
+                    if len(valid_sources) < len(sources):
+                        logger.debug(
+                            f"Filtered {len(sources) - len(valid_sources)} invalid URLs"
+                        )
+                    sources = valid_sources
+                    if not sources:
+                        logger.warning(f"Skipping story with no valid sources: {title}")
+                        continue
+
+                # Check for exact title match first
                 existing = self.db.get_story_by_title(title)
                 if existing:
                     # Merge sources if same story from different search
-                    new_sources = sources
                     existing_sources = set(existing.source_links)
-                    updated_sources = list(existing_sources.union(set(new_sources)))
+                    updated_sources = list(existing_sources.union(set(sources)))
 
                     if len(updated_sources) > len(existing.source_links):
                         existing.source_links = updated_sources
@@ -547,21 +818,54 @@ IMPORTANT: Return complete, valid JSON. Keep summaries concise.
                         logger.debug(f"Updated sources for existing story: {title}")
                     continue
 
-                # Create new story
+                # Semantic deduplication: check similarity against existing titles
+                is_duplicate = False
+                for existing_id, existing_title in existing_titles:
+                    similarity = calculate_similarity(title, existing_title)
+                    if similarity >= similarity_threshold:
+                        logger.info(
+                            f"Semantic duplicate detected (similarity={similarity:.2f}): "
+                            f"'{title[:40]}...' matches '{existing_title[:40]}...'"
+                        )
+                        # Merge sources into the existing story
+                        existing_story = self.db.get_story(existing_id)
+                        if existing_story:
+                            existing_sources = set(existing_story.source_links)
+                            updated_sources = list(existing_sources.union(set(sources)))
+                            if len(updated_sources) > len(existing_story.source_links):
+                                existing_story.source_links = updated_sources
+                                self.db.update_story(existing_story)
+                        is_duplicate = True
+                        break
+
+                if is_duplicate:
+                    continue
+
+                # Create new story with all fields
                 quality_score = data.get("quality_score", 5)
+                category = data.get("category", "Other")
+                quality_justification = data.get("quality_justification", "")
+
                 story = Story(
                     title=title,
                     summary=data.get("summary", ""),
                     source_links=sources,
                     acquire_date=datetime.now(),
                     quality_score=quality_score,
+                    category=category,
+                    quality_justification=quality_justification,
                     verification_status="pending",
                     publish_status="unpublished",
                 )
 
                 self.db.add_story(story)
                 new_count += 1
-                logger.info(f"Added new story: {title} (Score: {quality_score})")
+                # Add to existing titles for subsequent duplicate checks
+                existing_titles.append((story.id or 0, title))
+                logger.info(
+                    f"Added new story: {title} "
+                    f"(Score: {quality_score}, Category: {category})"
+                )
 
             except Exception as e:
                 logger.error(f"Failed to save story: {e}")
@@ -588,3 +892,221 @@ IMPORTANT: Return complete, valid JSON. Keep summaries concise.
             "Previous cycle stories will be used to fill the gap."
         )
         return False
+
+    def search_preview(self) -> list[dict]:
+        """
+        Search for stories but don't save them - return for preview.
+        Caches results for later selective saving.
+        """
+        since_date = self.get_search_start_date()
+        search_prompt = Config.SEARCH_PROMPT
+        summary_words = Config.SUMMARY_WORD_COUNT
+
+        self._report_progress(f"Searching for preview: '{search_prompt[:50]}...'")
+
+        try:
+            if self.local_client:
+                # Use DuckDuckGo search
+                search_query = self._get_search_query(search_prompt)
+                days_diff = (datetime.now() - since_date).days
+                if days_diff <= 1:
+                    timelimit = "d"
+                elif days_diff <= 7:
+                    timelimit = "w"
+                else:
+                    timelimit = "m"
+
+                search_results = self._fetch_duckduckgo_results(search_query, timelimit)
+                if not search_results:
+                    return []
+
+                # Cache raw results
+                self._cached_search_results = search_results
+
+                # Process with LLM
+                stories_data = self._process_with_local_llm(
+                    search_results, search_prompt, summary_words
+                )
+            else:
+                # Use Gemini
+                prompt = self._build_search_prompt(
+                    search_prompt, since_date, summary_words
+                )
+                response = self.client.models.generate_content(
+                    model=Config.MODEL_TEXT,
+                    contents=prompt,
+                    config={
+                        "tools": [{"google_search": {}}],
+                        "response_mime_type": "application/json",
+                        "max_output_tokens": 8192,
+                    },
+                )
+                if not response.text:
+                    return []
+                stories_data = self._parse_response(response.text)
+
+            self._preview_stories = stories_data
+            return stories_data
+
+        except Exception as e:
+            logger.error(f"Preview search failed: {e}")
+            return []
+
+    def save_selected_stories(self, indices: list[int]) -> int:
+        """
+        Save selected stories from preview by their indices.
+        Returns count of stories saved.
+        """
+        if not self._preview_stories:
+            logger.warning("No preview stories available. Run search_preview first.")
+            return 0
+
+        selected = [
+            self._preview_stories[i]
+            for i in indices
+            if 0 <= i < len(self._preview_stories)
+        ]
+
+        if not selected:
+            logger.warning("No valid indices provided")
+            return 0
+
+        saved = self._save_stories(selected)
+        self.db.set_last_check_date()
+
+        # Clear preview cache
+        self._preview_stories = []
+        return saved
+
+    def save_all_preview_stories(self) -> int:
+        """Save all stories from preview."""
+        if not self._preview_stories:
+            return 0
+        return self.save_selected_stories(list(range(len(self._preview_stories))))
+
+    def _fetch_duckduckgo_results(
+        self, search_query: str, timelimit: str | None
+    ) -> list[dict]:
+        """Fetch search results from DuckDuckGo with retry logic."""
+        search_results = []
+
+        @retry_with_backoff(retryable_exceptions=(Exception,))
+        def do_search():
+            with DDGS() as ddgs:
+                # Try News search first
+                results = list(
+                    ddgs.news(search_query, timelimit=timelimit, max_results=10)
+                )
+                if not results:
+                    results = list(
+                        ddgs.text(search_query, timelimit=timelimit, max_results=10)
+                    )
+                if not results and timelimit:
+                    results = list(
+                        ddgs.text(search_query, timelimit=None, max_results=10)
+                    )
+                return results
+
+        try:
+            self._report_progress(f"Searching DuckDuckGo: {search_query}")
+            results = do_search()
+
+            for r in results:
+                title = r.get("title", "No Title")
+                link = r.get("href") or r.get("link") or r.get("url", "")
+                snippet = r.get("body") or r.get("snippet") or r.get("description", "")
+                search_results.append(
+                    {"title": title, "link": link, "snippet": snippet}
+                )
+
+            self._report_progress(f"Found {len(search_results)} search results")
+
+        except Exception as e:
+            logger.error(f"DuckDuckGo search failed after retries: {e}")
+
+        return search_results
+
+    def _process_with_local_llm(
+        self, search_results: list[dict], search_prompt: str, summary_words: int
+    ) -> list[dict]:
+        """Process search results with local LLM."""
+        if not self.local_client:
+            return []
+
+        max_stories = Config.MAX_STORIES_PER_SEARCH
+        prompt = f"""
+You are a news curator. I have found the following search results for: "{search_prompt}"
+
+SEARCH RESULTS:
+{json.dumps(search_results, indent=2)}
+
+TASK: Select up to {max_stories} stories and provide:
+- title, summary ({summary_words} words), sources, category, quality_score (1-10), quality_justification
+
+Return JSON: {{"stories": [...]}}
+"""
+
+        try:
+            response = self.local_client.chat.completions.create(
+                model=Config.LM_STUDIO_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                timeout=120,
+            )
+            content = response.choices[0].message.content
+            if content:
+                return self._parse_response(content)
+        except Exception as e:
+            logger.error(f"Local LLM processing failed: {e}")
+
+        return []
+
+    def _repair_json_with_llm(self, malformed_json: str) -> str | None:
+        """
+        Attempt to repair malformed JSON using an LLM.
+        This is a fallback when initial parsing fails.
+        """
+        repair_prompt = f"""
+The following JSON is malformed. Please fix it and return ONLY the corrected JSON:
+
+{malformed_json[:3000]}
+
+Return ONLY valid JSON, no explanation.
+"""
+
+        try:
+            if self.local_client:
+                response = self.local_client.chat.completions.create(
+                    model=Config.LM_STUDIO_MODEL,
+                    messages=[{"role": "user", "content": repair_prompt}],
+                    timeout=60,
+                )
+                return response.choices[0].message.content
+            else:
+                response = self.client.models.generate_content(
+                    model=Config.MODEL_TEXT,
+                    contents=repair_prompt,
+                    config={"response_mime_type": "application/json"},
+                )
+                return response.text
+        except Exception as e:
+            logger.error(f"JSON repair failed: {e}")
+            return None
+
+    def get_search_feedback(self, results_count: int, query: str) -> str:
+        """
+        Generate actionable feedback when search returns few or no results.
+        """
+        if results_count == 0:
+            suggestions = [
+                "• Try broadening your search terms",
+                "• Remove specific date constraints",
+                "• Use more general keywords",
+                f"• Current query: '{query[:50]}...'",
+            ]
+            return "No results found. Suggestions:\n" + "\n".join(suggestions)
+        elif results_count < 3:
+            return (
+                f"Only {results_count} result(s) found. "
+                "Consider broadening your search criteria for more options."
+            )
+        return f"Found {results_count} stories."

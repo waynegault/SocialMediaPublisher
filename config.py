@@ -74,6 +74,20 @@ class Config:
     SEARCH_PROMPT_TEMPLATE: str = _get_str("SEARCH_PROMPT_TEMPLATE", "")
     SEARCH_LOOKBACK_DAYS: int = _get_int("SEARCH_LOOKBACK_DAYS", 7)
     USE_LAST_CHECKED_DATE: bool = _get_bool("USE_LAST_CHECKED_DATE", True)
+    # Maximum number of stories to find per search (default 5)
+    MAX_STORIES_PER_SEARCH: int = _get_int("MAX_STORIES_PER_SEARCH", 5)
+    # Similarity threshold for semantic deduplication (0.0-1.0, higher = stricter)
+    DEDUP_SIMILARITY_THRESHOLD: float = float(
+        _get_str("DEDUP_SIMILARITY_THRESHOLD", "0.7")
+    )
+    # Number of retries for transient API failures
+    API_RETRY_COUNT: int = _get_int("API_RETRY_COUNT", 3)
+    # Base delay for exponential backoff (seconds)
+    API_RETRY_DELAY: float = float(_get_str("API_RETRY_DELAY", "2.0"))
+    # Enable URL validation before saving sources
+    VALIDATE_SOURCE_URLS: bool = _get_bool("VALIDATE_SOURCE_URLS", True)
+    # Enable story preview mode in test search
+    SEARCH_PREVIEW_MODE: bool = _get_bool("SEARCH_PREVIEW_MODE", True)
 
     # --- Content Settings ---
     SUMMARY_WORD_COUNT: int = _get_int("SUMMARY_WORD_COUNT", 250)
@@ -158,6 +172,11 @@ class Config:
             print("  SEARCH_PROMPT_TEMPLATE: custom (from .env)")
         print(f"  SEARCH_LOOKBACK_DAYS: {cls.SEARCH_LOOKBACK_DAYS}")
         print(f"  USE_LAST_CHECKED_DATE: {cls.USE_LAST_CHECKED_DATE}")
+        print(f"  MAX_STORIES_PER_SEARCH: {cls.MAX_STORIES_PER_SEARCH}")
+        print(f"  DEDUP_SIMILARITY_THRESHOLD: {cls.DEDUP_SIMILARITY_THRESHOLD}")
+        print(f"  API_RETRY_COUNT: {cls.API_RETRY_COUNT}")
+        print(f"  VALIDATE_SOURCE_URLS: {cls.VALIDATE_SOURCE_URLS}")
+        print(f"  SEARCH_PREVIEW_MODE: {cls.SEARCH_PREVIEW_MODE}")
         print(f"  SUMMARY_WORD_COUNT: {cls.SUMMARY_WORD_COUNT}")
         print(f"  MIN_QUALITY_SCORE: {cls.MIN_QUALITY_SCORE}")
         print(f"  STORIES_PER_CYCLE: {cls.STORIES_PER_CYCLE}")
