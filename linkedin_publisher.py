@@ -264,7 +264,7 @@ class LinkedInPublisher:
 
         try:
             response = requests.get(
-                f"{self.BASE_URL}/me",
+                f"{self.BASE_URL}/userinfo",
                 headers=self._get_headers(),
                 timeout=10,
             )
@@ -280,7 +280,7 @@ class LinkedInPublisher:
 
         try:
             response = requests.get(
-                f"{self.BASE_URL}/me",
+                f"{self.BASE_URL}/userinfo",
                 headers=self._get_headers(),
                 timeout=10,
             )

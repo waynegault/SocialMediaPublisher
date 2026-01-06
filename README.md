@@ -261,6 +261,7 @@ If fewer than `STORIES_PER_CYCLE` new stories are found:
 - Verify `LINKEDIN_ACCESS_TOKEN` is valid and not expired
 - Check `LINKEDIN_AUTHOR_URN` format
 - Ensure token has `w_member_social` permission
+- For identity checks use the OpenID endpoint `/v2/userinfo` (do **not** call `/v2/me` — it's legacy and may not return OpenID-compliant claims).
 
 ## License
 
