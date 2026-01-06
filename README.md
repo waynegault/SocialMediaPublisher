@@ -3,16 +3,29 @@
 An automated Python application that discovers news stories, generates AI images,
 verifies content quality, and publishes to LinkedIn on a configurable schedule.
 
+## Overview
+
+Social Media Publisher automates the entire content curation and publishing workflow:
+1. Discovers relevant news stories using AI-powered search
+2. Generates professional images for each story
+3. Verifies content quality before publication
+4. Schedules and publishes to LinkedIn automatically
+
+The system supports both Google Gemini AI (with Search grounding) and local LLMs
+via LM Studio for flexible deployment options.
+
 ## Features
 
 - **Automated Story Discovery**: Searches the internet for news stories matching
-  your criteria using Google's Gemini AI with Search grounding
-- **Smart Deduplication**: Groups multiple sources covering the same story
-  together
-- **Quality Scoring**: Rates stories 1-10 based on relevance, significance, and
-  source credibility
-- **AI Image Generation**: Creates professional illustrations for each story
-  using Google's Imagen model or Hugging Face Inference API
+  your criteria using Google's Gemini AI with Search grounding or local LLMs
+- **Semantic Deduplication**: Uses Jaccard similarity to detect duplicate stories
+  even when titles differ slightly
+- **Quality Scoring with Justification**: Rates stories 1-10 with explanations
+  for each score
+- **Category Classification**: Automatically categorizes stories (Technology,
+  Business, Science, AI, Other)
+- **AI Image Generation**: Creates professional illustrations using Google's
+  Imagen model or Hugging Face Inference API
 - **Content Verification**: Uses a separate AI pass to verify professionalism,
   decency, and adherence to your criteria
 - **Smart Scheduling**: Publishes stories spread evenly across your preferred
@@ -21,6 +34,12 @@ verifies content quality, and publishes to LinkedIn on a configurable schedule.
   signature block
 - **Automatic Cleanup**: Removes old unused stories after a configurable
   exclusion period
+- **Retry Logic**: Automatic retry with exponential backoff for transient API
+  failures
+- **URL Validation**: Validates source URLs before saving stories
+- **Date Post-Filtering**: Filters stories by actual article publication date
+- **Preview Mode**: Preview discovered stories before saving with selective save
+  capability
 
 ## How It Works
 
@@ -89,10 +108,11 @@ If you have a Hugging Face token, the app can generate images via the Inference 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `SEARCH_PROMPT` | - | The prompt describing what stories to search for |
-| `SEARCH_PROMPT_TEMPLATE` | - | Optional full instruction template with placeholders `{criteria}`, `{since_date}`, `{summary_words}` |
+| `SEARCH_PROMPT_TEMPLATE` | - | Full instruction template with placeholders |
 | `SEARCH_LOOKBACK_DAYS` | 7 | Days to look back when searching |
 | `USE_LAST_CHECKED_DATE` | True | Use last check time instead of lookback |
 | `SEARCH_CYCLE_HOURS` | 24 | How often to run search cycles |
+| `MAX_STORIES_PER_SEARCH` | 5 | Maximum stories to request per search |
 
 ### Content Settings
 
@@ -100,6 +120,25 @@ If you have a Hugging Face token, the app can generate images via the Inference 
 | :--- | :--- | :--- |
 | `SUMMARY_WORD_COUNT` | 250 | Target word count for summaries |
 | `MIN_QUALITY_SCORE` | 7 | Minimum score (1-10) for publication |
+
+### Deduplication Settings
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `DEDUP_SIMILARITY_THRESHOLD` | 0.6 | Jaccard similarity threshold (0.0-1.0) |
+
+### URL Validation Settings
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `VALIDATE_SOURCE_URLS` | False | Enable URL validation before saving |
+
+### API Retry Settings
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `API_RETRY_COUNT` | 3 | Number of retry attempts for API calls |
+| `API_RETRY_DELAY` | 1.0 | Base delay in seconds (doubles each retry) |
 
 ### Publication Settings
 
@@ -200,6 +239,8 @@ Stories are stored in SQLite with the following fields:
 - `source_links`: JSON array of source URLs
 - `acquire_date`: When the story was discovered
 - `quality_score`: AI-assigned quality rating (1-10)
+- `category`: Story category (Technology, Business, Science, AI, Other)
+- `quality_justification`: Explanation for the quality score
 - `image_path`: Path to generated image
 - `verification_status`: pending/approved/rejected
 - `publish_status`: unpublished/scheduled/published
@@ -250,6 +291,7 @@ If fewer than `STORIES_PER_CYCLE` new stories are found:
 - Check your `SEARCH_PROMPT` is specific but not too narrow
 - Verify `SEARCH_LOOKBACK_DAYS` covers recent news
 - Ensure your Gemini API key has search grounding enabled
+- The system provides actionable feedback when no results are found
 
 ### Images not generating
 
@@ -261,6 +303,212 @@ If fewer than `STORIES_PER_CYCLE` new stories are found:
 - Verify `LINKEDIN_ACCESS_TOKEN` is valid and not expired
 - Check `LINKEDIN_AUTHOR_URN` format
 - Ensure token has `w_member_social` permission
+
+### Duplicate stories appearing
+
+- Adjust `DEDUP_SIMILARITY_THRESHOLD` (higher = stricter matching)
+- Default of 0.6 catches most duplicates while allowing related stories
+
+---
+
+## Developer Instructions
+
+This section provides detailed technical information for developers working on
+or extending the Social Media Publisher.
+
+### Architecture Overview
+
+The application follows a modular architecture:
+
+1. **config.py**: Centralized configuration from environment variables
+2. **database.py**: SQLite persistence with Story dataclass
+3. **searcher.py**: Story discovery with multiple backends (Gemini, Local LLM)
+4. **image_generator.py**: Image generation (Imagen, Hugging Face)
+5. **verifier.py**: Content quality verification
+6. **scheduler.py**: Publication timing logic
+7. **linkedin_publisher.py**: LinkedIn API integration
+8. **main.py**: Orchestration and CLI
+
+### Key Implementation Details
+
+#### Semantic Deduplication
+
+The `calculate_similarity()` function in `searcher.py` uses Jaccard similarity:
+
+- Normalizes text to lowercase, removes punctuation
+- Filters common stopwords
+- Calculates intersection/union of word sets
+- Threshold configurable via `DEDUP_SIMILARITY_THRESHOLD`
+
+#### Retry Logic
+
+The `retry_with_backoff()` decorator provides:
+
+- Configurable retry count and base delay
+- Exponential backoff (delay doubles each attempt)
+- Configurable exception types to catch
+- Logging of retry attempts
+
+#### URL Validation
+
+When `VALIDATE_SOURCE_URLS=True`:
+
+- Validates URL format (scheme, netloc)
+- Optionally performs HEAD request to check accessibility
+- Filters invalid URLs before saving stories
+
+#### Date Post-Filtering
+
+The `filter_stories_by_date()` function:
+
+- Extracts dates from multiple common field names
+- Supports various date formats (ISO, human-readable)
+- Stories without parseable dates are included (benefit of doubt)
+
+#### Preview Mode
+
+The `search_preview()` method:
+
+- Searches without saving to database
+- Caches results in `_preview_stories`
+- `save_selected_stories(indices)` saves specific stories
+- `save_all_preview_stories()` saves all previewed stories
+
+#### JSON Repair
+
+When initial JSON parsing fails:
+
+1. Tries markdown code block extraction
+2. Tries outermost brace/bracket extraction
+3. Tries regex-based list extraction
+4. Attempts to salvage individual story objects
+5. Falls back to LLM-based JSON repair
+
+### Environment Variables
+
+All configuration is loaded at import time from environment variables.
+The `Config` class uses `@staticmethod` properties for lazy evaluation
+where needed.
+
+### Database Migrations
+
+New columns are added with `ALTER TABLE` statements that use
+`IF NOT EXISTS` logic (checking sqlite_master). This allows seamless
+upgrades without data loss.
+
+### API Endpoints Used
+
+#### Google Gemini API
+
+- **Search**: `models.generate_content()` with `google_search` tool
+- **Verification**: `models.generate_content()` for content review
+- **JSON Repair**: `models.generate_content()` with JSON response type
+
+#### DuckDuckGo (via ddgs library)
+
+- **News Search**: `ddgs.news()` for recent news articles
+- **Text Search**: `ddgs.text()` as fallback
+
+#### LinkedIn API
+
+- **Post Creation**: `POST /ugcPosts` with image and text
+- **Image Upload**: Multi-step upload process
+
+### Gotchas and Known Issues
+
+1. **Gemini Rate Limits**: The 429 RESOURCE_EXHAUSTED error requires
+   waiting or upgrading quota
+2. **LM Studio Model Loading**: Must have a model loaded before API calls
+3. **LinkedIn Token Expiry**: Tokens expire and need manual refresh
+4. **DuckDuckGo Rate Limits**: Aggressive searching may trigger blocks
+
+---
+
+## Future Developer Ideas
+
+1. **Multi-Platform Publishing**: Add support for Twitter/X, Facebook,
+   Instagram
+2. **Story Clustering**: Group related stories into threads
+3. **Sentiment Analysis**: Add sentiment scoring to stories
+4. **A/B Testing**: Test different summary styles for engagement
+5. **Analytics Dashboard**: Track post performance metrics
+6. **Webhook Notifications**: Alert on publish success/failure
+7. **Story Templates**: Customizable post formats per category
+8. **Batch Processing**: Process multiple search prompts in parallel
+9. **Content Calendar**: Visual scheduling interface
+10. **Source Reputation Scoring**: Track and weight source reliability
+
+---
+
+## Appendix A: Chronology of Changes
+
+### Version 2.0 (January 2026)
+
+- Added configurable story count per search (`MAX_STORIES_PER_SEARCH`)
+- Implemented semantic deduplication with Jaccard similarity
+- Added category classification and persistence
+- Added quality score justification field
+- Implemented retry logic with exponential backoff
+- Added source URL validation
+- Added date post-filtering for stories
+- Added progress indication callbacks
+- Implemented intermediate result caching
+- Added LLM-based JSON repair fallback
+- Added story preview mode with selective saving
+- Improved empty results feedback
+
+### Version 1.0 (Initial Release)
+
+- Core story discovery with Gemini AI
+- Image generation with Imagen/Hugging Face
+- Content verification
+- LinkedIn publishing
+- Automatic scheduling
+- Database persistence
+
+---
+
+## Appendix B: Technical Specifications
+
+### System Requirements
+
+- Python 3.10+
+- SQLite 3.x
+- Internet connection for API access
+
+### API Requirements
+
+| Service | Required | Purpose |
+| :--- | :--- | :--- |
+| Google Gemini API | Yes* | Story search, verification |
+| LM Studio | Yes* | Alternative to Gemini |
+| Google Imagen | Optional | Image generation |
+| Hugging Face | Optional | Alternative image generation |
+| LinkedIn API | Yes | Publishing |
+
+*Either Gemini or LM Studio is required
+
+### Database Specifications
+
+- **Engine**: SQLite 3
+- **File**: `stories.db` (configurable)
+- **Tables**: `stories`, `state`
+- **Indexes**: Primary key on `id`, index on `title`
+
+### Rate Limits
+
+| API | Limit | Notes |
+| :--- | :--- | :--- |
+| Gemini | Varies by tier | Free tier: 60 RPM |
+| DuckDuckGo | Unofficial | May block aggressive use |
+| LinkedIn | 100 posts/day | Per application |
+
+### Performance Characteristics
+
+- **Search Latency**: 2-10 seconds (depends on backend)
+- **Image Generation**: 5-30 seconds
+- **Database Operations**: <100ms typical
+- **Memory Usage**: ~50-100MB typical
 
 ## License
 
