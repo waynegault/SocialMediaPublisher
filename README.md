@@ -320,6 +320,39 @@ If fewer than `STORIES_PER_CYCLE` new stories are found:
 
 ---
 
+## Security Best Practices
+
+### Protecting Your API Keys and Credentials
+
+**IMPORTANT**: Never commit your actual API keys, tokens, or credentials to version control.
+
+1. **Use the .env file**: Copy `.env.example` to `.env` and add your real credentials there. The `.env` file is already in `.gitignore` and will not be committed.
+
+2. **Keep .env.example generic**: The `.env.example` file should only contain placeholder values (e.g., `your_api_key_here`), never real credentials.
+
+3. **Verify before committing**: Before committing changes, run:
+   ```bash
+   git diff
+   ```
+   Ensure no real API keys or tokens appear in your changes.
+
+4. **Rotate compromised keys**: If you accidentally commit a real API key:
+   - Immediately revoke/regenerate the key in the respective service
+   - Remove the key from git history (consider `git filter-branch` or BFG Repo-Cleaner)
+   - Update your `.env` file with the new key
+
+5. **Use environment-specific credentials**: For production deployments, use environment variables or secret management services (AWS Secrets Manager, Azure Key Vault, etc.) instead of `.env` files.
+
+### Secured Files
+
+The following files are automatically excluded from git commits via `.gitignore`:
+- `.env` - Your actual environment variables with real credentials
+- `*.db` - Database files that may contain sensitive data
+- `generated_images/` - Generated images directory
+- `data/`, `output/` - Local data directories
+
+---
+
 ## Developer Instructions
 
 This section provides detailed technical information for developers working on
