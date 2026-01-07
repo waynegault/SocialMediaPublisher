@@ -4,11 +4,11 @@ import os
 import time
 import logging
 from pathlib import Path
-import requests
 
 from google import genai
 from google.genai import types
 from openai import OpenAI
+from huggingface_hub import InferenceClient
 
 from config import Config
 from database import Database, Story
@@ -148,93 +148,35 @@ class ImageGenerator:
             return None
 
     def _generate_huggingface_image(self, story: Story, prompt: str) -> str | None:
-        """Generate an image using Hugging Face Inference API."""
-        if not Config.HUGGINGFACE_API_TOKEN:
-            return None
+        """Generate an image using Hugging Face InferenceClient (FREE with FLUX.1-schnell)."""
+        # Use the configured model or default to the free FLUX.1-schnell
+        model = Config.HF_TTI_MODEL or "black-forest-labs/FLUX.1-schnell"
 
-        logger.info(
-            f"Attempting Hugging Face image generation via model '{Config.HF_TTI_MODEL}'"
-        )
-
-        headers = {
-            "Authorization": f"Bearer {Config.HUGGINGFACE_API_TOKEN}",
-        }
-
-        # Choose endpoint: custom inference endpoint or public models route
-        # Note: api-inference.huggingface.co is deprecated, use router.huggingface.co
-        if Config.HF_INFERENCE_ENDPOINT:
-            url = Config.HF_INFERENCE_ENDPOINT.rstrip("/")
-        else:
-            url = f"https://router.huggingface.co/hf-inference/models/{Config.HF_TTI_MODEL}"
-
-        payload = {
-            "inputs": prompt,
-            "parameters": {
-                "negative_prompt": Config.HF_NEGATIVE_PROMPT,
-                # Aim for 16:9 while keeping sizes reasonable for free tiers
-                "width": 1024,
-                "height": 576,
-            },
-            "options": {"wait_for_model": True},
-        }
+        logger.info(f"Attempting Hugging Face image generation via model '{model}'")
 
         try:
-            # Some models stream or return raw bytes; set stream=False for simplicity
-            response = requests.post(url, headers=headers, json=payload, timeout=120)
+            # Initialize InferenceClient - works with or without token for free models
+            if Config.HUGGINGFACE_API_TOKEN:
+                client = InferenceClient(token=Config.HUGGINGFACE_API_TOKEN)
+            else:
+                client = InferenceClient()
 
-            # Model cold-start: 503 while loading. Try a short backoff/poll.
-            retries = 0
-            while response.status_code == 503 and retries < 3:
-                time.sleep(5 * (retries + 1))
-                response = requests.post(
-                    url, headers=headers, json=payload, timeout=120
-                )
-                retries += 1
-
-            if response.status_code == 200 and response.headers.get(
-                "content-type", ""
-            ).startswith("image/"):
-                filename = f"story_{story.id}_{int(time.time())}_hf.png"
-                filepath = os.path.join(Config.IMAGE_DIR, filename)
-                with open(filepath, "wb") as f:
-                    f.write(response.content)
-                logger.info(f"Successfully generated HF image: {filepath}")
-                return filepath
-
-            # Some models may return JSON with an image in base64
-            if response.headers.get("content-type", "").startswith("application/json"):
-                try:
-                    data = response.json()
-                    if isinstance(data, dict):
-                        # common error message format
-                        error_msg = data.get("error") or data.get("message")
-                        if error_msg:
-                            logger.warning(
-                                f"Hugging Face API responded with error: {error_msg}"
-                            )
-                        # handle b64 image if present
-                        b64 = data.get("image") or data.get("data")
-                        if b64:
-                            import base64
-
-                            image_bytes = base64.b64decode(b64)
-                            filename = f"story_{story.id}_{int(time.time())}_hf_b64.png"
-                            filepath = os.path.join(Config.IMAGE_DIR, filename)
-                            with open(filepath, "wb") as f:
-                                f.write(image_bytes)
-                            logger.info(
-                                f"Successfully generated HF image (b64): {filepath}"
-                            )
-                            return filepath
-                except Exception:
-                    pass
-
-            logger.warning(
-                f"Hugging Face generation failed (status {response.status_code})"
+            # Generate image using text_to_image - this is FREE for FLUX.1-schnell
+            image = client.text_to_image(
+                prompt=prompt,
+                model=model,
             )
-            return None
-        except requests.RequestException as e:
-            logger.warning(f"Hugging Face request failed: {e}")
+
+            # Save the image (returns a PIL Image object)
+            filename = f"story_{story.id}_{int(time.time())}_hf.png"
+            filepath = os.path.join(Config.IMAGE_DIR, filename)
+            image.save(filepath)
+
+            logger.info(f"Successfully generated HF image: {filepath}")
+            return filepath
+
+        except Exception as e:
+            logger.warning(f"Hugging Face image generation failed: {e}")
             return None
 
     def _generate_local_image(self, story: Story, prompt: str) -> str | None:
@@ -281,68 +223,58 @@ class ImageGenerator:
 
     def _build_image_prompt(self, story: Story) -> str:
         """Build a prompt for image generation using an LLM for refinement."""
-        sources_text = (
-            "\n".join(story.source_links)
-            if story.source_links
-            else "No sources provided"
-        )
         context = f"""
 Story Title: {story.title}
 Summary: {story.summary}
-Sources:
-{sources_text}
 """
 
         # Get the configurable image style
         image_style = Config.IMAGE_STYLE
 
-        # Professional prompt engineering based on Google Imagen best practices
+        # Professional prompt for industrial/engineering trade publications
         refinement_prompt = f"""
-You are an expert editorial photographer creating hero images for a professional news publication.
+You are creating an image for a professional chemical engineering trade publication (like Chemical Engineering Magazine or AIChE publications).
 
 STORY CONTEXT:
 {context}
 
-YOUR TASK: Create a single, detailed image prompt that will generate a stunning editorial photograph.
+YOUR TASK: Create an image prompt for a REALISTIC, PROFESSIONAL photograph that would appear in an engineering trade journal.
 
-PHOTOGRAPHY REQUIREMENTS (follow these precisely):
-1. CAMERA & TECHNICAL:
-   - Specify camera type: "shot on professional DSLR" or "medium format camera"
-   - Include lens type based on subject: wide-angle (16-24mm) for landscapes/architecture,
-     50-85mm for portraits/objects, macro for details
-   - Add quality modifiers: "4K", "high detail", "sharp focus", "HDR"
+CRITICAL REQUIREMENTS - THE IMAGE MUST BE:
+1. PHOTOREALISTIC - like a real photograph, NOT artistic, NOT fantasy, NOT stylized
+2. PROFESSIONAL - suitable for a serious engineering publication
+3. TECHNICALLY ACCURATE - showing real equipment, processes, or concepts correctly
+4. CREDIBLE - something a chemical engineer would recognize as realistic
 
-2. LIGHTING (choose one that fits the story):
-   - "golden hour lighting" - warm, soft, cinematic
-   - "soft natural daylight" - clean, professional
-   - "dramatic side lighting" - adds depth and mood
-   - "studio lighting with soft shadows" - for product/object shots
+SUBJECT SELECTION (choose the most appropriate):
+- Industrial equipment: reactors, distillation columns, heat exchangers, piping systems, control rooms
+- Laboratory settings: analytical instruments, lab glassware, researchers in lab coats
+- Manufacturing facilities: chemical plants, refineries, pharmaceutical production
+- Process technology: flow diagrams visualized as real equipment, process units
+- Materials and products: chemicals, polymers, catalysts, finished products
+- Data/monitoring: control panels, SCADA screens, process monitoring (if story is about digitalization)
 
-3. COMPOSITION:
-   - Describe the scene's depth: foreground, midground, background
-   - Use cinematic framing: "rule of thirds", "leading lines", "negative space"
-   - Specify perspective: "eye level", "low angle", "aerial view", "close-up"
+WHAT TO AVOID:
+- Fantasy or sci-fi elements
+- Artistic interpretations or abstract concepts
+- Glowing/magical effects
+- Futuristic imaginary technology
+- Cartoonish or illustrated styles
+- Anything that would look silly to a practicing engineer
 
-4. STYLE DIRECTIVES (MUST include these):
+STYLE REQUIREMENTS:
 {image_style}
 
-5. SUBJECT GUIDANCE:
-   - Focus on a single powerful visual that captures the story's essence
-   - Prefer: objects, technology, environments, silhouettes, hands at work
-   - Avoid: direct faces (use silhouettes/backs instead), text, logos, watermarks
-   - Include specific, concrete visual elements mentioned in the story
+PHOTOGRAPHY SPECS:
+- Professional industrial photography style
+- Clean, well-lit scenes (industrial facility lighting or natural daylight)
+- Sharp focus, high resolution
+- Neutral, realistic colors
+- Documentary/journalistic aesthetic
 
-6. ATMOSPHERE & MOOD:
-   - Add environmental details: weather, time of day, setting
-   - Include textures and materials when relevant
-   - Describe the emotional tone the image should convey
-
-PROMPT FORMAT:
-Start with the main subject, then add descriptive details, then technical/style elements.
-Example structure: "[Main subject in action/state], [environment/setting], [lighting], [camera/lens], [style modifiers]"
-
-OUTPUT: Write ONLY the image prompt. No explanations. Start directly with the scene description.
-Maximum 150 words. Be specific and descriptive."""
+OUTPUT: Write ONLY the image prompt. No explanations. Maximum 100 words.
+Format: "[Specific industrial subject], [realistic setting], professional industrial photograph, photorealistic, sharp focus, natural lighting"
+"""
 
         try:
             if self.local_client:
@@ -366,13 +298,12 @@ Maximum 150 words. Be specific and descriptive."""
         except Exception as e:
             logger.warning(f"Prompt refinement failed: {e}. Using base prompt.")
 
-        # Ultimate fallback - professional editorial photo prompt
-        # Following Google Imagen best practices: subject + context + style + technical
+        # Ultimate fallback - professional industrial photography prompt
         return (
-            f"Editorial photograph for news publication: {story.title}. "
-            f"{story.summary[:80]}. Shot on professional DSLR, 35mm lens, "
-            f"soft natural lighting, sharp focus, high detail, 4K, "
-            f"cinematic composition with depth of field"
+            f"Professional industrial photograph for chemical engineering publication: "
+            f"{story.title[:60]}. Industrial facility or laboratory setting, "
+            f"photorealistic, documentary style, natural lighting, sharp focus, "
+            f"neutral colors, suitable for engineering trade journal"
         )
 
     def get_stories_with_images_count(self) -> int:

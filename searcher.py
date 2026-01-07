@@ -459,9 +459,7 @@ class StorySearcher:
             matched_urls: list[str] = []
 
             # Try to find matching sources by title/content similarity
-            for i, (url, source_title) in enumerate(
-                zip(grounding_urls, grounding_titles)
-            ):
+            for url, source_title in zip(grounding_urls, grounding_titles):
                 # Check if source title appears in story or vice versa
                 if source_title and (
                     source_title in story_title
