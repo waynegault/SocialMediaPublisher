@@ -380,6 +380,7 @@ def interactive_menu(engine: ContentEngine) -> None:
             _cleanup_old_stories(engine)
         elif choice == "12":
             Config.print_config()
+            _test_api_keys(engine)
         elif choice == "13":
             engine.status()
         elif choice == "14":
@@ -903,6 +904,178 @@ def _run_unit_tests() -> None:
     except Exception as e:
         print(f"\nError running tests: {e}")
         logger.exception("Unit test execution failed")
+
+
+def _test_api_keys(engine: ContentEngine) -> None:
+    """Test all configured API keys to verify they are valid and working."""
+    print("\n--- API Key Validation ---")
+    print("Testing configured API connections...\n")
+
+    results: list[tuple[str, bool, str]] = []
+
+    # 1. Test Gemini API
+    print("  Testing Gemini API...", end=" ", flush=True)
+    if Config.GEMINI_API_KEY:
+        try:
+            response = engine.genai_client.models.generate_content(
+                model=Config.MODEL_TEXT,
+                contents="Say 'API key is valid' in exactly 4 words.",
+                config={"max_output_tokens": 20},
+            )
+            if response.text:
+                results.append(("Gemini API", True, f"Model: {Config.MODEL_TEXT}"))
+                print("✓ OK")
+            else:
+                results.append(("Gemini API", False, "Empty response"))
+                print("✗ FAILED (empty response)")
+        except Exception as e:
+            error_msg = str(e)[:50]
+            results.append(("Gemini API", False, error_msg))
+            print(f"✗ FAILED ({error_msg})")
+    else:
+        results.append(("Gemini API", False, "NOT CONFIGURED"))
+        print("⚠ NOT CONFIGURED")
+
+    # 2. Test Hugging Face API (if configured)
+    print("  Testing Hugging Face API...", end=" ", flush=True)
+    if Config.HUGGINGFACE_API_TOKEN:
+        try:
+            # Test with a simple whoami endpoint
+            headers = {"Authorization": f"Bearer {Config.HUGGINGFACE_API_TOKEN}"}
+            response = requests.get(
+                "https://huggingface.co/api/whoami",
+                headers=headers,
+                timeout=10,
+            )
+            if response.status_code == 200:
+                user_info = response.json()
+                username = user_info.get("name", "Unknown")
+                results.append(("Hugging Face API", True, f"User: {username}"))
+                print(f"✓ OK (User: {username})")
+            elif response.status_code == 401:
+                results.append(("Hugging Face API", False, "Invalid token"))
+                print("✗ FAILED (Invalid token)")
+            else:
+                results.append(
+                    ("Hugging Face API", False, f"HTTP {response.status_code}")
+                )
+                print(f"✗ FAILED (HTTP {response.status_code})")
+        except Exception as e:
+            error_msg = str(e)[:50]
+            results.append(("Hugging Face API", False, error_msg))
+            print(f"✗ FAILED ({error_msg})")
+    else:
+        results.append(("Hugging Face API", False, "NOT CONFIGURED (optional)"))
+        print("⚠ NOT CONFIGURED (optional)")
+
+    # 3. Test LinkedIn API
+    print("  Testing LinkedIn API...", end=" ", flush=True)
+    if Config.LINKEDIN_ACCESS_TOKEN and Config.LINKEDIN_AUTHOR_URN:
+        try:
+            headers = {
+                "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
+                "X-Restli-Protocol-Version": "2.0.0",
+            }
+            response = requests.get(
+                "https://api.linkedin.com/v2/userinfo",
+                headers=headers,
+                timeout=10,
+            )
+            if response.status_code == 200:
+                user_info = response.json()
+                name = user_info.get("name", "Unknown")
+                results.append(("LinkedIn API", True, f"User: {name}"))
+                print(f"✓ OK (User: {name})")
+            elif response.status_code == 401:
+                results.append(("LinkedIn API", False, "Token expired or invalid"))
+                print("✗ FAILED (Token expired or invalid)")
+            else:
+                results.append(("LinkedIn API", False, f"HTTP {response.status_code}"))
+                print(f"✗ FAILED (HTTP {response.status_code})")
+        except Exception as e:
+            error_msg = str(e)[:50]
+            results.append(("LinkedIn API", False, error_msg))
+            print(f"✗ FAILED ({error_msg})")
+    elif Config.LINKEDIN_ACCESS_TOKEN and not Config.LINKEDIN_AUTHOR_URN:
+        results.append(("LinkedIn API", False, "LINKEDIN_AUTHOR_URN not set"))
+        print("⚠ MISSING LINKEDIN_AUTHOR_URN")
+    else:
+        results.append(("LinkedIn API", False, "NOT CONFIGURED"))
+        print("⚠ NOT CONFIGURED")
+
+    # 4. Test Local LLM (LM Studio) if preferred
+    print("  Testing Local LLM (LM Studio)...", end=" ", flush=True)
+    if Config.PREFER_LOCAL_LLM:
+        try:
+            response = requests.get(
+                f"{Config.LM_STUDIO_BASE_URL}/models",
+                timeout=5,
+            )
+            if response.status_code == 200:
+                models = response.json().get("data", [])
+                if models:
+                    model_id = models[0].get("id", "Unknown")
+                    results.append(("Local LLM", True, f"Model: {model_id}"))
+                    print(f"✓ OK ({len(models)} model(s) loaded)")
+                else:
+                    results.append(("Local LLM", False, "No models loaded"))
+                    print("⚠ Server running but no models loaded")
+            else:
+                results.append(("Local LLM", False, f"HTTP {response.status_code}"))
+                print(f"✗ FAILED (HTTP {response.status_code})")
+        except requests.exceptions.ConnectionError:
+            results.append(("Local LLM", False, "Server not running"))
+            print("⚠ Server not running (start LM Studio)")
+        except Exception as e:
+            error_msg = str(e)[:50]
+            results.append(("Local LLM", False, error_msg))
+            print(f"✗ FAILED ({error_msg})")
+    else:
+        results.append(("Local LLM", False, "DISABLED (PREFER_LOCAL_LLM=False)"))
+        print("⚠ DISABLED (PREFER_LOCAL_LLM=False)")
+
+    # 5. Test Imagen API (Gemini image generation)
+    print("  Testing Imagen API...", end=" ", flush=True)
+    if Config.GEMINI_API_KEY:
+        try:
+            # Just verify the model exists by listing models
+            # We don't actually generate an image (costs money/quota)
+            models_list = list(engine.genai_client.models.list())
+            imagen_available = any(
+                Config.MODEL_IMAGE in str(m.name) for m in models_list
+            )
+            if imagen_available:
+                results.append(("Imagen API", True, f"Model: {Config.MODEL_IMAGE}"))
+                print(f"✓ OK (Model: {Config.MODEL_IMAGE})")
+            else:
+                results.append(
+                    ("Imagen API", False, f"Model {Config.MODEL_IMAGE} not found")
+                )
+                print(f"⚠ Model {Config.MODEL_IMAGE} not in available models")
+        except Exception as e:
+            error_msg = str(e)[:50]
+            results.append(("Imagen API", False, error_msg))
+            print(f"✗ FAILED ({error_msg})")
+    else:
+        results.append(("Imagen API", False, "Requires GEMINI_API_KEY"))
+        print("⚠ Requires GEMINI_API_KEY")
+
+    # Print summary
+    print("\n--- Summary ---")
+    passed = sum(1 for _, ok, _ in results if ok)
+    total = len(results)
+    required_services = ["Gemini API", "LinkedIn API"]
+    required_ok = all(ok for name, ok, _ in results if name in required_services)
+
+    for name, ok, detail in results:
+        status = "✓" if ok else "✗"
+        print(f"  {status} {name}: {detail}")
+
+    print(f"\n  {passed}/{total} services operational")
+    if required_ok:
+        print("  ✓ All required services are working")
+    else:
+        print("  ⚠ Some required services need attention")
 
 
 def main():
