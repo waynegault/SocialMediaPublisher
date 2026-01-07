@@ -111,6 +111,42 @@ If you have a Hugging Face token, the app can generate images via the Inference 
 
 The default style creates photorealistic images with a vintage 1960s cinema aesthetic featuring warm Kodachrome tones, soft golden lighting, subtle film grain, and muted pastel highlights. Customize this to change the visual style of all generated images.
 
+### Image Prompt Engineering
+
+The system uses professional prompt engineering techniques based on Google's
+official Imagen prompt guide. When generating images, an LLM refines the story
+context into an optimized prompt following these principles:
+
+**Prompt Structure** (Subject → Context → Style → Technical):
+
+- Start with the main subject and action
+- Add environment and setting details
+- Include lighting and atmosphere
+- End with camera/technical specifications
+
+**Photography Modifiers Used**:
+
+- **Camera/Lens**: "professional DSLR", "35mm lens", "wide-angle", "macro"
+- **Quality**: "4K", "high detail", "sharp focus", "HDR"
+- **Lighting**: "golden hour", "soft natural daylight", "dramatic side lighting"
+- **Composition**: "rule of thirds", "leading lines", "depth of field"
+
+**Best Practices Applied**:
+
+- Descriptive, specific language (not vague terms)
+- Concrete visual elements from the story
+- Avoids faces (uses silhouettes/backs instead)
+- No text, logos, or watermarks in prompts
+- Maximum 150 words for optimal results
+
+**Customizing Image Style**:
+
+Set `IMAGE_STYLE` to override the default aesthetic. Examples:
+
+- Modern: `"clean modern photography, bright natural lighting, minimalist"`
+- Dramatic: `"dramatic noir photography, high contrast, deep shadows"`
+- Editorial: `"warm editorial photography, soft golden tones, magazine style"`
+
 ### Search Settings
 
 | Variable | Default | Description |

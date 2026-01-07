@@ -50,18 +50,23 @@ class ImageGenerator:
         logger.info(f"Generating images for {len(stories)} stories...")
 
         success_count = 0
-        for story in stories:
+        for i, story in enumerate(stories):
             try:
+                # Small delay between generations to be respectful of API rate limits
+                if i > 0:
+                    time.sleep(1)
+
+                logger.info(
+                    f"[{i + 1}/{len(stories)}] Generating image for: {story.title[:60]}..."
+                )
                 image_path = self._generate_image_for_story(story)
                 if image_path:
                     story.image_path = image_path
                     self.db.update_story(story)
                     success_count += 1
-                    logger.info(
-                        f"Generated image for story ID {story.id}: {story.title}"
-                    )
+                    logger.info(f"✓ Saved: {image_path}")
             except Exception as e:
-                logger.error(f"Failed to generate image for story {story.id}: {e}")
+                logger.error(f"✗ Failed to generate image for story {story.id}: {e}")
                 continue
 
         logger.info(f"Successfully generated {success_count}/{len(stories)} images")
@@ -81,8 +86,11 @@ class ImageGenerator:
                 hf_path = self._generate_huggingface_image(story, prompt)
                 if hf_path:
                     return hf_path
+                # HuggingFace failed, fall back to Imagen
+                logger.info("HuggingFace unavailable, falling back to Google Imagen...")
 
             # Use Imagen model for image generation
+            logger.info(f"Using Imagen model: {Config.MODEL_IMAGE}")
             response = self.client.models.generate_images(
                 model=Config.MODEL_IMAGE,
                 prompt=prompt,
@@ -229,34 +237,6 @@ class ImageGenerator:
             logger.warning(f"Hugging Face request failed: {e}")
             return None
 
-    def _generate_image_fallback(self, story: Story, prompt: str) -> str | None:
-        """Fallback image generation using alternative API approach."""
-        try:
-            # Try using the Gemini multimodal model for image generation
-            # This is a fallback if ImageGenerationModel is not available
-            model = genai.GenerativeModel("gemini-2.0-flash")  # type: ignore[attr-defined]
-
-            response = model.generate_content(
-                f"Generate a professional news illustration image for: {prompt}",
-                generation_config={"response_mime_type": "image/png"},
-            )
-
-            if hasattr(response, "data") and response.data:  # type: ignore[union-attr]
-                filename = f"story_{story.id}_{int(time.time())}.png"
-                filepath = os.path.join(Config.IMAGE_DIR, filename)
-
-                with open(filepath, "wb") as f:
-                    f.write(response.data)  # type: ignore[union-attr]
-
-                return filepath
-
-            logger.warning("Fallback image generation did not return data")
-            return None
-
-        except Exception as e:
-            logger.error(f"Fallback image generation failed: {e}")
-            return None
-
     def _generate_local_image(self, story: Story, prompt: str) -> str | None:
         """Attempt to generate an image using the local OpenAI-compatible client."""
         if not self.local_client:
@@ -316,29 +296,53 @@ Sources:
         # Get the configurable image style
         image_style = Config.IMAGE_STYLE
 
+        # Professional prompt engineering based on Google Imagen best practices
         refinement_prompt = f"""
-You are an expert AI image prompt engineer specializing in cinematic, photorealistic imagery.
-Based on the news story and sources below, create a detailed, high-quality prompt for an image generation model (like Imagen or Stable Diffusion).
+You are an expert editorial photographer creating hero images for a professional news publication.
 
-STORY:
+STORY CONTEXT:
 {context}
 
-MANDATORY STYLE (include these exact style directives in your prompt):
+YOUR TASK: Create a single, detailed image prompt that will generate a stunning editorial photograph.
+
+PHOTOGRAPHY REQUIREMENTS (follow these precisely):
+1. CAMERA & TECHNICAL:
+   - Specify camera type: "shot on professional DSLR" or "medium format camera"
+   - Include lens type based on subject: wide-angle (16-24mm) for landscapes/architecture,
+     50-85mm for portraits/objects, macro for details
+   - Add quality modifiers: "4K", "high detail", "sharp focus", "HDR"
+
+2. LIGHTING (choose one that fits the story):
+   - "golden hour lighting" - warm, soft, cinematic
+   - "soft natural daylight" - clean, professional
+   - "dramatic side lighting" - adds depth and mood
+   - "studio lighting with soft shadows" - for product/object shots
+
+3. COMPOSITION:
+   - Describe the scene's depth: foreground, midground, background
+   - Use cinematic framing: "rule of thirds", "leading lines", "negative space"
+   - Specify perspective: "eye level", "low angle", "aerial view", "close-up"
+
+4. STYLE DIRECTIVES (MUST include these):
 {image_style}
 
-REQUIREMENTS for the prompt you generate:
-- Focus on a single, powerful visual metaphor or scene that captures the essence of the story.
-- The image must be PHOTOREALISTIC - like a real photograph, not illustration or CGI.
-- Apply a 1960s vintage cinema color palette: warm Kodachrome tones, slightly muted colors, rich shadows.
-- NO TEXT, labels, watermarks, or logos in the image.
-- Avoid people's faces if possible; focus on objects, environments, hands, silhouettes, or symbolic representations.
-- Lighting: Cinematic, soft golden hour or warm tungsten lighting, with atmospheric depth.
-- Aspect ratio: 16:9, wide cinematic frame.
-- Use the story title, summary, and source links to identify specific visual elements, technologies, or locations.
-- Think like a 1960s film cinematographer capturing a documentary moment.
+5. SUBJECT GUIDANCE:
+   - Focus on a single powerful visual that captures the story's essence
+   - Prefer: objects, technology, environments, silhouettes, hands at work
+   - Avoid: direct faces (use silhouettes/backs instead), text, logos, watermarks
+   - Include specific, concrete visual elements mentioned in the story
 
-Respond with ONLY the refined prompt text. Start directly with the scene description.
-"""
+6. ATMOSPHERE & MOOD:
+   - Add environmental details: weather, time of day, setting
+   - Include textures and materials when relevant
+   - Describe the emotional tone the image should convey
+
+PROMPT FORMAT:
+Start with the main subject, then add descriptive details, then technical/style elements.
+Example structure: "[Main subject in action/state], [environment/setting], [lighting], [camera/lens], [style modifiers]"
+
+OUTPUT: Write ONLY the image prompt. No explanations. Start directly with the scene description.
+Maximum 150 words. Be specific and descriptive."""
 
         try:
             if self.local_client:
@@ -362,10 +366,13 @@ Respond with ONLY the refined prompt text. Start directly with the scene descrip
         except Exception as e:
             logger.warning(f"Prompt refinement failed: {e}. Using base prompt.")
 
-        # Ultimate fallback - still include the style directive
+        # Ultimate fallback - professional editorial photo prompt
+        # Following Google Imagen best practices: subject + context + style + technical
         return (
-            f"Photorealistic photograph, 1960s Kodachrome film aesthetic, warm vintage "
-            f"cinema colors, soft golden lighting: {story.title}. {story.summary[:100]}"
+            f"Editorial photograph for news publication: {story.title}. "
+            f"{story.summary[:80]}. Shot on professional DSLR, 35mm lens, "
+            f"soft natural lighting, sharp focus, high detail, 4K, "
+            f"cinematic composition with depth of field"
         )
 
     def get_stories_with_images_count(self) -> int:

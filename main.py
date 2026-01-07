@@ -11,6 +11,7 @@ import requests
 import os
 import subprocess
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from google import genai  # type: ignore
 from openai import OpenAI
@@ -432,6 +433,14 @@ def _test_image_generation(engine: ContentEngine) -> None:
     """Test the image generation component."""
     print("\n--- Testing Image Generation ---")
 
+    # Show which image provider will be used
+    if Config.HUGGINGFACE_API_TOKEN and Config.HF_PREFER_IF_CONFIGURED:
+        provider = f"HuggingFace ({Config.HF_TTI_MODEL}) with Imagen fallback"
+    else:
+        provider = f"Google Imagen ({Config.MODEL_IMAGE})"
+    print(f"Image Provider: {provider}")
+    print("-" * 40)
+
     # First, check for missing image files and handle them
     missing_files_handled = _check_and_fix_missing_images(engine)
     if missing_files_handled > 0:
@@ -445,7 +454,8 @@ def _test_image_generation(engine: ContentEngine) -> None:
         all_pending = engine.db.get_stories_needing_images(0)
         if all_pending:
             print(
-                f"Found {len(all_pending)} stories needing images, but NONE meet the minimum quality score of {Config.MIN_QUALITY_SCORE}."
+                f"Found {len(all_pending)} stories needing images, but NONE meet "
+                f"the minimum quality score of {Config.MIN_QUALITY_SCORE}."
             )
             for story in all_pending[:5]:
                 print(
@@ -461,19 +471,29 @@ def _test_image_generation(engine: ContentEngine) -> None:
         return
 
     print(
-        f"Stories meeting quality threshold ({Config.MIN_QUALITY_SCORE}+): {len(stories)}"
+        f"\nStories meeting quality threshold ({Config.MIN_QUALITY_SCORE}+): {len(stories)}"
     )
     for story in stories[:5]:  # Show first 5
         print(f"  - [{story.id}] {story.title[:50]}... (score: {story.quality_score})")
+    if len(stories) > 5:
+        print(f"  ... and {len(stories) - 5} more")
 
-    confirm = input("\nGenerate images for these stories? (y/n): ").strip().lower()
+    # Estimate time (roughly 10-30 seconds per image)
+    est_time = len(stories) * 20  # 20 seconds average
+    est_min = est_time // 60
+    est_sec = est_time % 60
+    time_str = f"{est_min}m {est_sec}s" if est_min > 0 else f"{est_sec}s"
+    print(f"\nEstimated time: ~{time_str} for {len(stories)} image(s)")
+
+    confirm = input("Generate images for these stories? (y/n): ").strip().lower()
     if confirm != "y":
         print("Cancelled.")
         return
 
     try:
+        print(f"\nGenerating {len(stories)} image(s)...")
         count = engine.image_generator.generate_images_for_stories()
-        print(f"\nResult: Generated {count} images")
+        print(f"\n✓ Result: Generated {count}/{len(stories)} images successfully")
     except RuntimeError as e:
         if "quota exceeded" in str(e).lower():
             print(f"\n[!] API Quota Exceeded: {e}")
@@ -496,8 +516,6 @@ def _check_and_fix_missing_images(engine: ContentEngine) -> int:
 
     Returns the number of stories that were updated.
     """
-    from pathlib import Path
-
     stories_with_images = engine.db.get_stories_with_images()
     if not stories_with_images:
         return 0
