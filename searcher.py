@@ -326,64 +326,124 @@ class StorySearcher:
         stories_data = self._parse_response(response.text)
 
         # Extract real URLs from grounding metadata (not hallucinated by LLM)
-        grounding_urls = self._extract_grounding_urls(response)
-        if grounding_urls:
-            logger.info(f"Extracted {len(grounding_urls)} URLs from grounding metadata")
+        grounding_sources = self._extract_grounding_urls(response)
+        if grounding_sources:
+            logger.info(
+                f"Extracted {len(grounding_sources)} real URLs from grounding metadata"
+            )
             # Replace hallucinated sources with real grounded URLs
             stories_data = self._replace_sources_with_grounding(
-                stories_data, grounding_urls
+                stories_data, grounding_sources
             )
 
         return self._process_stories_data(stories_data, since_date)
 
-    def _extract_grounding_urls(self, response: Any) -> list[str]:
-        """Extract real URLs from Gemini grounding metadata."""
-        urls: list[str] = []
+    def _extract_grounding_urls(self, response: Any) -> list[dict]:
+        """
+        Extract real URLs from Gemini grounding metadata.
+        Returns list of dicts with 'uri' and 'title' keys.
+        """
+        sources: list[dict] = []
         try:
             if not response.candidates:
-                return urls
+                return sources
             candidate = response.candidates[0]
             if not hasattr(candidate, "grounding_metadata"):
-                return urls
+                return sources
             metadata = candidate.grounding_metadata
             if not metadata or not hasattr(metadata, "grounding_chunks"):
-                return urls
+                return sources
             for chunk in metadata.grounding_chunks:
                 if hasattr(chunk, "web") and hasattr(chunk.web, "uri"):
                     uri = chunk.web.uri
+                    title = (
+                        getattr(chunk.web, "title", "") if hasattr(chunk, "web") else ""
+                    )
                     if uri and uri.startswith("http"):
-                        urls.append(uri)
+                        # Resolve Vertex AI Search redirect URLs
+                        final_uri = self._resolve_redirect_url(uri)
+                        sources.append({"uri": final_uri, "title": title})
         except Exception as e:
             logger.debug(f"Could not extract grounding URLs: {e}")
-        return urls
+        return sources
+
+    def _resolve_redirect_url(self, url: str) -> str:
+        """Resolve redirect URLs (like Vertex AI Search) to final destination."""
+        # If it's a vertexaisearch redirect, try to follow it
+        if "vertexaisearch.cloud.google.com" in url:
+            try:
+                response = requests.head(url, timeout=5, allow_redirects=True)
+                if response.url and response.url != url:
+                    logger.debug(
+                        f"Resolved redirect: {url[:50]}... -> {response.url[:50]}..."
+                    )
+                    return response.url
+            except Exception:
+                pass  # Fall through to return original
+        return url
 
     def _replace_sources_with_grounding(
-        self, stories_data: list[dict], grounding_urls: list[str]
+        self, stories_data: list[dict], grounding_sources: list[dict]
     ) -> list[dict]:
-        """Replace LLM-generated sources with real grounding URLs."""
-        if not grounding_urls:
+        """
+        Replace LLM-generated sources with real grounding URLs.
+        Tries to match sources to stories by title similarity.
+        """
+        if not grounding_sources:
             return stories_data
 
-        # Distribute grounding URLs across stories
-        # Each story gets at least one URL if available
         num_stories = len(stories_data)
         if num_stories == 0:
             return stories_data
 
-        urls_per_story = max(1, len(grounding_urls) // num_stories)
+        # Extract just the URIs
+        grounding_urls = [s["uri"] for s in grounding_sources]
+        grounding_titles = [s.get("title", "").lower() for s in grounding_sources]
 
-        for i, story in enumerate(stories_data):
-            start_idx = i * urls_per_story
-            end_idx = start_idx + urls_per_story
-            # Last story gets remaining URLs
-            if i == num_stories - 1:
-                end_idx = len(grounding_urls)
-            story_urls = grounding_urls[start_idx:end_idx]
-            if story_urls:
-                story["sources"] = story_urls
+        for story in stories_data:
+            story_title = story.get("title", "").lower()
+            story_summary = story.get("summary", "").lower()
+            matched_urls: list[str] = []
+
+            # Try to find matching sources by title/content similarity
+            for i, (url, source_title) in enumerate(
+                zip(grounding_urls, grounding_titles)
+            ):
+                # Check if source title appears in story or vice versa
+                if source_title and (
+                    source_title in story_title
+                    or source_title in story_summary
+                    or any(
+                        word in story_title
+                        for word in source_title.split()
+                        if len(word) > 4
+                    )
+                ):
+                    matched_urls.append(url)
+
+            # If no matches found, assign based on position
+            if not matched_urls and grounding_urls:
+                # Give each story at least one URL from the pool
+                idx = stories_data.index(story)
+                urls_per_story = max(1, len(grounding_urls) // num_stories)
+                start = idx * urls_per_story
+                end = (
+                    start + urls_per_story
+                    if idx < num_stories - 1
+                    else len(grounding_urls)
+                )
+                matched_urls = grounding_urls[start:end]
+
+            if matched_urls:
+                # Remove duplicates while preserving order
+                seen: set[str] = set()
+                unique_urls = [
+                    u for u in matched_urls if not (u in seen or seen.add(u))
+                ]  # type: ignore
+                story["sources"] = unique_urls
                 logger.debug(
-                    f"Replaced sources for '{story.get('title', 'Unknown')[:30]}' "
-                    f"with {len(story_urls)} grounded URLs"
+                    f"Assigned {len(unique_urls)} grounded URLs to "
+                    f"'{story.get('title', 'Unknown')[:40]}...'"
                 )
 
         return stories_data
