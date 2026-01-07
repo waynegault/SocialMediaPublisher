@@ -64,6 +64,15 @@ class Config:
     # Automatically prefer Hugging Face for images when a token is present
     HF_PREFER_IF_CONFIGURED: bool = _get_bool("HF_PREFER_IF_CONFIGURED", True)
 
+    # --- Image Style Settings ---
+    # Style directive for image generation prompts
+    IMAGE_STYLE: str = _get_str(
+        "IMAGE_STYLE",
+        "photorealistic, 1960s Kodachrome film aesthetic, slightly desaturated warm "
+        "tones, vintage cinema color grading, soft golden hour lighting, subtle film "
+        "grain, rich shadows, muted pastel highlights",
+    )
+
     # --- Search Settings ---
     SEARCH_PROMPT: str = _get_str(
         "SEARCH_PROMPT",

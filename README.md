@@ -103,6 +103,14 @@ If you have a Hugging Face token, the app can generate images via the Inference 
 | `HF_PREFER_IF_CONFIGURED` | True | Prefer HF when token present |
 | `HF_NEGATIVE_PROMPT` | text, watermark, logo, blurry... | Negative prompt used |
 
+### Image Style Settings
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `IMAGE_STYLE` | photorealistic, 1960s Kodachrome... | Style directives for images |
+
+The default style creates photorealistic images with a vintage 1960s cinema aesthetic featuring warm Kodachrome tones, soft golden lighting, subtle film grain, and muted pastel highlights. Customize this to change the visual style of all generated images.
+
 ### Search Settings
 
 | Variable | Default | Description |
