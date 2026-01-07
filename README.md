@@ -14,6 +14,8 @@ Social Media Publisher automates the entire content curation and publishing work
 The system supports both Google Gemini AI (with Search grounding) and local LLMs
 via LM Studio for flexible deployment options.
 
+For detailed architecture and component documentation, see the [Overview wiki](https://github.com/waynegault/SocialMediaPublisher/wiki/Overview).
+
 ## Features
 
 - **Automated Story Discovery**: Searches the internet for news stories matching
@@ -260,17 +262,26 @@ python main.py --config
 
 ```text
 SocialMediaPublisher/
-├── main.py              # Main entry point and orchestration
-├── config.py            # Configuration management
-├── database.py          # SQLite database operations
-├── searcher.py          # Story discovery using Gemini
-├── image_generator.py   # AI image generation using Imagen
-├── verifier.py          # Content quality verification
-├── scheduler.py         # Publication timing logic
-├── linkedin_publisher.py # LinkedIn API integration
-├── requirements.txt     # Python dependencies
-├── .env.example         # Example environment configuration
-└── README.md            # This file
+├── main.py                  # Main entry point and orchestration
+├── config.py                # Configuration management
+├── database.py              # SQLite database operations
+├── searcher.py              # Story discovery using Gemini
+├── image_generator.py       # AI image generation (Imagen/HF)
+├── verifier.py              # Content quality verification
+├── scheduler.py             # Publication timing logic
+├── linkedin_publisher.py    # LinkedIn API integration
+├── error_handling.py        # Circuit breaker and retry logic
+├── rate_limiter.py          # Adaptive rate limiting
+├── test_framework.py        # Custom unit test framework
+├── unit_tests.py            # Unit test suite
+├── linkedin_test.py         # LinkedIn connection test utility
+├── linkedin_diagnostics.py  # LinkedIn token diagnostics
+├── linkedin_dryrun_publish.py # Dry-run publish preview
+├── publish_story.py         # Manual story publish utility
+├── requirements.txt         # Python dependencies
+├── .env.example             # Example environment configuration
+├── generated_images/        # AI-generated story images
+└── README.md                # This file
 ```
 
 ## Database Schema
@@ -459,13 +470,113 @@ upgrades without data loss.
 - **Post Creation**: `POST /ugcPosts` with image and text
 - **Image Upload**: Multi-step upload process
 
+### Utility Scripts
+
+The project includes several utility scripts for testing and debugging:
+
+#### linkedin_test.py
+
+Quick LinkedIn connection test:
+
+```bash
+python linkedin_test.py              # Test token from .env
+python linkedin_test.py --prompt     # Enter token interactively
+python linkedin_test.py --save       # Save working token to .env
+```
+
+#### linkedin_diagnostics.py
+
+Comprehensive LinkedIn token diagnostics:
+
+```bash
+python linkedin_diagnostics.py       # Full diagnostic report
+```
+
+#### linkedin_dryrun_publish.py
+
+Preview what would be published without making API calls:
+
+```bash
+python linkedin_dryrun_publish.py    # Shows payloads for due stories
+```
+
+#### publish_story.py
+
+Manually publish a specific story:
+
+```bash
+python publish_story.py <story_id>   # Publish story by ID
+```
+
+#### unit_tests.py
+
+Run the unit test suite:
+
+```bash
+python unit_tests.py                 # Run all tests
+```
+
+### Error Handling and Resilience
+
+The `error_handling.py` module provides production-grade resilience:
+
+#### Circuit Breaker Pattern
+
+Prevents cascading failures by tracking service health:
+
+- **CLOSED**: Normal operation, requests pass through
+- **OPEN**: Service unhealthy, requests fail fast
+- **HALF-OPEN**: Testing if service has recovered
+
+Configuration via `CircuitBreakerConfig`:
+
+- `failure_threshold`: Failures before opening (default: 5)
+- `recovery_timeout`: Seconds before trying half-open (default: 30)
+- `success_threshold`: Successes needed to close (default: 2)
+
+#### Enhanced Recovery Decorator
+
+`@with_enhanced_recovery()` provides:
+
+- Exponential backoff with jitter
+- Configurable max attempts and delays
+- Recovery context tracking
+- Automatic retry for transient failures
+
+### Rate Limiting
+
+The `rate_limiter.py` module implements adaptive rate limiting:
+
+- Token bucket algorithm for smooth request pacing
+- Automatic rate reduction on 429 errors
+- Gradual rate increase after consecutive successes
+- Per-endpoint tracking and metrics
+
 ### Gotchas and Known Issues
 
 1. **Gemini Rate Limits**: The 429 RESOURCE_EXHAUSTED error requires
-   waiting or upgrading quota
-2. **LM Studio Model Loading**: Must have a model loaded before API calls
-3. **LinkedIn Token Expiry**: Tokens expire and need manual refresh
-4. **DuckDuckGo Rate Limits**: Aggressive searching may trigger blocks
+   waiting or upgrading quota. The rate limiter handles this automatically.
+2. **LinkedIn Token Expiry**: OAuth tokens expire after 60 days.
+   Use `linkedin_diagnostics.py` to check token validity.
+3. **Image Generation Failures**: If Imagen fails, check your Gemini API
+   quota. The system will skip image generation gracefully.
+4. **Database Locking**: SQLite may lock briefly during writes. The
+   connection pool handles this with timeouts.
+
+### Testing
+
+Run the custom unit test framework:
+
+```bash
+python unit_tests.py
+```
+
+The test framework (`test_framework.py`) provides:
+
+- Isolated test execution with error catching
+- Logging suppression for clean output
+- Detailed pass/fail reporting
+- MockLogger for testing logged output
 
 ---
 
@@ -486,6 +597,17 @@ upgrades without data loss.
 ---
 
 ## Appendix A: Chronology of Changes
+
+### Version 2.1 (January 7, 2026)
+
+- Added production-grade error handling with circuit breaker pattern
+- Implemented adaptive rate limiting with token bucket algorithm
+- Added custom unit test framework with isolated test execution
+- Created comprehensive utility scripts for LinkedIn debugging
+- Enhanced configuration validation and environment variable handling
+- Sanitized `.env.example` to remove sensitive data
+- Updated documentation with developer-focused sections
+- Added generated_images to .gitignore
 
 ### Version 2.0 (January 2026)
 
@@ -536,9 +658,10 @@ upgrades without data loss.
 ### Database Specifications
 
 - **Engine**: SQLite 3
-- **File**: `stories.db` (configurable)
+- **File**: `content_engine.db` (configurable via `DB_NAME`)
 - **Tables**: `stories`, `state`
-- **Indexes**: Primary key on `id`, index on `title`
+- **Indexes**: Primary key on `id`
+- **Connection**: Thread-safe with connection pooling
 
 ### Rate Limits
 
