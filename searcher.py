@@ -308,12 +308,14 @@ class StorySearcher:
         logger.info("Using Gemini with Google Search grounding...")
         prompt = self._build_search_prompt(search_prompt, since_date, summary_words)
 
+        # NOTE: We intentionally do NOT use response_mime_type: application/json
+        # because it prevents grounding_chunks from being populated with source URLs.
+        # Instead, we ask the model to output JSON in plain text and parse it.
         response = self.client.models.generate_content(
             model=Config.MODEL_TEXT,
             contents=prompt,
             config={
                 "tools": [{"google_search": {}}],
-                "response_mime_type": "application/json",
                 "max_output_tokens": 8192,
             },
         )
@@ -326,6 +328,7 @@ class StorySearcher:
         stories_data = self._parse_response(response.text)
 
         # Extract real URLs from grounding metadata (not hallucinated by LLM)
+        # This only works when response_mime_type is NOT set to application/json
         grounding_sources = self._extract_grounding_urls(response)
         if grounding_sources:
             logger.info(
@@ -335,6 +338,10 @@ class StorySearcher:
             stories_data = self._replace_sources_with_grounding(
                 stories_data, grounding_sources
             )
+        else:
+            logger.warning(
+                "No grounding URLs found in response metadata - sources may be unreliable"
+            )
 
         return self._process_stories_data(stories_data, since_date)
 
@@ -342,6 +349,10 @@ class StorySearcher:
         """
         Extract real URLs from Gemini grounding metadata.
         Returns list of dicts with 'uri' and 'title' keys.
+
+        Tries multiple sources:
+        1. grounding_chunks (preferred - has individual source URLs)
+        2. search_entry_point.rendered_content (fallback - HTML with search links)
         """
         sources: list[dict] = []
         try:
@@ -351,18 +362,40 @@ class StorySearcher:
             if not hasattr(candidate, "grounding_metadata"):
                 return sources
             metadata = candidate.grounding_metadata
-            if not metadata or not hasattr(metadata, "grounding_chunks"):
+            if not metadata:
                 return sources
-            for chunk in metadata.grounding_chunks:
-                if hasattr(chunk, "web") and hasattr(chunk.web, "uri"):
-                    uri = chunk.web.uri
-                    title = (
-                        getattr(chunk.web, "title", "") if hasattr(chunk, "web") else ""
-                    )
-                    if uri and uri.startswith("http"):
-                        # Resolve Vertex AI Search redirect URLs
-                        final_uri = self._resolve_redirect_url(uri)
-                        sources.append({"uri": final_uri, "title": title})
+
+            # Try grounding_chunks first (preferred)
+            if hasattr(metadata, "grounding_chunks") and metadata.grounding_chunks:
+                for chunk in metadata.grounding_chunks:
+                    if hasattr(chunk, "web") and hasattr(chunk.web, "uri"):
+                        uri = chunk.web.uri
+                        title = (
+                            getattr(chunk.web, "title", "")
+                            if hasattr(chunk, "web")
+                            else ""
+                        )
+                        if uri and uri.startswith("http"):
+                            # Resolve Vertex AI Search redirect URLs
+                            final_uri = self._resolve_redirect_url(uri)
+                            sources.append({"uri": final_uri, "title": title})
+
+            # Fallback: extract from search_entry_point HTML
+            if not sources and hasattr(metadata, "search_entry_point"):
+                entry_point = metadata.search_entry_point
+                if (
+                    hasattr(entry_point, "rendered_content")
+                    and entry_point.rendered_content
+                ):
+                    # Parse URLs from the HTML carousel
+                    html_content = entry_point.rendered_content
+                    # Find all href URLs in the HTML
+                    url_matches = re.findall(r'href="([^"]+)"', html_content)
+                    for url in url_matches:
+                        if url.startswith("http"):
+                            final_uri = self._resolve_redirect_url(url)
+                            sources.append({"uri": final_uri, "title": ""})
+
         except Exception as e:
             logger.debug(f"Could not extract grounding URLs: {e}")
         return sources
@@ -372,14 +405,34 @@ class StorySearcher:
         # If it's a vertexaisearch redirect, try to follow it
         if "vertexaisearch.cloud.google.com" in url:
             try:
-                response = requests.head(url, timeout=5, allow_redirects=True)
+                # First, get the initial redirect without following
+                # This is faster and avoids timeouts on slow destination sites
+                response = requests.get(
+                    url, timeout=10, allow_redirects=False, stream=True
+                )
+                response.close()
+
+                # Check for redirect (3xx status)
+                if response.status_code in (301, 302, 303, 307, 308):
+                    location = response.headers.get("Location")
+                    if location and location.startswith("http"):
+                        logger.debug(
+                            f"Resolved redirect: {url[:60]}... -> {location[:60]}..."
+                        )
+                        return location
+
+                # If not a redirect, try following all redirects
+                response = requests.get(
+                    url, timeout=10, allow_redirects=True, stream=True
+                )
+                response.close()
                 if response.url and response.url != url:
                     logger.debug(
-                        f"Resolved redirect: {url[:50]}... -> {response.url[:50]}..."
+                        f"Resolved redirect: {url[:60]}... -> {response.url[:60]}..."
                     )
                     return response.url
-            except Exception:
-                pass  # Fall through to return original
+            except Exception as e:
+                logger.debug(f"Failed to resolve redirect {url[:50]}: {e}")
         return url
 
     def _replace_sources_with_grounding(
