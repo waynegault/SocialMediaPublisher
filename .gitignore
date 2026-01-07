@@ -47,4 +47,5 @@ logs/
 # Local data
 data/
 output/
-content_engine.db
+*.db
+generated_images/
