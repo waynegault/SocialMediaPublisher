@@ -317,38 +317,53 @@ class ContentEngine:
 
 def interactive_menu(engine: ContentEngine) -> None:
     """Run interactive CLI menu for component testing."""
+    # Build menu as a single string to avoid any output interleaving issues
+    menu_text = """
+============================================================
+Social Media Publisher - Debug Menu
+============================================================
+
+  Component Testing:
+    1. Test Story Search
+    2. Test Image Generation
+    3. Test Content Verification
+    4. Test Scheduling
+    5. Test LinkedIn Connection
+    6. Test LinkedIn Publish (due stories)
+
+  Database Operations:
+    7. View Database Statistics
+    8. List All Stories
+    9. List Pending Stories
+   10. List Scheduled Stories
+   11. Cleanup Old Stories
+   16. Backup Database
+   17. Verify Database Integrity
+   18. Restore Database from Backup
+
+  Configuration:
+   12. Show Configuration
+   13. Show Full Status
+
+  Pipeline:
+   14. Run Full Search Cycle
+
+  Testing:
+   15. Run Unit Tests
+
+   0. Exit
+============================================================
+"""
+    import subprocess
+
     while True:
-        print("\n" + "=" * 60)
-        print("Social Media Publisher - Debug Menu")
-        print("=" * 60)
-        print("\n  Component Testing:")
-        print("    1. Test Story Search")
-        print("    2. Test Image Generation")
-        print("    3. Test Content Verification")
-        print("    4. Test Scheduling")
-        print("    5. Test LinkedIn Connection")
-        print("    6. Test LinkedIn Publish (due stories)")
-        print("\n  Database Operations:")
-        print("    7. View Database Statistics")
-        print("    8. List All Stories")
-        print("    9. List Pending Stories")
-        print("   10. List Scheduled Stories")
-        print("   11. Cleanup Old Stories")
-        print("   16. Backup Database")
-        print("   17. Verify Database Integrity")
-        print("   18. Restore Database from Backup")
-        print("\n  Configuration:")
-        print("   12. Show Configuration")
-        print("   13. Show Full Status")
-        print("\n  Pipeline:")
-        print("   14. Run Full Search Cycle")
-        print("\n  Testing:")
-        print("   15. Run Unit Tests")
-        print("\n   0. Exit")
-        print("=" * 60)
+        # Use subprocess to call cls - this ensures a fresh terminal state
+        subprocess.call("cls", shell=True)
+        # Print menu using standard print
+        print(menu_text)
 
         try:
-            choice = input("\nEnter choice: ").strip()
+            choice = input("Enter choice: ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting...")
             break

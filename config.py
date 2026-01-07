@@ -7,19 +7,42 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 import sys
 
-def _ensure_venv():
-    proj_root = Path(__file__).parent
-    venv_dir = proj_root / '.venv'
-    if venv_dir.exists():
-        venv_py = venv_dir / ('Scripts' if os.name == 'nt' else 'bin') / (
-            'python.exe' if os.name == 'nt' else 'python'
-        )
-        if venv_py.exists():
-            venv_path = str(venv_py)
-            if os.path.abspath(sys.executable) != os.path.abspath(venv_path):
-                os.execv(venv_path, [venv_path] + sys.argv)
 
-_ensure_venv()
+def _check_venv():
+    """Check if running in the correct virtual environment."""
+    proj_root = Path(__file__).parent
+    venv_dir = proj_root / ".venv"
+
+    if not venv_dir.exists():
+        # No .venv directory, skip check
+        return
+
+    # Check if current interpreter is in the .venv
+    current_exe = Path(sys.executable).resolve()
+    venv_scripts = venv_dir / ("Scripts" if os.name == "nt" else "bin")
+
+    if not str(current_exe).startswith(str(venv_scripts.resolve())):
+        print("=" * 60)
+        print("ERROR: Not running in the .venv virtual environment!")
+        print("=" * 60)
+        print(f"\nCurrent Python: {current_exe}")
+        print(f"Expected venv:  {venv_scripts}")
+        print("\nTo fix, either:")
+        print("  1. Activate the venv first:")
+        if os.name == "nt":
+            print("     .venv\\Scripts\\activate")
+        else:
+            print("     source .venv/bin/activate")
+        print("  2. Or run directly with venv Python:")
+        if os.name == "nt":
+            print("     .venv\\Scripts\\python main.py")
+        else:
+            print("     .venv/bin/python main.py")
+        print()
+        sys.exit(1)
+
+
+_check_venv()
 
 load_dotenv()
 
@@ -68,13 +91,11 @@ class Config:
     MODEL_IMAGE: str = _get_str("MODEL_IMAGE", "imagen-4.0-generate-001")
 
     # --- Hugging Face Image Generation ---
-    # Default to a broadly available SDXL model on the Inference API
-    HF_TTI_MODEL: str = _get_str(
-        "HF_TTI_MODEL", "stabilityai/stable-diffusion-xl-base-1.0"
-    )
+    # Default to FLUX.1-schnell - a FREE, fast model via InferenceClient
+    HF_TTI_MODEL: str = _get_str("HF_TTI_MODEL", "black-forest-labs/FLUX.1-schnell")
     # Optional: use a dedicated Inference Endpoint URL instead of the public models route
     HF_INFERENCE_ENDPOINT: str = _get_str("HF_INFERENCE_ENDPOINT", "")
-    # Optional negative prompt to reduce unwanted artifacts
+    # Optional negative prompt to reduce unwanted artifacts (not used by FLUX models)
     HF_NEGATIVE_PROMPT: str = _get_str(
         "HF_NEGATIVE_PROMPT",
         "text, watermark, logo, blurry, low quality, artifacts, jpeg artifacts, nsfw",
@@ -83,12 +104,12 @@ class Config:
     HF_PREFER_IF_CONFIGURED: bool = _get_bool("HF_PREFER_IF_CONFIGURED", True)
 
     # --- Image Style Settings ---
-    # Style directive for image generation prompts
+    # Style directive for image generation prompts - professional industrial photography
     IMAGE_STYLE: str = _get_str(
         "IMAGE_STYLE",
-        "photorealistic, 1960s Kodachrome film aesthetic, slightly desaturated warm "
-        "tones, vintage cinema color grading, soft golden hour lighting, subtle film "
-        "grain, rich shadows, muted pastel highlights",
+        "professional industrial photography, photorealistic, documentary style, "
+        "clean corporate aesthetic, neutral color palette, realistic lighting, "
+        "sharp focus, high resolution, suitable for engineering trade publication",
     )
 
     # --- Search Settings ---
