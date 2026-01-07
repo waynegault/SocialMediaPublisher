@@ -14,10 +14,27 @@ approved unpublished stories up to the configured STORIES_PER_CYCLE.
 from __future__ import annotations
 from pathlib import Path
 import json
+import os
+import sys
+from datetime import datetime
 
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=False)
+def _ensure_venv():
+    proj_root = Path(__file__).parent
+    venv_dir = proj_root / '.venv'
+    if venv_dir.exists():
+        venv_py = venv_dir / ('Scripts' if os.name == 'nt' else 'bin') / (
+            'python.exe' if os.name == 'nt' else 'python'
+        )
+        if venv_py.exists():
+            venv_path = str(venv_py)
+            if os.path.abspath(sys.executable) != os.path.abspath(venv_path):
+                os.execv(venv_path, [venv_path] + sys.argv)
+
+_ensure_venv()
+
+load_dotenv(dotenv_path=Path(__file__).parent / '.env', override=False)
 
 from config import Config
 from database import Database

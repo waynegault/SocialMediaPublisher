@@ -37,6 +37,7 @@ class LinkedInPublisher:
             "X-Restli-Protocol-Version": "2.0.0",
         }
 
+
     def publish_due_stories(self) -> tuple[int, int]:
         """
         Publish all stories that are due.
@@ -90,17 +91,19 @@ class LinkedInPublisher:
         # Build and post content
         return self._create_post(story, image_asset)
 
-    def _upload_image(self, image_path: str) -> str | None:
+    def _upload_image(self, image_path: str, owner: str | None = None) -> str | None:
         """
         Upload an image to LinkedIn.
         Returns the asset URN if successful.
         """
         try:
+            upload_owner = owner or Config.LINKEDIN_AUTHOR_URN
+
             # Step 1: Register the upload
             register_payload = {
                 "registerUploadRequest": {
                     "recipes": ["urn:li:digitalmediaRecipe:feedshare-image"],
-                    "owner": Config.LINKEDIN_AUTHOR_URN,
+                    "owner": upload_owner,
                     "serviceRelationships": [
                         {
                             "relationshipType": "OWNER",
@@ -256,6 +259,65 @@ class LinkedInPublisher:
             },
             "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
         }
+
+    def publish_one_off(self, author_urn: str, text: str, image_path: str | None = None) -> str | None:
+        """Publish a one-off UGC post for given author (person or org). Returns the post ID if successful."""
+        image_asset = None
+        if image_path and Path(image_path).exists():
+            image_asset = self._upload_image(image_path, owner=author_urn)
+
+        if image_asset:
+            payload = {
+                "author": author_urn,
+                "lifecycleState": "PUBLISHED",
+                "specificContent": {
+                    "com.linkedin.ugc.ShareContent": {
+                        "shareCommentary": {"text": text},
+                        "shareMediaCategory": "IMAGE",
+                        "media": [
+                            {
+                                "status": "READY",
+                                "description": {"text": text[:200]},
+                                "media": image_asset,
+                                "title": {"text": text[:100]},
+                            }
+                        ],
+                    }
+                },
+                "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
+            }
+        else:
+            payload = {
+                "author": author_urn,
+                "lifecycleState": "PUBLISHED",
+                "specificContent": {
+                    "com.linkedin.ugc.ShareContent": {
+                        "shareCommentary": {"text": text},
+                        "shareMediaCategory": "NONE",
+                    }
+                },
+                "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
+            }
+
+        try:
+            response = requests.post(
+                f"{self.BASE_URL}/ugcPosts",
+                headers=self._get_headers(),
+                json=payload,
+                timeout=30,
+            )
+
+            if response.status_code in (200, 201):
+                post_id = response.headers.get("X-RestLi-Id", "")
+                logger.info(f"Published one-off post: {post_id}")
+                return post_id
+            else:
+                logger.error(f"One-off post failed: {response.status_code} {response.text}")
+                return None
+
+        except Exception as e:
+            logger.error(f"One-off post exception: {e}")
+            return None
 
     def test_connection(self) -> bool:
         """Test the LinkedIn API connection."""
