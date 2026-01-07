@@ -293,6 +293,19 @@ class Database:
 
     # --- Query Operations ---
 
+    def get_stories_with_images(self) -> list[Story]:
+        """Get all stories that have an image_path set (regardless of file existence)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM stories
+                WHERE image_path IS NOT NULL
+                ORDER BY acquire_date DESC
+                """
+            )
+            return [Story.from_row(row) for row in cursor.fetchall()]
+
     def get_stories_needing_images(self, min_quality: int) -> list[Story]:
         """Get stories that need image generation."""
         with self._get_connection() as conn:

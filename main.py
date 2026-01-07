@@ -92,7 +92,9 @@ class ContentEngine:
 
                 # Whether we started a new instance or another instance is already running,
                 # just poll until the local server becomes available.
-                logger.info("Waiting for LM Studio to initialize or detect existing instance...")
+                logger.info(
+                    "Waiting for LM Studio to initialize or detect existing instance..."
+                )
                 for _ in range(30):  # up to ~60 seconds
                     time.sleep(2)
                     client = self._get_lm_studio_client()
@@ -430,6 +432,12 @@ def _test_image_generation(engine: ContentEngine) -> None:
     """Test the image generation component."""
     print("\n--- Testing Image Generation ---")
 
+    # First, check for missing image files and handle them
+    missing_files_handled = _check_and_fix_missing_images(engine)
+    if missing_files_handled > 0:
+        print(f"\nHandled {missing_files_handled} stories with missing image files.")
+        print("-" * 40)
+
     stories = engine.db.get_stories_needing_images(Config.MIN_QUALITY_SCORE)
 
     if not stories:
@@ -477,6 +485,68 @@ def _test_image_generation(engine: ContentEngine) -> None:
     except Exception as e:
         print(f"\nError: {e}")
         logger.exception("Image generation test failed")
+
+
+def _check_and_fix_missing_images(engine: ContentEngine) -> int:
+    """
+    Check all stories with image_path set and verify the files exist.
+
+    - If file missing and story < 14 days old: clear image_path (will be regenerated)
+    - If file missing and story >= 14 days old: clear image_path (too old to regenerate)
+
+    Returns the number of stories that were updated.
+    """
+    from pathlib import Path
+
+    stories_with_images = engine.db.get_stories_with_images()
+    if not stories_with_images:
+        return 0
+
+    cutoff_date = datetime.now() - timedelta(days=14)
+    updated_count = 0
+    regenerate_count = 0
+    expired_count = 0
+
+    print(f"Checking {len(stories_with_images)} stories with image references...")
+
+    for story in stories_with_images:
+        if not story.image_path:
+            continue
+
+        image_file = Path(story.image_path)
+
+        if image_file.exists():
+            continue  # File exists, nothing to do
+
+        # File is missing - determine action based on story age
+        story_date = story.acquire_date or datetime.min
+
+        if story_date >= cutoff_date:
+            # Story is less than 14 days old - clear path so it can be regenerated
+            print(
+                f"  [REGENERATE] Story {story.id}: '{story.title[:40]}...' - image missing, will regenerate"
+            )
+            story.image_path = None
+            engine.db.update_story(story)
+            regenerate_count += 1
+            updated_count += 1
+        else:
+            # Story is 14+ days old - just clear the reference
+            days_old = (datetime.now() - story_date).days
+            print(
+                f"  [EXPIRED] Story {story.id}: '{story.title[:40]}...' - image missing, story is {days_old} days old"
+            )
+            story.image_path = None
+            engine.db.update_story(story)
+            expired_count += 1
+            updated_count += 1
+
+    if updated_count > 0:
+        print(
+            f"\nSummary: {regenerate_count} queued for regeneration, {expired_count} expired (reference cleared)"
+        )
+
+    return updated_count
 
 
 def _test_verification(engine: ContentEngine) -> None:
