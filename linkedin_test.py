@@ -19,6 +19,21 @@ import json
 from pathlib import Path
 import os
 import requests
+
+def _ensure_venv():
+    proj_root = Path(__file__).parent
+    venv_dir = proj_root / '.venv'
+    if venv_dir.exists():
+        venv_py = venv_dir / ('Scripts' if os.name == 'nt' else 'bin') / (
+            'python.exe' if os.name == 'nt' else 'python'
+        )
+        if venv_py.exists():
+            venv_path = str(venv_py)
+            if os.path.abspath(sys.executable) != os.path.abspath(venv_path):
+                os.execv(venv_path, [venv_path] + sys.argv)
+
+_ensure_venv()
+
 from dotenv import load_dotenv
 
 

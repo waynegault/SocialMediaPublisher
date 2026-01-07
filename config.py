@@ -5,6 +5,22 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
+import sys
+
+def _ensure_venv():
+    proj_root = Path(__file__).parent
+    venv_dir = proj_root / '.venv'
+    if venv_dir.exists():
+        venv_py = venv_dir / ('Scripts' if os.name == 'nt' else 'bin') / (
+            'python.exe' if os.name == 'nt' else 'python'
+        )
+        if venv_py.exists():
+            venv_path = str(venv_py)
+            if os.path.abspath(sys.executable) != os.path.abspath(venv_path):
+                os.execv(venv_path, [venv_path] + sys.argv)
+
+_ensure_venv()
+
 load_dotenv()
 
 
@@ -38,6 +54,8 @@ class Config:
     )
     LINKEDIN_ACCESS_TOKEN: str = _get_str("LINKEDIN_ACCESS_TOKEN")
     LINKEDIN_AUTHOR_URN: str = _get_str("LINKEDIN_AUTHOR_URN")
+    # Optional org URN to post as a company (e.g. urn:li:organization:123456)
+    LINKEDIN_ORGANIZATION_URN: str = _get_str("LINKEDIN_ORGANIZATION_URN")
 
     # --- Local LLM (LM Studio) ---
     LM_STUDIO_BASE_URL: str = _get_str("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
