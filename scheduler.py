@@ -89,7 +89,7 @@ class Scheduler:
         scheduled_times = []
         current_time = base_time
 
-        for i in range(count):
+        for _ in range(count):
             # Add jitter
             jitter = random.randint(-jitter_minutes, jitter_minutes)
             scheduled_time = current_time + timedelta(minutes=jitter)

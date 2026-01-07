@@ -206,7 +206,7 @@ def create_database_tests() -> TestSuite:
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             db_path = f.name
         try:
-            _db = Database(db_path)  # Constructor calls _init_db
+            Database(db_path)  # Constructor calls _init_db automatically
             assert os.path.exists(db_path)
         finally:
             os.unlink(db_path)

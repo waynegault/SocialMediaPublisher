@@ -18,25 +18,27 @@ import argparse
 import json
 from pathlib import Path
 import os
-import sys
 import requests
 from dotenv import load_dotenv
+
 
 # Load .env from multiple candidate locations (script dir, cwd, parent) and report which was used
 def _load_env_candidates():
     candidates = []
     # Respect DOTENV_PATH env var if provided
-    dot = os.getenv('DOTENV_PATH')
+    dot = os.getenv("DOTENV_PATH")
     if dot:
         try:
             candidates.append(Path(dot))
         except Exception:
             pass
-    candidates.extend([
-        Path(__file__).parent / '.env',
-        Path.cwd() / '.env',
-        Path(__file__).parent.parent / '.env',
-    ])
+    candidates.extend(
+        [
+            Path(__file__).parent / ".env",
+            Path.cwd() / ".env",
+            Path(__file__).parent.parent / ".env",
+        ]
+    )
 
     found = None
     for p in candidates:
@@ -49,9 +51,9 @@ def _load_env_candidates():
             # keep loading other candidates so later ones can add missing vars
     return found
 
-ENV_PATH = _load_env_candidates() or (Path(__file__).parent / '.env')
-print("Loaded .env from:", str(ENV_PATH) if ENV_PATH.exists() else "(none found)")
 
+ENV_PATH = _load_env_candidates() or (Path(__file__).parent / ".env")
+print("Loaded .env from:", str(ENV_PATH) if ENV_PATH.exists() else "(none found)")
 
 
 def mask(tok: str | None) -> str:
@@ -71,7 +73,7 @@ def safe_json(resp: requests.Response):
 def write_token_to_env(token: str, env_path: Path) -> None:
     lines = []
     if env_path.exists():
-        lines = env_path.read_text(encoding='utf-8').splitlines()
+        lines = env_path.read_text(encoding="utf-8").splitlines()
 
     new_lines = []
     replaced = False
@@ -83,14 +85,22 @@ def write_token_to_env(token: str, env_path: Path) -> None:
             new_lines.append(line)
     if not replaced:
         new_lines.append(f"LINKEDIN_ACCESS_TOKEN={token}")
-    env_path.write_text("\n".join(new_lines) + "\n", encoding='utf-8')
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--token", type=str, help="Provide an access token directly (no 'Bearer ' prefix)")
-    parser.add_argument("--prompt", action="store_true", help="Prompt for an access token interactively")
-    parser.add_argument("--save", action="store_true", help="Save obtained/provided token to .env")
+    parser.add_argument(
+        "--token",
+        type=str,
+        help="Provide an access token directly (no 'Bearer ' prefix)",
+    )
+    parser.add_argument(
+        "--prompt", action="store_true", help="Prompt for an access token interactively"
+    )
+    parser.add_argument(
+        "--save", action="store_true", help="Save obtained/provided token to .env"
+    )
     args = parser.parse_args(argv)
 
     token = args.token or os.getenv("LINKEDIN_ACCESS_TOKEN")
@@ -113,7 +123,9 @@ def main(argv: list[str] | None = None) -> int:
     print("LINKEDIN_ACCESS_TOKEN (masked):", mask(token))
 
     if not token:
-        print("No access token available. Provide one via --token, --prompt, or set LINKEDIN_ACCESS_TOKEN in .env")
+        print(
+            "No access token available. Provide one via --token, --prompt, or set LINKEDIN_ACCESS_TOKEN in .env"
+        )
         return 2
 
     headers = {
@@ -123,10 +135,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # Call /v2/userinfo (OpenID)
     try:
-        r = requests.get("https://api.linkedin.com/v2/userinfo", headers=headers, timeout=15)
+        r = requests.get(
+            "https://api.linkedin.com/v2/userinfo", headers=headers, timeout=15
+        )
         print("/userinfo status:", r.status_code)
         body = safe_json(r)
-        print("/userinfo body:", json.dumps(body, indent=2) if isinstance(body, dict) else body)
+        print(
+            "/userinfo body:",
+            json.dumps(body, indent=2) if isinstance(body, dict) else body,
+        )
 
         # If successful, optionally save token
         if args.save:
