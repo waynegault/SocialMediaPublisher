@@ -48,3 +48,5 @@ logs/
 data/
 output/
 
+# Database backups (primary db is tracked, backups are not)
+*.db.backup

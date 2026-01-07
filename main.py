@@ -334,11 +334,16 @@ def interactive_menu(engine: ContentEngine) -> None:
         print("    9. List Pending Stories")
         print("   10. List Scheduled Stories")
         print("   11. Cleanup Old Stories")
+        print("   16. Backup Database")
+        print("   17. Verify Database Integrity")
+        print("   18. Restore Database from Backup")
         print("\n  Configuration:")
         print("   12. Show Configuration")
         print("   13. Show Full Status")
         print("\n  Pipeline:")
         print("   14. Run Full Search Cycle")
+        print("\n  Testing:")
+        print("   15. Run Unit Tests")
         print("\n   0. Exit")
         print("=" * 60)
 
@@ -379,6 +384,14 @@ def interactive_menu(engine: ContentEngine) -> None:
             engine.status()
         elif choice == "14":
             _run_full_cycle(engine)
+        elif choice == "15":
+            _run_unit_tests()
+        elif choice == "16":
+            _backup_database(engine)
+        elif choice == "17":
+            _verify_database(engine)
+        elif choice == "18":
+            _restore_database(engine)
         else:
             print("Invalid choice. Please try again.")
 
@@ -777,6 +790,75 @@ def _cleanup_old_stories(engine: ContentEngine) -> None:
         logger.exception("Cleanup failed")
 
 
+def _backup_database(engine: ContentEngine) -> None:
+    """Create a database backup."""
+    print("\n--- Database Backup ---")
+    print(f"Database: {engine.db.db_name}")
+
+    backup_exists = engine.db.backup_exists()
+    if backup_exists:
+        print("Warning: An existing backup will be overwritten.")
+
+    confirm = input("\nCreate backup? (y/n): ").strip().lower()
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    try:
+        backup_path = engine.db.create_backup()
+        print(f"\n✓ Backup created: {backup_path}")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Backup failed")
+
+
+def _verify_database(engine: ContentEngine) -> None:
+    """Verify database integrity."""
+    print("\n--- Database Integrity Check ---")
+    print(f"Database: {engine.db.db_name}")
+
+    print("\nRunning integrity check...")
+    is_valid, message = engine.db.verify_integrity()
+
+    if is_valid:
+        print(f"\n✓ {message}")
+    else:
+        print(f"\n✗ {message}")
+        print("\nConsider restoring from backup if available.")
+        if engine.db.backup_exists():
+            print("  Backup file exists: Use option 18 to restore.")
+
+
+def _restore_database(engine: ContentEngine) -> None:
+    """Restore database from backup."""
+    print("\n--- Database Restore ---")
+    print(f"Database: {engine.db.db_name}")
+
+    if not engine.db.backup_exists():
+        print("\n✗ No backup file found.")
+        print("  Create a backup first using option 16.")
+        return
+
+    print("\nWarning: This will replace the current database with the backup.")
+    print("         All changes since the backup was created will be lost.")
+
+    confirm = input("\nRestore from backup? (y/n): ").strip().lower()
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    try:
+        if engine.db.restore_from_backup():
+            print("\n✓ Database restored from backup.")
+            print("  Reinitializing database connection...")
+            engine.db._init_db()  # Reinitialize to pick up restored data
+        else:
+            print("\n✗ Restore failed. See logs for details.")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Restore failed")
+
+
 def _run_full_cycle(engine: ContentEngine) -> None:
     """Run the full search cycle."""
     print("\n--- Run Full Search Cycle ---")
@@ -798,6 +880,29 @@ def _run_full_cycle(engine: ContentEngine) -> None:
     except Exception as e:
         print(f"\nError: {e}")
         logger.exception("Search cycle failed")
+
+
+def _run_unit_tests() -> None:
+    """Run the unit test suite."""
+    print("\n--- Running Unit Tests ---")
+    print("Executing all unit tests...\n")
+
+    try:
+        # Import and run tests from unit_tests module
+        from unit_tests import run_tests
+
+        success = run_tests()
+
+        if success:
+            print("\n✓ All tests passed!")
+        else:
+            print("\n✗ Some tests failed. Review output above.")
+    except ImportError as e:
+        print(f"\nError importing test module: {e}")
+        print("Make sure unit_tests.py and test_framework.py are present.")
+    except Exception as e:
+        print(f"\nError running tests: {e}")
+        logger.exception("Unit test execution failed")
 
 
 def main():
