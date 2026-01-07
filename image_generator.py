@@ -153,10 +153,11 @@ class ImageGenerator:
         }
 
         # Choose endpoint: custom inference endpoint or public models route
+        # Note: api-inference.huggingface.co is deprecated, use router.huggingface.co
         if Config.HF_INFERENCE_ENDPOINT:
             url = Config.HF_INFERENCE_ENDPOINT.rstrip("/")
         else:
-            url = f"https://api-inference.huggingface.co/models/{Config.HF_TTI_MODEL}"
+            url = f"https://router.huggingface.co/hf-inference/models/{Config.HF_TTI_MODEL}"
 
         payload = {
             "inputs": prompt,
@@ -193,9 +194,7 @@ class ImageGenerator:
                 return filepath
 
             # Some models may return JSON with an image in base64
-            if response.headers.get("content-type", "").startswith(
-                "application/json"
-            ):
+            if response.headers.get("content-type", "").startswith("application/json"):
                 try:
                     data = response.json()
                     if isinstance(data, dict):
@@ -211,9 +210,7 @@ class ImageGenerator:
                             import base64
 
                             image_bytes = base64.b64decode(b64)
-                            filename = (
-                                f"story_{story.id}_{int(time.time())}_hf_b64.png"
-                            )
+                            filename = f"story_{story.id}_{int(time.time())}_hf_b64.png"
                             filepath = os.path.join(Config.IMAGE_DIR, filename)
                             with open(filepath, "wb") as f:
                                 f.write(image_bytes)
@@ -316,23 +313,31 @@ Sources:
 {sources_text}
 """
 
+        # Get the configurable image style
+        image_style = Config.IMAGE_STYLE
+
         refinement_prompt = f"""
-You are an expert AI image prompt engineer.
+You are an expert AI image prompt engineer specializing in cinematic, photorealistic imagery.
 Based on the news story and sources below, create a detailed, high-quality prompt for an image generation model (like Imagen or Stable Diffusion).
 
 STORY:
 {context}
 
-REQUIREMENTS for the prompt you generate:
-- Focus on a single, powerful visual metaphor or scene.
-- Style: Professional, editorial photography, high resolution, 8k.
-- NO TEXT or labels in the image.
-- Avoid people's faces if possible, focus on objects, environments, or symbolic representations.
-- Lighting: Cinematic, professional.
-- Aspect ratio: 16:9.
-- Use the story title, summary, and source links to identify key visual elements or specific locations/technologies mentioned.
+MANDATORY STYLE (include these exact style directives in your prompt):
+{image_style}
 
-Respond with ONLY the refined prompt text.
+REQUIREMENTS for the prompt you generate:
+- Focus on a single, powerful visual metaphor or scene that captures the essence of the story.
+- The image must be PHOTOREALISTIC - like a real photograph, not illustration or CGI.
+- Apply a 1960s vintage cinema color palette: warm Kodachrome tones, slightly muted colors, rich shadows.
+- NO TEXT, labels, watermarks, or logos in the image.
+- Avoid people's faces if possible; focus on objects, environments, hands, silhouettes, or symbolic representations.
+- Lighting: Cinematic, soft golden hour or warm tungsten lighting, with atmospheric depth.
+- Aspect ratio: 16:9, wide cinematic frame.
+- Use the story title, summary, and source links to identify specific visual elements, technologies, or locations.
+- Think like a 1960s film cinematographer capturing a documentary moment.
+
+Respond with ONLY the refined prompt text. Start directly with the scene description.
 """
 
         try:
@@ -357,9 +362,10 @@ Respond with ONLY the refined prompt text.
         except Exception as e:
             logger.warning(f"Prompt refinement failed: {e}. Using base prompt.")
 
-        # Ultimate fallback
+        # Ultimate fallback - still include the style directive
         return (
-            f"Professional news illustration for: {story.title}. {story.summary[:100]}"
+            f"Photorealistic photograph, 1960s Kodachrome film aesthetic, warm vintage "
+            f"cinema colors, soft golden lighting: {story.title}. {story.summary[:100]}"
         )
 
     def get_stories_with_images_count(self) -> int:
