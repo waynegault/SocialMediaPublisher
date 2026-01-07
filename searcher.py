@@ -149,12 +149,23 @@ def validate_url(url: str) -> bool:
     # Optional: Check accessibility (HEAD request with short timeout)
     if Config.VALIDATE_SOURCE_URLS:
         try:
+            # Try HEAD first (faster)
             response = requests.head(url, timeout=5, allow_redirects=True)
-            return response.status_code < 400
-        except requests.exceptions.RequestException:
-            # If we can't reach it, still accept it (might be temporary)
-            logger.debug(f"URL accessibility check failed for {url}")
+            # Some servers don't support HEAD, try GET on 405
+            if response.status_code == 405:
+                response = requests.get(url, timeout=5, allow_redirects=True)
+            if response.status_code >= 400:
+                logger.debug(f"URL returned {response.status_code}: {url}")
+                return False
             return True
+        except requests.exceptions.Timeout:
+            # Timeout is acceptable - site might be slow but exists
+            logger.debug(f"URL timeout (accepting anyway): {url}")
+            return True
+        except requests.exceptions.RequestException as e:
+            # Connection errors, DNS failures, etc. - reject the URL
+            logger.debug(f"URL validation failed ({type(e).__name__}): {url}")
+            return False
 
     return True
 
@@ -313,7 +324,69 @@ class StorySearcher:
 
         logger.debug(f"Gemini response length: {len(response.text)} chars")
         stories_data = self._parse_response(response.text)
+
+        # Extract real URLs from grounding metadata (not hallucinated by LLM)
+        grounding_urls = self._extract_grounding_urls(response)
+        if grounding_urls:
+            logger.info(f"Extracted {len(grounding_urls)} URLs from grounding metadata")
+            # Replace hallucinated sources with real grounded URLs
+            stories_data = self._replace_sources_with_grounding(
+                stories_data, grounding_urls
+            )
+
         return self._process_stories_data(stories_data, since_date)
+
+    def _extract_grounding_urls(self, response: Any) -> list[str]:
+        """Extract real URLs from Gemini grounding metadata."""
+        urls: list[str] = []
+        try:
+            if not response.candidates:
+                return urls
+            candidate = response.candidates[0]
+            if not hasattr(candidate, "grounding_metadata"):
+                return urls
+            metadata = candidate.grounding_metadata
+            if not metadata or not hasattr(metadata, "grounding_chunks"):
+                return urls
+            for chunk in metadata.grounding_chunks:
+                if hasattr(chunk, "web") and hasattr(chunk.web, "uri"):
+                    uri = chunk.web.uri
+                    if uri and uri.startswith("http"):
+                        urls.append(uri)
+        except Exception as e:
+            logger.debug(f"Could not extract grounding URLs: {e}")
+        return urls
+
+    def _replace_sources_with_grounding(
+        self, stories_data: list[dict], grounding_urls: list[str]
+    ) -> list[dict]:
+        """Replace LLM-generated sources with real grounding URLs."""
+        if not grounding_urls:
+            return stories_data
+
+        # Distribute grounding URLs across stories
+        # Each story gets at least one URL if available
+        num_stories = len(stories_data)
+        if num_stories == 0:
+            return stories_data
+
+        urls_per_story = max(1, len(grounding_urls) // num_stories)
+
+        for i, story in enumerate(stories_data):
+            start_idx = i * urls_per_story
+            end_idx = start_idx + urls_per_story
+            # Last story gets remaining URLs
+            if i == num_stories - 1:
+                end_idx = len(grounding_urls)
+            story_urls = grounding_urls[start_idx:end_idx]
+            if story_urls:
+                story["sources"] = story_urls
+                logger.debug(
+                    f"Replaced sources for '{story.get('title', 'Unknown')[:30]}' "
+                    f"with {len(story_urls)} grounded URLs"
+                )
+
+        return stories_data
 
     def _get_search_query(self, search_prompt: str) -> str:
         """Convert a conversational prompt into a concise search query using Local LLM."""
@@ -629,27 +702,30 @@ REQUIREMENTS:
 - Stories must be from after {since_date.strftime("%Y-%m-%d")}
 - Each story needs:
   * title: A clear, engaging headline
-  * sources: Array of source URLs
+  * sources: Array of REAL source URLs from your search results
   * summary: {summary_words} words max
   * category: One of: Technology, Business, Science, AI, Other
   * quality_score: 1-10 rating
-  * quality_justification: Brief explanation of the score (e.g., "High relevance, reputable source, timely")
+  * quality_justification: Brief explanation of the score
+
+CRITICAL: Only include URLs you found in your search results. Do NOT invent or guess URLs.
+If you cannot find a real URL for a story, omit that story entirely.
 
 RESPOND WITH ONLY THIS JSON FORMAT:
 {{
   "stories": [
     {{
       "title": "Story Title",
-      "sources": ["https://example.com/article"],
+      "sources": ["https://real-url-from-search.com/article"],
       "summary": "Brief summary here.",
       "category": "Technology",
       "quality_score": 8,
-      "quality_justification": "Highly relevant topic, from reputable source, published today"
+      "quality_justification": "Highly relevant topic, reputable source, timely"
     }}
   ]
 }}
 
-IMPORTANT: Return complete, valid JSON. Keep summaries concise. Include quality justification.
+IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real URLs.
 """
 
     def _parse_response(self, response_text: str) -> list[dict]:
@@ -1040,8 +1116,16 @@ You are a news curator. I have found the following search results for: "{search_
 SEARCH RESULTS:
 {json.dumps(search_results, indent=2)}
 
-TASK: Select up to {max_stories} stories and provide:
-- title, summary ({summary_words} words), sources, category, quality_score (1-10), quality_justification
+TASK: Select up to {max_stories} of the BEST stories and provide for each:
+- title: A clear, engaging headline based on the search result
+- summary: {summary_words} words max summarizing the story
+- sources: Array containing ONLY the exact "link" URL from the search result above
+- category: One of: Technology, Business, Science, AI, Other
+- quality_score: 1-10 rating
+- quality_justification: Brief explanation of the score
+
+CRITICAL: For the "sources" field, you MUST use the EXACT "link" URL from the search
+results provided above. Do NOT invent, modify, or guess URLs. Copy the link exactly.
 
 Return JSON: {{"stories": [...]}}
 """
