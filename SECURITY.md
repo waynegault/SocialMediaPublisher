@@ -1,5 +1,22 @@
 # Security Policy
 
+## ⚠️ URGENT: Git History Contains Sensitive Data
+
+**If you are making this repository public and it was previously private**, be aware that the git history may contain real API keys and credentials from earlier commits.
+
+### Immediate Actions Required:
+
+1. **Rotate ALL credentials immediately**:
+   - Generate a new Gemini API key at [Google AI Studio](https://aistudio.google.com/)
+   - Generate a new LinkedIn OAuth token at [LinkedIn Developer Portal](https://developer.linkedin.com/)
+   - Generate a new Hugging Face token at [Hugging Face Settings](https://huggingface.co/settings/tokens) (if used)
+
+2. **Update your `.env` file** with the new credentials
+
+3. **Consider cleaning git history** if sensitive data exists in older commits (use tools like `git filter-branch` or BFG Repo-Cleaner)
+
+---
+
 ## Reporting Security Issues
 
 If you discover a security vulnerability in this project, please report it by emailing the repository owner. Please do not create public GitHub issues for security vulnerabilities.
