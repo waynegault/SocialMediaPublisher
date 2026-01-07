@@ -3,8 +3,10 @@
 import sqlite3
 import json
 import logging
+import shutil
 from datetime import datetime
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 from contextlib import contextmanager
 
@@ -488,3 +490,78 @@ class Database:
             stats["pending_verification"] = cursor.fetchone()[0]
 
             return stats
+
+    def create_backup(self, suffix: str = ".backup") -> str:
+        """Create a backup of the database file.
+
+        Args:
+            suffix: Suffix to append to database name for backup file
+
+        Returns:
+            Path to the backup file
+        """
+        backup_path = self.db_name + suffix
+        try:
+            shutil.copy2(self.db_name, backup_path)
+            logger.info(f"Created database backup: {backup_path}")
+            return backup_path
+        except Exception as e:
+            logger.error(f"Failed to create backup: {e}")
+            raise
+
+    def restore_from_backup(self, backup_path: Optional[str] = None) -> bool:
+        """Restore database from a backup file.
+
+        Args:
+            backup_path: Path to backup file. Defaults to db_name + ".backup"
+
+        Returns:
+            True if restore succeeded
+        """
+        if backup_path is None:
+            backup_path = self.db_name + ".backup"
+
+        if not Path(backup_path).exists():
+            logger.error(f"Backup file not found: {backup_path}")
+            return False
+
+        try:
+            shutil.copy2(backup_path, self.db_name)
+            logger.info(f"Restored database from: {backup_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to restore from backup: {e}")
+            return False
+
+    def verify_integrity(self) -> tuple[bool, str]:
+        """Verify database integrity using SQLite's integrity_check.
+
+        Returns:
+            Tuple of (is_valid, message)
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA integrity_check")
+                result = cursor.fetchone()[0]
+
+                if result == "ok":
+                    logger.info("Database integrity check passed")
+                    return True, "Database integrity check passed"
+                else:
+                    logger.error(f"Database integrity check failed: {result}")
+                    return False, f"Integrity check failed: {result}"
+        except Exception as e:
+            logger.error(f"Error checking database integrity: {e}")
+            return False, f"Error: {e}"
+
+    def backup_exists(self, suffix: str = ".backup") -> bool:
+        """Check if a backup file exists.
+
+        Args:
+            suffix: Suffix of backup file to check
+
+        Returns:
+            True if backup exists
+        """
+        return Path(self.db_name + suffix).exists()

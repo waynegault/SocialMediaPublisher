@@ -578,6 +578,19 @@ The test framework (`test_framework.py`) provides:
 - Detailed pass/fail reporting
 - MockLogger for testing logged output
 
+You can also run tests from the interactive menu using option **15**.
+
+### Database Backup and Recovery
+
+The database (`content_engine.db`) is tracked in git for version control.
+A local backup file (`*.db.backup`) is excluded from git for recovery.
+
+From the interactive menu:
+
+- **16. Backup Database**: Create a backup of the current database
+- **17. Verify Database Integrity**: Run SQLite integrity check
+- **18. Restore Database from Backup**: Restore from the backup file
+
 ---
 
 ## Future Developer Ideas
@@ -598,6 +611,14 @@ The test framework (`test_framework.py`) provides:
 
 ## Appendix A: Chronology of Changes
 
+### Version 2.2 (January 7, 2026)
+
+- Added "Run Unit Tests" option to interactive menu (option 15)
+- Added database backup/restore/verify menu options (16, 17, 18)
+- Database now tracked in git with backup excluded
+- Fixed all pylance errors and type warnings
+- Improved null-safety in LinkedIn authentication code
+
 ### Version 2.1 (January 7, 2026)
 
 - Added production-grade error handling with circuit breaker pattern
@@ -607,7 +628,6 @@ The test framework (`test_framework.py`) provides:
 - Enhanced configuration validation and environment variable handling
 - Sanitized `.env.example` to remove sensitive data
 - Updated documentation with developer-focused sections
-- Added generated_images to .gitignore
 
 ### Version 2.0 (January 2026)
 
