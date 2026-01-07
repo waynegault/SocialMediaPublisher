@@ -17,14 +17,14 @@ Security:
 
 import argparse
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import os
 import requests
 from dotenv import load_dotenv
 
 # Load .env from project root
-load_dotenv(dotenv_path=Path(__file__).parent / '.env', override=False)
+load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=False)
 
 from config import Config
 
@@ -36,7 +36,9 @@ def mask(tok: str | None) -> str:
     return t[:6] + "..." + t[-4:] if len(t) > 10 else "***"
 
 
-def exchange_code(code: str, client_id: str, client_secret: str, redirect_uri: str) -> dict | None:
+def exchange_code(
+    code: str, client_id: str, client_secret: str, redirect_uri: str
+) -> dict | None:
     url = "https://www.linkedin.com/oauth/v2/accessToken"
     payload = {
         "grant_type": "authorization_code",
@@ -77,17 +79,29 @@ def email_request(token: str) -> dict:
 
 
 def register_upload(token: str, author_urn: str) -> dict:
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "X-Restli-Protocol-Version": "2.0.0"}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "X-Restli-Protocol-Version": "2.0.0",
+    }
     payload = {
         "registerUploadRequest": {
             "recipes": ["urn:li:digitalmediaRecipe:feedshare-image"],
             "owner": author_urn,
             "serviceRelationships": [
-                {"relationshipType": "OWNER", "identifier": "urn:li:userGeneratedContent"}
+                {
+                    "relationshipType": "OWNER",
+                    "identifier": "urn:li:userGeneratedContent",
+                }
             ],
         }
     }
-    r = requests.post("https://api.linkedin.com/v2/assets?action=registerUpload", headers=headers, json=payload, timeout=20)
+    r = requests.post(
+        "https://api.linkedin.com/v2/assets?action=registerUpload",
+        headers=headers,
+        json=payload,
+        timeout=20,
+    )
     return {"status": r.status_code, "body": safe_json(r)}
 
 
@@ -103,7 +117,7 @@ def write_token_to_env(token: str, env_path: Path) -> None:
     # Append or replace LINKEDIN_ACCESS_TOKEN in .env
     lines = []
     if env_path.exists():
-        lines = env_path.read_text(encoding='utf-8').splitlines()
+        lines = env_path.read_text(encoding="utf-8").splitlines()
 
     new_lines = []
     replaced = False
@@ -115,17 +129,27 @@ def write_token_to_env(token: str, env_path: Path) -> None:
             new_lines.append(line)
     if not replaced:
         new_lines.append(f"LINKEDIN_ACCESS_TOKEN={token}")
-    env_path.write_text("\n".join(new_lines) + "\n", encoding='utf-8')
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--save", action="store_true", help="Save obtained token to .env (if exchange succeeds)")
-    parser.add_argument("--token", type=str, help="Provide an access token directly (avoid putting tokens in chat)")
-    parser.add_argument("--prompt", action="store_true", help="Prompt for an access token interactively")
+    parser.add_argument(
+        "--save",
+        action="store_true",
+        help="Save obtained token to .env (if exchange succeeds)",
+    )
+    parser.add_argument(
+        "--token",
+        type=str,
+        help="Provide an access token directly (avoid putting tokens in chat)",
+    )
+    parser.add_argument(
+        "--prompt", action="store_true", help="Prompt for an access token interactively"
+    )
     args = parser.parse_args()
 
-    env_path = Path(__file__).parent / '.env'
+    env_path = Path(__file__).parent / ".env"
 
     # Read env
     token = args.token or os.getenv("LINKEDIN_ACCESS_TOKEN")
@@ -152,24 +176,42 @@ def main():
     print("Access token (masked):", mask(token))
     print("Auth code present:", "YES" if code and code.strip() else "NO")
 
-    if not token and code:
+    if not token and code and client_id and client_secret and redirect_uri:
         print("Attempting to exchange authorization code...")
         res = exchange_code(code, client_id, client_secret, redirect_uri)
-        print("Exchange status:", res.get("status"))
-        print("Exchange body:", json.dumps(res.get("body"), indent=2))
-        if res.get("status") == 200 and isinstance(res.get("body"), dict) and res["body"].get("access_token"):
-            token = res["body"].get("access_token").strip()
-            expires_in = res["body"].get("expires_in")
-            exp_ts = datetime.utcnow() + timedelta(seconds=expires_in) if expires_in else None
-            print("Obtained access token (masked):", mask(token))
-            if exp_ts:
-                print("Expires in:", expires_in, "seconds (about", exp_ts.isoformat(), "UTC)")
-            if args.save:
+        if res:
+            print("Exchange status:", res.get("status"))
+            print("Exchange body:", json.dumps(res.get("body"), indent=2))
+            body = res.get("body")
+            if (
+                res.get("status") == 200
+                and isinstance(body, dict)
+                and body.get("access_token")
+            ):
+                token = str(body.get("access_token")).strip()
+                expires_in = body.get("expires_in")
+                exp_ts = (
+                    datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+                    if expires_in
+                    else None
+                )
+                print("Obtained access token (masked):", mask(token))
+                if exp_ts:
+                    print(
+                        "Expires in:",
+                        expires_in,
+                        "seconds (about",
+                        exp_ts.isoformat(),
+                        "UTC)",
+                    )
+            if args.save and token:
                 write_token_to_env(token, env_path)
                 print("Saved token to .env")
 
     if not token:
-        print("No access token available. Provide one in .env or set LINKEDIN_ACCESS_TOKEN env var.")
+        print(
+            "No access token available. Provide one in .env or set LINKEDIN_ACCESS_TOKEN env var."
+        )
         return
 
     token = token.strip()
@@ -193,15 +235,22 @@ def main():
                 print("Suggested author URNs:")
                 print("  person:", candidate_person)
                 print("  member:", candidate_member)
-                if author_urn and author_urn.strip() in (candidate_person, candidate_member):
+                if author_urn and author_urn.strip() in (
+                    candidate_person,
+                    candidate_member,
+                ):
                     print("Configured author URN matches the profile ID ✅")
                 else:
                     print("Configured author URN does not match the profile ID ❌")
                     if author_urn:
                         print("  Configured:", author_urn)
-                    print("  If this is your account, set LINKEDIN_AUTHOR_URN to one of the suggested URNs in your .env")
+                    print(
+                        "  If this is your account, set LINKEDIN_AUTHOR_URN to one of the suggested URNs in your .env"
+                    )
             else:
-                print("Profile response did not include an 'id' or 'sub' field; cannot suggest URN.")
+                print(
+                    "Profile response did not include an 'id' or 'sub' field; cannot suggest URN."
+                )
     except Exception as _:
         # Non-fatal; continue with other diagnostics
         pass
@@ -248,16 +297,24 @@ def main():
         for o in suggested_orgs:
             print(f"  {o['urn']}  ({o['name'] or 'name unknown'})")
         # Check whether configured author_urn matches one of the org URNs
-        matches = [o for o in suggested_orgs if author_urn and author_urn.strip() == o["urn"]]
+        matches = [
+            o for o in suggested_orgs if author_urn and author_urn.strip() == o["urn"]
+        ]
         if matches:
             print("Configured author URN matches an organization you administer ✅")
         else:
-            print("Configured author URN does not match any admin organizations listed ❌")
+            print(
+                "Configured author URN does not match any admin organizations listed ❌"
+            )
             if author_urn:
                 print("  Configured:", author_urn)
-            print("  If you want to post as an organization, set LINKEDIN_AUTHOR_URN to one of the suggested org URNs and ensure your token has w_organization_social.")
+            print(
+                "  If you want to post as an organization, set LINKEDIN_AUTHOR_URN to one of the suggested org URNs and ensure your token has w_organization_social."
+            )
     else:
-        print("\nNo admin organizations found for this token-holder. This may indicate the token lacks w_organization_social scope or the member is not an admin of any organizations.")
+        print(
+            "\nNo admin organizations found for this token-holder. This may indicate the token lacks w_organization_social scope or the member is not an admin of any organizations."
+        )
 
     print("\nDiagnostics complete.")
 

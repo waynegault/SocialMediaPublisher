@@ -3,7 +3,6 @@
 import logging
 import base64
 from pathlib import Path
-from io import BytesIO
 
 from google import genai  # type: ignore
 from openai import OpenAI

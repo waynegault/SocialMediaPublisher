@@ -11,6 +11,7 @@ from typing import Any, Callable, Generator, Optional
 @dataclass
 class TestResult:
     """Result of a single test execution."""
+
     name: str
     passed: bool
     duration_ms: float = 0.0
@@ -21,6 +22,7 @@ class TestResult:
 @dataclass
 class SuiteResult:
     """Result of a test suite execution."""
+
     suite_name: str
     results: list[TestResult] = field(default_factory=list)
     passed: int = 0
@@ -56,7 +58,7 @@ class TestSuite:
     def run(self, verbose: bool = True) -> SuiteResult:
         result = SuiteResult(suite_name=self.name)
         if verbose:
-            print(f"\n{'='*60}\n  {self.name}\n{'='*60}\n")
+            print(f"\n{'=' * 60}\n  {self.name}\n{'=' * 60}\n")
         for test_name, test_func in self.tests:
             test_result = self._run_single_test(test_name, test_func, verbose)
             result.add_result(test_result)
@@ -64,7 +66,9 @@ class TestSuite:
             self._print_summary(result)
         return result
 
-    def _run_single_test(self, name: str, test_func: Callable[[], None], verbose: bool) -> TestResult:
+    def _run_single_test(
+        self, name: str, test_func: Callable[[], None], verbose: bool
+    ) -> TestResult:
         start_time = time.perf_counter()
         try:
             if self._setup:
@@ -81,12 +85,18 @@ class TestSuite:
             error_msg = str(e) if str(e) else f"{type(e).__name__}"
             if verbose:
                 print(f"  ❌ {name} ({duration_ms:.1f}ms)\n     └─ {error_msg}")
-            return TestResult(name=name, passed=False, duration_ms=duration_ms, error_message=error_msg, exception=e)
+            return TestResult(
+                name=name,
+                passed=False,
+                duration_ms=duration_ms,
+                error_message=error_msg,
+                exception=e,
+            )
 
     def _print_summary(self, result: SuiteResult) -> None:
         total = result.passed + result.failed
         status = "✅ PASSED" if result.failed == 0 else "❌ FAILED"
-        print(f"\n{'-'*60}\n  {status}: {result.passed}/{total} tests\n{'='*60}\n")
+        print(f"\n{'-' * 60}\n  {status}: {result.passed}/{total} tests\n{'=' * 60}\n")
 
 
 @contextlib.contextmanager
@@ -107,7 +117,7 @@ class MockLogger:
     def __init__(self) -> None:
         self.messages: list[dict[str, Any]] = []
 
-    def _log(self, level: str, msg: str, *args: Any, **kwargs: Any) -> None:
+    def _log(self, level: str, msg: str, *args: Any, **_kwargs: Any) -> None:
         formatted = msg % args if args else msg
         self.messages.append({"level": level, "message": formatted})
 
@@ -134,7 +144,9 @@ class MockLogger:
 
     def has_message_containing(self, text: str, level: Optional[str] = None) -> bool:
         if level:
-            return any(text in m["message"] for m in self.messages if m["level"] == level)
+            return any(
+                text in m["message"] for m in self.messages if m["level"] == level
+            )
         return any(text in m["message"] for m in self.messages)
 
 
@@ -149,6 +161,7 @@ def run_all_suites(suites: list[TestSuite], verbose: bool = True) -> bool:
         if result.failed > 0:
             all_passed = False
     if verbose and len(suites) > 1:
-        print(f"\n{'='*60}\n  OVERALL: {total_passed}/{total_passed + total_failed}\n{'='*60}\n")
+        print(
+            f"\n{'=' * 60}\n  OVERALL: {total_passed}/{total_passed + total_failed}\n{'=' * 60}\n"
+        )
     return all_passed
-

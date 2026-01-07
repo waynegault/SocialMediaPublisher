@@ -17,7 +17,8 @@ import requests
 
 # Load .env explicitly from project root
 from pathlib import Path
-load_dotenv(dotenv_path=Path(__file__).parent / '.env', override=True)
+
+load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=True)
 
 from config import Config
 from database import Database
@@ -30,7 +31,9 @@ def mask_token(tok: str) -> str:
     return tok[:6] + "..." + tok[-4:]
 
 
-def exchange_code_for_token(code: str, client_id: str, client_secret: str, redirect_uri: str) -> str | None:
+def exchange_code_for_token(
+    code: str, client_id: str, client_secret: str, redirect_uri: str
+) -> str | None:
     url = "https://www.linkedin.com/oauth/v2/accessToken"
     payload = {
         "grant_type": "authorization_code",
@@ -60,35 +63,43 @@ def main():
 
     # Fallback: parse .env file directly if variables are unexpectedly missing
     def _get_from_env_file(key: str) -> str | None:
-        env_path = Path(__file__).parent / '.env'
+        env_path = Path(__file__).parent / ".env"
         if not env_path.exists():
             return None
-        with open(env_path, 'r', encoding='utf-8') as f:
+        with open(env_path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if not line or line.startswith('#'):
+                if not line or line.startswith("#"):
                     continue
-                if '=' not in line:
+                if "=" not in line:
                     continue
-                k, v = line.split('=', 1)
+                k, v = line.split("=", 1)
                 if k.strip() == key:
                     return v.strip().strip('"')
         return None
 
     if not code:
-        code = _get_from_env_file('LINKEDIN_ACCESS_TOKEN_CODE')
+        code = _get_from_env_file("LINKEDIN_ACCESS_TOKEN_CODE")
     if not client_id:
-        client_id = _get_from_env_file('LINKEDIN_CLIENT_ID')
+        client_id = _get_from_env_file("LINKEDIN_CLIENT_ID")
     if not client_secret:
-        client_secret = _get_from_env_file('LINKEDIN_CLIENT_ID_SECRET')
+        client_secret = _get_from_env_file("LINKEDIN_CLIENT_ID_SECRET")
     if not redirect_uri:
-        redirect_uri = _get_from_env_file('LINKEDIN_REDIRECT_URI')
+        redirect_uri = _get_from_env_file("LINKEDIN_REDIRECT_URI")
 
     print("Current LINKEDIN_AUTHOR_URN:", Config.LINKEDIN_AUTHOR_URN or "NOT SET")
-    print("LINKEDIN_ACCESS_TOKEN_CODE present:", "YES" if code and code.strip() else "NO")
+    print(
+        "LINKEDIN_ACCESS_TOKEN_CODE present:", "YES" if code and code.strip() else "NO"
+    )
 
     # Debug: list LINKEDIN-related env var presence (masked)
-    for k in ("LINKEDIN_ACCESS_TOKEN","LINKEDIN_ACCESS_TOKEN_CODE","LINKEDIN_CLIENT_ID","LINKEDIN_CLIENT_ID_SECRET","LINKEDIN_REDIRECT_URI"):
+    for k in (
+        "LINKEDIN_ACCESS_TOKEN",
+        "LINKEDIN_ACCESS_TOKEN_CODE",
+        "LINKEDIN_CLIENT_ID",
+        "LINKEDIN_CLIENT_ID_SECRET",
+        "LINKEDIN_REDIRECT_URI",
+    ):
         v = os.getenv(k)
         if v:
             print(f"  {k}: SET (masked: {mask_token(v)})")
@@ -107,8 +118,10 @@ def main():
     if redirect_uri:
         redirect_uri = redirect_uri.strip()
 
-    if not access_token and code:
-        print("No access token present, attempting to exchange authorization code for an access token...")
+    if not access_token and code and client_id and client_secret and redirect_uri:
+        print(
+            "No access token present, attempting to exchange authorization code for an access token..."
+        )
         token = exchange_code_for_token(code, client_id, client_secret, redirect_uri)
         if not token:
             print("Failed to obtain access token.")
@@ -121,13 +134,17 @@ def main():
         print("Using existing LINKEDIN_ACCESS_TOKEN:", mask_token(access_token))
         Config.LINKEDIN_ACCESS_TOKEN = access_token
     else:
-        print("No token or authorization code available. Please set LINKEDIN_ACCESS_TOKEN in .env or provide a valid code.")
+        print(
+            "No token or authorization code available. Please set LINKEDIN_ACCESS_TOKEN in .env or provide a valid code."
+        )
 
     # Debug: ensure Config token is stripped and show masked info
     if Config.LINKEDIN_ACCESS_TOKEN:
         Config.LINKEDIN_ACCESS_TOKEN = Config.LINKEDIN_ACCESS_TOKEN.strip()
         tok = Config.LINKEDIN_ACCESS_TOKEN
-        print(f"Config.LINKEDIN_ACCESS_TOKEN masked: {mask_token(tok)} (len={len(tok)})")
+        print(
+            f"Config.LINKEDIN_ACCESS_TOKEN masked: {mask_token(tok)} (len={len(tok)})"
+        )
     else:
         print("Config.LINKEDIN_ACCESS_TOKEN: NOT SET")
 
@@ -139,7 +156,9 @@ def main():
         # Do a direct /userinfo request and print the response details for debugging
         try:
             headers = publisher._get_headers()
-            resp = requests.get(f"{publisher.BASE_URL}/userinfo", headers=headers, timeout=15)
+            resp = requests.get(
+                f"{publisher.BASE_URL}/userinfo", headers=headers, timeout=15
+            )
             print("Direct /userinfo request status:", resp.status_code)
             try:
                 print("Direct /userinfo response body:", resp.json())
@@ -155,9 +174,13 @@ def main():
         ok = publisher.test_connection()
 
         # If the initial connection fails, try exchanging the authorization code (if available)
-        if not ok and code:
-            print("Initial connection failed, attempting token exchange using authorization code...")
-            token = exchange_code_for_token(code, client_id, client_secret, redirect_uri)
+        if not ok and code and client_id and client_secret and redirect_uri:
+            print(
+                "Initial connection failed, attempting token exchange using authorization code..."
+            )
+            token = exchange_code_for_token(
+                code, client_id, client_secret, redirect_uri
+            )
             if token:
                 token = token.strip()
                 print("Obtained access token:", mask_token(token))
@@ -168,7 +191,9 @@ def main():
                 # Retry direct /userinfo to show the new response
                 try:
                     headers = publisher._get_headers()
-                    resp = requests.get(f"{publisher.BASE_URL}/userinfo", headers=headers, timeout=15)
+                    resp = requests.get(
+                        f"{publisher.BASE_URL}/userinfo", headers=headers, timeout=15
+                    )
                     print("Direct /userinfo (after exchange) status:", resp.status_code)
                     try:
                         print("Direct /userinfo (after exchange) body:", resp.json())
@@ -187,15 +212,23 @@ def main():
             if profile:
                 # Try multiple possible name fields (OpenID vs legacy)
                 name = " ".join(
-                    part for part in (
-                        profile.get("localizedFirstName") or profile.get("given_name") or profile.get("name"),
+                    part
+                    for part in (
+                        profile.get("localizedFirstName")
+                        or profile.get("given_name")
+                        or profile.get("name"),
                         profile.get("localizedLastName") or profile.get("family_name"),
-                    ) if part
+                    )
+                    if part
                 ).strip()
                 if not name:
-                    name = profile.get("name") or profile.get("localizedFirstName") or profile.get("id", "")
+                    name = (
+                        profile.get("name")
+                        or profile.get("localizedFirstName")
+                        or profile.get("id", "")
+                    )
                 print("Profile name:", name)
-                print("Profile raw:", json.dumps(profile, indent=2) )
+                print("Profile raw:", json.dumps(profile, indent=2))
             else:
                 print("Could not read profile info (unexpected response).")
     except Exception as e:
