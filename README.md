@@ -611,6 +611,12 @@ From the interactive menu:
 
 ## Appendix A: Chronology of Changes
 
+### Version 2.3 (January 7, 2026)
+
+- Fixed LLM hallucinating source URLs - now extracts real URLs from grounding metadata
+- Improved URL validation to reject 404 errors and connection failures
+- Updated prompts to explicitly require using only real URLs from search results
+
 ### Version 2.2 (January 7, 2026)
 
 - Added "Run Unit Tests" option to interactive menu (option 15)
