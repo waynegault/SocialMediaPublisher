@@ -109,9 +109,9 @@ class Config:
     # Style directive for image generation prompts - professional industrial photography
     IMAGE_STYLE: str = _get_str(
         "IMAGE_STYLE",
-        "professional industrial photography, photorealistic, documentary style, "
-        "clean corporate aesthetic, neutral color palette, realistic lighting, "
-        "sharp focus, high resolution, suitable for engineering trade publication, all humans shown are highly attractive women",
+        "professional industrial photography featuring an attractive female engineer or scientist, "
+        "photorealistic, documentary style, clean corporate aesthetic, neutral color palette, "
+        "realistic lighting, sharp focus, high resolution, suitable for engineering trade publication",
     )
     # Aspect ratio for generated images (options: 1:1, 16:9, 9:16, 4:3, 3:4)
     IMAGE_ASPECT_RATIO: str = _get_str("IMAGE_ASPECT_RATIO", "16:9")
@@ -129,22 +129,24 @@ Summary: {story_summary}
 
 YOUR TASK: Create an image prompt for a REALISTIC, PROFESSIONAL photograph that would appear in an engineering trade journal.
 
+MANDATORY: Every image MUST feature an attractive professional woman (engineer, scientist, technician, or executive) as the main human subject. She should be appropriately dressed for the industrial/lab setting and engaged with the equipment or process.
+
 CRITICAL REQUIREMENTS - THE IMAGE MUST BE:
 1. PHOTOREALISTIC - like a real photograph, NOT artistic, NOT fantasy, NOT stylized
 2. PROFESSIONAL - suitable for a serious engineering publication
 3. TECHNICALLY ACCURATE - showing real equipment, processes, or concepts correctly
 4. CREDIBLE - something a chemical engineer would recognize as realistic
+5. FEATURE AN ATTRACTIVE WOMAN - as engineer, scientist, technician, or executive
 
-SUBJECT SELECTION (choose the most appropriate):
-- Industrial equipment: reactors, distillation columns, heat exchangers, piping systems, control rooms
-- Laboratory settings: analytical instruments, lab glassware, researchers in lab coats
-- Manufacturing facilities: chemical plants, refineries, pharmaceutical production
-- Process technology: flow diagrams visualized as real equipment, process units
-- Materials and products: chemicals, polymers, catalysts, finished products
-- Data/monitoring: control panels, SCADA screens, process monitoring (if story is about digitalization)
-- People: engineers, researchers, technicians are all highly attractive women
+SUBJECT SELECTION - ALWAYS INCLUDE AN ATTRACTIVE WOMAN:
+- Industrial equipment: attractive female engineer inspecting reactors, distillation columns, heat exchangers
+- Laboratory settings: attractive female scientist with analytical instruments, lab glassware
+- Manufacturing facilities: attractive female process engineer at chemical plants, refineries
+- Control rooms: attractive female operator at control panels, SCADA screens, process monitoring
+- Executive settings: attractive female executive or manager reviewing plans, in meetings
 
 WHAT TO AVOID:
+- Images without a woman present
 - Fantasy or sci-fi elements
 - Artistic interpretations or abstract concepts
 - Glowing/magical effects
@@ -161,10 +163,10 @@ PHOTOGRAPHY SPECS:
 - Sharp focus, high resolution
 - Neutral, realistic colors
 - Documentary/journalistic aesthetic
-- Human subjects are all highly attractive women
+- MUST feature an attractive professional woman as main subject
 
 OUTPUT: Write ONLY the image prompt. No explanations. Maximum 100 words.
-Format: "[Specific industrial subject], [realistic setting], professional industrial photograph, photorealistic, sharp focus, natural lighting\"""",
+Format: "Attractive female [role] [action], [specific industrial subject], [realistic setting], professional industrial photograph, photorealistic, sharp focus, natural lighting\"""",
     )
 
     # Fallback image prompt template when LLM refinement fails
@@ -172,9 +174,9 @@ Format: "[Specific industrial subject], [realistic setting], professional indust
     IMAGE_FALLBACK_PROMPT: str = _get_str(
         "IMAGE_FALLBACK_PROMPT",
         "Professional industrial photograph for chemical engineering publication: "
-        "{story_title}. Industrial facility or laboratory setting, "
-        "photorealistic, documentary style, natural lighting, sharp focus, "
-        "neutral colors, suitable for engineering trade journal",
+        "{story_title}. Attractive female chemical engineer in industrial facility "
+        "or laboratory setting, photorealistic, documentary style, natural lighting, "
+        "sharp focus, neutral colors, suitable for engineering trade journal",
     )
 
     # Search instruction prompt - the system prompt for story search
