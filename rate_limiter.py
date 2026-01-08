@@ -242,3 +242,71 @@ class AdaptiveRateLimiter:
                     "rate_increases": 0,
                     "error_429_count": 0,
                 }
+
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+def _create_module_tests():
+    """Create unit tests for rate_limiter module."""
+    from test_framework import TestSuite, suppress_logging
+
+    suite = TestSuite("Rate Limiter Tests")
+
+    def test_rate_limiter_creation():
+        rl = AdaptiveRateLimiter(initial_fill_rate=2.0, capacity=10.0)
+        assert rl.capacity == 10.0
+        assert rl.fill_rate == 2.0
+
+    def test_rate_limiter_wait():
+        rl = AdaptiveRateLimiter(initial_fill_rate=10.0)
+        wait_time = rl.wait(endpoint="test")
+        assert wait_time >= 0
+
+    def test_rate_limiter_429_backoff():
+        rl = AdaptiveRateLimiter(initial_fill_rate=2.0, rate_limiter_429_backoff=0.5)
+        rl.wait(endpoint="test")
+        with suppress_logging():
+            rl.on_429_error(endpoint="test")
+        metrics = rl.get_metrics()
+        assert metrics.error_429_count == 1
+        assert metrics.rate_decreases == 1
+
+    def test_rate_limiter_success_increase():
+        rl = AdaptiveRateLimiter(success_threshold=2, rate_limiter_success_factor=1.5)
+        rl.wait(endpoint="test")
+        rl.on_success(endpoint="test")
+        rl.on_success(endpoint="test")
+        metrics = rl.get_metrics()
+        assert metrics.rate_increases >= 1
+
+    def test_rate_limiter_metrics():
+        rl = AdaptiveRateLimiter()
+        rl.wait()
+        metrics = rl.get_metrics()
+        assert isinstance(metrics, RateLimiterMetrics)
+        assert metrics.total_requests == 1
+
+    def test_rate_limiter_reset():
+        rl = AdaptiveRateLimiter()
+        rl.wait()
+        rl.reset()
+        metrics = rl.get_metrics()
+        assert metrics.total_requests == 0
+
+    def test_rate_limiter_per_endpoint():
+        rl = AdaptiveRateLimiter()
+        rl.wait(endpoint="endpoint1")
+        rl.wait(endpoint="endpoint2")
+        metrics = rl.get_metrics()
+        assert metrics.total_requests == 2
+
+    suite.add_test("Rate limiter creation", test_rate_limiter_creation)
+    suite.add_test("Rate limiter wait", test_rate_limiter_wait)
+    suite.add_test("Rate limiter 429 backoff", test_rate_limiter_429_backoff)
+    suite.add_test("Rate limiter success increase", test_rate_limiter_success_increase)
+    suite.add_test("Rate limiter metrics", test_rate_limiter_metrics)
+    suite.add_test("Rate limiter reset", test_rate_limiter_reset)
+    suite.add_test("Rate limiter per endpoint", test_rate_limiter_per_endpoint)
+
+    return suite

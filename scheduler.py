@@ -173,3 +173,101 @@ class Scheduler:
             lines.append(f"  [{time_str}] {story.title}")
 
         return "\n".join(lines)
+
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+def _create_module_tests():
+    """Create unit tests for scheduler module."""
+    import os
+    import tempfile
+
+    from test_framework import TestSuite
+
+    suite = TestSuite("Scheduler Tests")
+
+    def test_scheduler_init():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            scheduler = Scheduler(db)
+            assert scheduler.db is db
+        finally:
+            os.unlink(db_path)
+
+    def test_get_next_valid_start_time():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            scheduler = Scheduler(db)
+            # Test when current time is before start hour
+            morning = datetime(2024, 1, 15, 6, 0, 0)
+            result = scheduler._get_next_valid_start_time(morning, 8, 18)
+            assert result.hour == 8
+            # Test when current time is after end hour
+            evening = datetime(2024, 1, 15, 20, 0, 0)
+            result = scheduler._get_next_valid_start_time(evening, 8, 18)
+            assert result.hour == 8
+            assert result.day == 16
+        finally:
+            os.unlink(db_path)
+
+    def test_adjust_to_valid_hours():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            scheduler = Scheduler(db)
+            # Test before start hour
+            early = datetime(2024, 1, 15, 5, 0, 0)
+            result = scheduler._adjust_to_valid_hours(early, 8, 18)
+            assert result.hour == 8
+            # Test after end hour
+            late = datetime(2024, 1, 15, 20, 0, 0)
+            result = scheduler._adjust_to_valid_hours(late, 8, 18)
+            assert result.hour == 8
+            assert result.day == 16
+            # Test within valid hours
+            valid = datetime(2024, 1, 15, 12, 0, 0)
+            result = scheduler._adjust_to_valid_hours(valid, 8, 18)
+            assert result.hour == 12
+        finally:
+            os.unlink(db_path)
+
+    def test_calculate_schedule_times():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            scheduler = Scheduler(db)
+            times = scheduler._calculate_schedule_times(3)
+            assert len(times) == 3
+            # All times should be unique
+            assert len(set(times)) == 3
+            # All times should be in valid hours
+            for t in times:
+                assert Config.PUBLISH_START_HOUR <= t.hour < Config.PUBLISH_END_HOUR
+        finally:
+            os.unlink(db_path)
+
+    def test_get_schedule_summary_empty():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            scheduler = Scheduler(db)
+            summary = scheduler.get_schedule_summary()
+            assert "No stories currently scheduled" in summary
+        finally:
+            os.unlink(db_path)
+
+    suite.add_test("Scheduler init", test_scheduler_init)
+    suite.add_test("Get next valid start time", test_get_next_valid_start_time)
+    suite.add_test("Adjust to valid hours", test_adjust_to_valid_hours)
+    suite.add_test("Calculate schedule times", test_calculate_schedule_times)
+    suite.add_test("Get schedule summary empty", test_get_schedule_summary_empty)
+
+    return suite

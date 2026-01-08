@@ -416,3 +416,128 @@ def safe_execute(
         return wrapper
 
     return decorator
+
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+def _create_module_tests():
+    """Create unit tests for error_handling module."""
+    from test_framework import TestSuite, suppress_logging
+
+    suite = TestSuite("Error Handling Tests")
+
+    def test_retryable_error_creation():
+        err = RetryableError("Test error", retry_after=5.0)
+        assert err.retry_after == 5.0
+        assert "Test error" in str(err)
+
+    def test_fatal_error_creation():
+        err = FatalError("Fatal test", context={"key": "value"})
+        assert err.context == {"key": "value"}
+        assert "Fatal test" in str(err)
+
+    def test_api_rate_limit_error():
+        err = APIRateLimitError("Rate limited", retry_after=30)
+        assert err.retry_after == 30
+
+    def test_network_timeout_error():
+        err = NetworkTimeoutError("Timeout", timeout_duration=10.0)
+        assert err.timeout_duration == 10.0
+
+    def test_circuit_breaker_closed_state():
+        cb = CircuitBreaker(name="test")
+        assert cb.state == CircuitState.CLOSED
+
+    def test_circuit_breaker_opens_after_failures():
+        config = CircuitBreakerConfig(failure_threshold=2, recovery_timeout=1)
+        cb = CircuitBreaker(name="test", config=config)
+        for _ in range(2):
+            try:
+                cb.call(lambda: (_ for _ in ()).throw(ValueError("fail")))
+            except ValueError:
+                pass
+        assert cb.state == CircuitState.OPEN
+
+    def test_circuit_breaker_reset():
+        config = CircuitBreakerConfig(failure_threshold=1)
+        cb = CircuitBreaker(name="test", config=config)
+        try:
+            cb.call(lambda: (_ for _ in ()).throw(ValueError("fail")))
+        except ValueError:
+            pass
+        assert cb.state == CircuitState.OPEN
+        cb.reset()
+        assert cb.state == CircuitState.CLOSED
+
+    def test_circuit_breaker_stats():
+        cb = CircuitBreaker(name="test_stats")
+        stats = cb.get_stats()
+        assert stats["name"] == "test_stats"
+        assert "state" in stats
+
+    def test_recovery_context():
+        ctx = RecoveryContext(operation_name="test_op", max_attempts=3)
+        assert ctx.should_retry() is True
+        ctx.attempt_number = 3
+        assert ctx.should_retry() is False
+
+    def test_recovery_context_backoff():
+        ctx = RecoveryContext(operation_name="test", attempt_number=1)
+        delay = ctx.get_backoff_delay(base_delay=1.0)
+        assert delay >= 1.0  # At least base delay
+
+    def test_with_enhanced_recovery_decorator():
+        call_count = 0
+
+        @with_enhanced_recovery(max_attempts=3, base_delay=0.01)
+        def flaky_function():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ValueError("Transient error")
+            return "success"
+
+        with suppress_logging():
+            result = flaky_function()
+        assert result == "success"
+        assert call_count == 3
+
+    def test_graceful_degradation_decorator():
+        @graceful_degradation(fallback_value="fallback")
+        def failing_function() -> str:
+            raise ValueError("Error")
+
+        with suppress_logging():
+            result = failing_function()
+        assert result == "fallback"  # type: ignore[unreachable]
+
+    def test_safe_execute_decorator():
+        @safe_execute(default_return=None, log_errors=False)
+        def failing_function():
+            raise ValueError("Error")
+
+        result = failing_function()
+        assert result is None
+
+    suite.add_test("RetryableError creation", test_retryable_error_creation)
+    suite.add_test("FatalError creation", test_fatal_error_creation)
+    suite.add_test("APIRateLimitError creation", test_api_rate_limit_error)
+    suite.add_test("NetworkTimeoutError creation", test_network_timeout_error)
+    suite.add_test("CircuitBreaker closed state", test_circuit_breaker_closed_state)
+    suite.add_test(
+        "CircuitBreaker opens after failures", test_circuit_breaker_opens_after_failures
+    )
+    suite.add_test("CircuitBreaker reset", test_circuit_breaker_reset)
+    suite.add_test("CircuitBreaker stats", test_circuit_breaker_stats)
+    suite.add_test("RecoveryContext basics", test_recovery_context)
+    suite.add_test("RecoveryContext backoff", test_recovery_context_backoff)
+    suite.add_test(
+        "with_enhanced_recovery decorator", test_with_enhanced_recovery_decorator
+    )
+    suite.add_test(
+        "graceful_degradation decorator", test_graceful_degradation_decorator
+    )
+    suite.add_test("safe_execute decorator", test_safe_execute_decorator)
+
+    return suite

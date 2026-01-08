@@ -236,3 +236,53 @@ class Config:
         print(f"  DB_NAME: {cls.DB_NAME}")
         print(f"  IMAGE_DIR: {cls.IMAGE_DIR}")
         print("=============================================")
+
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+def _create_module_tests():
+    """Create unit tests for config module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("Config Tests")
+
+    def test_get_int_valid():
+        result = _get_int("NONEXISTENT_VAR_12345", 42)
+        assert result == 42, f"Expected 42, got {result}"
+
+    def test_get_bool_default():
+        result = _get_bool("NONEXISTENT_VAR_12345", True)
+        assert result is True, f"Expected True, got {result}"
+
+    def test_get_str_default():
+        result = _get_str("NONEXISTENT_VAR_12345", "default")
+        assert result == "default", f"Expected 'default', got {result}"
+
+    def test_config_defaults():
+        assert Config.SUMMARY_WORD_COUNT >= 50
+        assert Config.STORIES_PER_CYCLE >= 1
+        assert Config.MAX_STORIES_PER_SEARCH >= 1
+
+    def test_config_validate():
+        errors = Config.validate()
+        assert isinstance(errors, list)
+
+    def test_config_ensure_directories():
+        Config.ensure_directories()
+        assert os.path.isdir(Config.IMAGE_DIR)
+
+    def test_config_publish_hours_valid():
+        assert 0 <= Config.PUBLISH_START_HOUR <= 23
+        assert 0 <= Config.PUBLISH_END_HOUR <= 23
+        assert Config.PUBLISH_START_HOUR < Config.PUBLISH_END_HOUR
+
+    suite.add_test("_get_int with default", test_get_int_valid)
+    suite.add_test("_get_bool with default", test_get_bool_default)
+    suite.add_test("_get_str with default", test_get_str_default)
+    suite.add_test("Config defaults", test_config_defaults)
+    suite.add_test("Config validate", test_config_validate)
+    suite.add_test("Config ensure directories", test_config_ensure_directories)
+    suite.add_test("Config publish hours valid", test_config_publish_hours_valid)
+
+    return suite

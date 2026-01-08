@@ -409,3 +409,80 @@ Format: "[Specific industrial subject], [realistic setting], professional indust
         if cleaned > 0:
             logger.info(f"Cleaned up {cleaned} orphaned images")
         return cleaned
+
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+def _create_module_tests():
+    """Create unit tests for image_generator module."""
+    import os
+    import tempfile
+
+    from test_framework import TestSuite
+    from PIL import Image
+
+    suite = TestSuite("Image Generator Tests")
+
+    def test_add_ai_watermark():
+        # Create a simple test image
+        img = Image.new("RGB", (200, 200), color="white")
+        result = add_ai_watermark(img)
+        assert result is not None
+        assert result.size == (200, 200)
+        assert result.mode == "RGB"
+
+    def test_add_ai_watermark_small_image():
+        # Test with very small image
+        img = Image.new("RGB", (50, 50), color="blue")
+        result = add_ai_watermark(img)
+        assert result is not None
+        assert result.size == (50, 50)
+
+    def test_image_generator_init():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore
+            assert gen.db is db
+            assert os.path.isdir(Config.IMAGE_DIR)
+        finally:
+            os.unlink(db_path)
+
+    def test_build_image_prompt_fallback():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore
+            story = Story(
+                title="AI in Healthcare",
+                summary="AI is revolutionizing medical diagnostics",
+                quality_score=8,
+            )
+            # Without a client, should fall back to simple prompt
+            prompt = gen._build_image_prompt(story)
+            assert "AI in Healthcare" in prompt
+            assert len(prompt) > 0
+        finally:
+            os.unlink(db_path)
+
+    def test_ensure_image_directory():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore
+            gen._ensure_image_directory()
+            assert os.path.isdir(Config.IMAGE_DIR)
+        finally:
+            os.unlink(db_path)
+
+    suite.add_test("Add AI watermark", test_add_ai_watermark)
+    suite.add_test("Add AI watermark small image", test_add_ai_watermark_small_image)
+    suite.add_test("Image generator init", test_image_generator_init)
+    suite.add_test("Build image prompt fallback", test_build_image_prompt_fallback)
+    suite.add_test("Ensure image directory", test_ensure_image_directory)
+
+    return suite
