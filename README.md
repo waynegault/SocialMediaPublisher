@@ -34,6 +34,7 @@ For detailed architecture and component documentation, see the [Overview wiki](h
   hours with configurable jitter
 - **LinkedIn Integration**: Posts stories with images, source links, hashtags,
   @ mentions, and your signature block
+- **LinkedIn Analytics**: Track impressions, likes, comments, shares for posts
 - **Smart Hashtags**: AI-generated relevant hashtags (up to 3 per post)
 - **LinkedIn Mentions**: Automatic @ mentions for companies/people in stories
 - **Opportunity Messages**: Optional professional postscript about job openings
@@ -482,6 +483,29 @@ upgrades without data loss.
 
 - **Post Creation**: `POST /ugcPosts` with image and text
 - **Image Upload**: Multi-step upload process
+- **Analytics**: `GET /organizationalEntityShareStatistics` for org posts,
+  `GET /socialActions/{urn}` for personal posts
+
+#### LinkedIn Analytics
+
+The system tracks post performance metrics for published stories:
+
+- **Impressions**: Number of times the post was viewed
+- **Clicks**: Number of clicks on the post
+- **Likes**: Number of likes received
+- **Comments**: Number of comments received
+- **Shares**: Number of times the post was shared
+- **Engagement Rate**: (likes + comments + shares) / impressions
+
+Use menu options 22 and 23 to view and refresh analytics:
+- **Option 22**: View LinkedIn Analytics - displays a table of all published
+  stories with their performance metrics
+- **Option 23**: Refresh All Analytics - fetches latest metrics from LinkedIn
+  API for all published stories
+
+Note: Full analytics (impressions, clicks, shares) require organization admin
+permissions. Personal posts only provide likes and comments via the
+socialActions endpoint.
 
 ### Utility Scripts
 
@@ -626,6 +650,9 @@ From the interactive menu:
 
 ### Version 2.7 (January 8, 2026)
 
+- Added LinkedIn Analytics tracking for published posts
+- New Story fields for analytics: impressions, clicks, likes, comments, shares
+- New menu options: View LinkedIn Analytics (22), Refresh All Analytics (23)
 - Moved ALL LLM prompts to environment configuration
 - New configurable prompts: SEARCH_DISTILL_PROMPT, LOCAL_LLM_SEARCH_PROMPT
 - New configurable prompts: LINKEDIN_MENTION_PROMPT, JSON_REPAIR_PROMPT
