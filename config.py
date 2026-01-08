@@ -109,9 +109,9 @@ class Config:
     # Style directive for image generation prompts - professional industrial photography
     IMAGE_STYLE: str = _get_str(
         "IMAGE_STYLE",
-        "professional industrial photography, photorealistic, documentary style, "
-        "clean corporate aesthetic, neutral color palette, realistic lighting, "
-        "sharp focus, high resolution, suitable for engineering trade publication",
+        "professional industrial photography featuring an attractive female engineer or scientist, "
+        "photorealistic, documentary style, clean corporate aesthetic, neutral color palette, "
+        "realistic lighting, sharp focus, high resolution, suitable for engineering trade publication",
     )
     # Aspect ratio for generated images (options: 1:1, 16:9, 9:16, 4:3, 3:4)
     IMAGE_ASPECT_RATIO: str = _get_str("IMAGE_ASPECT_RATIO", "16:9")
@@ -121,54 +121,52 @@ class Config:
     # Placeholders: {story_title}, {story_summary}, {image_style}
     IMAGE_REFINEMENT_PROMPT: str = _get_str(
         "IMAGE_REFINEMENT_PROMPT",
-        """You are creating an image for a professional chemical or process engineering trade publication (e.g. Chemical Engineering Magazine, AIChE publications).
+        """You are creating an image for a professional chemical engineering publication (like Chemical Engineering Magazine or AIChE publications).
 
 STORY CONTEXT:
 - Title: {story_title}
 - Summary: {story_summary}
 
-TASK:
-Write a prompt to generate a PHOTOREALISTIC, documentary-style industrial photograph that directly represents the core technical theme of the story.
+YOUR TASK: Create an image prompt for a REALISTIC, PROFESSIONAL photograph that would appear in an engineering trade journal.
 
-CRITICAL REQUIREMENTS — THE IMAGE MUST:
-1. Be photorealistic and indistinguishable from a real photograph
-2. Be suitable for a serious engineering trade journal (not marketing or promotional)
-3. Be technically accurate and recognizable to a practicing chemical/process engineer
-4. Show real industrial or laboratory equipment used correctly
-5. Include realistic industrial imperfections (minor wear, asymmetry, non-ideal layouts)
+MANDATORY: Every image MUST feature an attractive professional woman (engineer, scientist, technician, or executive) as the main human subject. She should be appropriately dressed for the industrial/lab setting and engaged with the equipment or process.
 
-SUBJECT SELECTION (choose only what is directly relevant to the story):
-- Industrial process equipment (reactors, bioreactors, distillation columns, heat exchangers, piping networks)
-- Laboratory or pilot-scale setups (analytical instruments, fermentation systems, electrochemical cells)
-- Manufacturing or energy facilities (chemical plants, carbon capture units, refineries)
-- Process monitoring and control (control rooms, instrumentation, SCADA displays)
+CRITICAL REQUIREMENTS - THE IMAGE MUST BE:
+1. PHOTOREALISTIC - like a real photograph, NOT artistic, NOT fantasy, NOT stylized
+2. PROFESSIONAL - suitable for a serious engineering publication
+3. TECHNICALLY ACCURATE - showing real equipment, processes, or concepts correctly
+4. CREDIBLE - something a chemical engineer would recognize as realistic
+5. FEATURE AN ATTRACTIVE WOMAN - as engineer, scientist, technician, or executive
 
-PEOPLE:
-- Include people ONLY if necessary for scale or operation
-- No more than 1 or 2 individuals
-- PPE and behavior must be realistic and appropriate
+SUBJECT SELECTION - ALWAYS INCLUDE AN ATTRACTIVE WOMAN:
+- Industrial equipment: attractive female engineer inspecting reactors, distillation columns, heat exchangers
+- Laboratory settings: attractive female scientist with analytical instruments, lab glassware
+- Manufacturing facilities: attractive female process engineer at chemical plants, refineries
+- Control rooms: attractive female operator at control panels, SCADA screens, process monitoring
+- Executive settings: attractive female executive or manager reviewing plans, in meetings
 
-AVOID:
-- Sci-fi or futuristic elements
-- Artistic or abstract interpretations
-- Overly clean, symmetrical, or staged scenes
-- Glowing effects, dramatic lighting, or cinematic styling
-- Cartoons, illustrations, or conceptual diagrams
+WHAT TO AVOID:
+- Images without a woman present
+- Fantasy or sci-fi elements
+- Artistic interpretations or abstract concepts
+- Glowing/magical effects
+- Futuristic imaginary technology
+- Cartoonish or illustrated styles
+- Anything that would look silly to a practicing chemical engineer
 
-STYLE & PHOTOGRAPHY:
-- Documentary or industrial journalistic style
-- Natural or realistic facility lighting
-- Neutral, accurate color balance
+STYLE REQUIREMENTS:
+{image_style}
+
+PHOTOGRAPHY SPECS:
+- Professional industrial photography style
+- Clean, well-lit scenes (industrial facility lighting or natural daylight)
 - Sharp focus, high resolution
-- Ordinary, believable industrial environment
+- Neutral, realistic colors
+- Documentary/journalistic aesthetic
+- MUST feature an attractive professional woman as main subject
 
-OUTPUT INSTRUCTIONS:
-- Output ONLY the image prompt
-- Maximum 100 words
-- No explanations or commentary
-- Use the following format:
-
-"Photorealistic industrial photograph of [specific equipment or process], located in [realistic industrial or laboratory setting], showing [story-specific technical detail], documentary style, natural lighting, sharp focus\"""",
+OUTPUT: Write ONLY the image prompt. No explanations. Maximum 100 words.
+Format: "Attractive female [role] [action], [specific industrial subject], [realistic setting], professional industrial photograph, photorealistic, sharp focus, natural lighting\"""",
     )
 
     # Fallback image prompt template when LLM refinement fails
@@ -176,9 +174,9 @@ OUTPUT INSTRUCTIONS:
     IMAGE_FALLBACK_PROMPT: str = _get_str(
         "IMAGE_FALLBACK_PROMPT",
         "Professional industrial photograph for chemical engineering publication: "
-        "{story_title}. Industrial facility or laboratory setting, "
-        "photorealistic, documentary style, natural lighting, sharp focus, "
-        "neutral colors, suitable for engineering trade journal",
+        "{story_title}. Attractive female chemical engineer in industrial facility "
+        "or laboratory setting, photorealistic, documentary style, natural lighting, "
+        "sharp focus, neutral colors, suitable for engineering trade journal",
     )
 
     # Search instruction prompt - the system prompt for story search
@@ -277,45 +275,117 @@ APPROVED
 or
 REJECTED
 
-Then on a new line, provide a single concise reason for the decision.""",
+Then on a new line, provide a brief (one sentence) reason.""",
     )
 
-    # Company mention enrichment prompt - identify companies mentioned in sources
-    # Placeholders: {story_title}, {story_summary}, {story_sources}
-    COMPANY_MENTION_PROMPT: str = _get_str(
-        "COMPANY_MENTION_PROMPT",
-        """You are an editorial assistant identifying company mentions for a professional engineering LinkedIn publication.
+    # Search query distillation prompt - converts long search requests into keywords
+    # Used by local LLM to optimize DuckDuckGo queries
+    SEARCH_DISTILL_PROMPT: str = _get_str(
+        "SEARCH_DISTILL_PROMPT",
+        "You are a search query optimizer. Convert long requests into 3-5 keyword search terms.",
+    )
 
-STORY DETAILS:
-Title: {story_title}
-Summary: {story_summary}
-Sources: {story_sources}
+    # Local LLM story processing prompt - processes DuckDuckGo results into stories
+    # Placeholders: {author_name}, {search_prompt}, {search_results}, {max_stories}, {summary_words}
+    LOCAL_LLM_SEARCH_PROMPT: str = _get_str(
+        "LOCAL_LLM_SEARCH_PROMPT",
+        """You are a news curator writing for {author_name}'s LinkedIn profile. I have found the following search results for the query: "{search_prompt}"
+
+SEARCH RESULTS:
+{search_results}
 
 TASK:
-Identify up to TWO companies or organizations that:
-1. Are EXPLICITLY NAMED in the provided sources, OR
-2. Are clearly and directly involved in the work (e.g., named collaborators, technology licensors, research partners)
+1. Select up to {max_stories} of the most relevant and interesting stories.
+2. For each story, provide:
+   - title: A catchy headline
+   - summary: A {summary_words}-word summary written in FIRST PERSON as if {author_name} is sharing their perspective
+   - sources: A list containing the original link
+   - category: One of: Technology, Business, Science, AI, Other
+   - quality_score: A score from 1-10 based on relevance and significance
+   - quality_justification: Brief explanation of the score
+   - hashtags: Array of 1-3 relevant hashtags (without # symbol)
 
-STRICT RULES:
-- Do NOT infer or speculate about potential industry interest
-- Do NOT mention companies based on size, reputation, or market presence alone
-- Company names must appear VERBATIM in the provided sources
-- If source evidence is ambiguous or incomplete, respond: NO_COMPANY_MENTION
+WRITING STYLE FOR SUMMARIES:
+- Write in first person (use "I", "my", "I've found", "I'm excited about", etc.)
+- Sound like a professional sharing industry insights with their network
+- Be conversational but authoritative
+- Example: "I've been following this development closely, and I think it represents..."
 
-OUTPUT FORMAT (STRICT):
-- If companies are identified: Output EXACTLY one well-formed sentence suitable for direct insertion at the end of a LinkedIn post. The sentence must read as neutral, analytical, and professional. No promotional language, calls to action, or speculation.
-- If no clear company evidence: Output EXACTLY: NO_COMPANY_MENTION
+HASHTAG GUIDELINES:
+- Use 1-3 relevant, professional hashtags per story
+- CamelCase for multi-word hashtags (e.g., ChemicalEngineering, ProcessOptimization)
 
-SENTENCE EXAMPLES (for reference):
-- "This work builds on [Company A]'s published research in [technical area]."
-- "The technology integrates [Company A]'s established [specific solution]."
-- "[Company A] and [Company B] collaborated on this development."
+Return the results as a JSON object with a "stories" key containing an array of story objects.
+Example:
+{{
+  "stories": [
+    {{
+      "title": "Example Story",
+      "summary": "I found this fascinating development... [first-person summary]",
+      "sources": ["https://example.com"],
+      "category": "Technology",
+      "quality_score": 8,
+      "quality_justification": "Highly relevant, reputable source",
+      "hashtags": ["ChemicalEngineering", "Innovation"]
+    }}
+  ]
+}}
 
-CRITICAL:
-- No lists, explanations, or multiple sentences
-- No hashtags or @mentions
-- No leading/trailing whitespace
-- Default to NO_COMPANY_MENTION if uncertain""",
+Return ONLY the JSON object. Write ALL summaries in first person.""",
+    )
+
+    # LinkedIn mention search prompt - finds LinkedIn profiles for story entities
+    # Placeholders: {title}, {summary}, {sources_text}
+    LINKEDIN_MENTION_PROMPT: str = _get_str(
+        "LINKEDIN_MENTION_PROMPT",
+        """Analyze this news story and find LinkedIn profiles for key entities.
+
+STORY TITLE: {title}
+
+STORY SUMMARY: {summary}
+
+SOURCES:
+{sources_text}
+
+TASK: Search for LinkedIn profiles/company pages for:
+1. The main company/companies mentioned in the story
+2. Key executives (CEO, CTO, Chief Engineer, etc.) of those companies
+3. Researchers or authors named in the story
+4. Any other notable individuals mentioned
+
+For each entity found, provide:
+- name: Full name or company name
+- linkedin_url: The LinkedIn profile/company page URL (must be real, verified URL)
+- type: "person" or "organization"
+- role: Their role in the story context (e.g., "company", "ceo", "researcher", "author")
+
+IMPORTANT: Only include entities where you can find a REAL LinkedIn profile/page.
+Do NOT guess or make up LinkedIn URLs.
+
+Return JSON format:
+{{
+  "mentions": [
+    {{
+      "name": "Company or Person Name",
+      "linkedin_url": "https://www.linkedin.com/company/xxx or /in/xxx",
+      "type": "organization",
+      "role": "company"
+    }}
+  ]
+}}
+
+If no LinkedIn profiles can be found, return: {{"mentions": []}}""",
+    )
+
+    # JSON repair prompt - attempts to fix malformed JSON from LLM responses
+    # Placeholder: {malformed_json}
+    JSON_REPAIR_PROMPT: str = _get_str(
+        "JSON_REPAIR_PROMPT",
+        """The following JSON is malformed. Please fix it and return ONLY the corrected JSON:
+
+{malformed_json}
+
+Return ONLY valid JSON, no explanation.""",
     )
 
     # --- Search Settings ---

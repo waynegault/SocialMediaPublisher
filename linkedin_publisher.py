@@ -501,6 +501,211 @@ class LinkedInPublisher:
             logger.info(f"Post URL: {story.linkedin_post_url}")
         return post_id
 
+    # =========================================================================
+    # Analytics Methods
+    # =========================================================================
+
+    def fetch_post_analytics(self, story: Story) -> dict | None:
+        """
+        Fetch analytics for a published LinkedIn post.
+
+        Uses the organizationalEntityShareStatistics endpoint for organization posts,
+        or socialActions for personal posts.
+
+        Returns dict with keys: impressions, clicks, likes, comments, shares, engagement
+        Returns None if fetch fails.
+        """
+        if not story.linkedin_post_id:
+            logger.warning(f"Story {story.id} has no LinkedIn post ID")
+            return None
+
+        if not Config.LINKEDIN_ACCESS_TOKEN:
+            logger.error("LinkedIn access token not configured")
+            return None
+
+        # Determine if this is an organization post or personal post
+        is_org_post = Config.LINKEDIN_ORGANIZATION_URN is not None
+
+        if is_org_post:
+            return self._fetch_org_post_analytics(story)
+        else:
+            return self._fetch_social_actions(story)
+
+    def _fetch_org_post_analytics(self, story: Story) -> dict | None:
+        """
+        Fetch analytics for an organization post using organizationalEntityShareStatistics.
+
+        Requires rw_organization_admin permission.
+        """
+        if not Config.LINKEDIN_ORGANIZATION_URN:
+            logger.warning("Organization URN not configured")
+            return self._fetch_social_actions(story)
+
+        try:
+            # URL-encode the URNs (already validated non-None in caller)
+            org_urn = quote(str(Config.LINKEDIN_ORGANIZATION_URN), safe="")
+            post_id = str(story.linkedin_post_id)
+            post_urn = quote(post_id, safe="")
+
+            # Determine if post is UGC or share type
+            if "ugcPost" in post_id:
+                post_param = f"ugcPosts=List({post_urn})"
+            else:
+                post_param = f"shares=List({post_urn})"
+
+            url = (
+                f"https://api.linkedin.com/rest/organizationalEntityShareStatistics"
+                f"?q=organizationalEntity&organizationalEntity={org_urn}&{post_param}"
+            )
+
+            version = datetime.now().strftime("%Y%m")
+            headers = {
+                "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
+                "X-Restli-Protocol-Version": "2.0.0",
+                "Linkedin-Version": version,
+            }
+
+            response = requests.get(url, headers=headers, timeout=15)
+
+            if response.status_code == 200:
+                data = response.json()
+                elements = data.get("elements", [])
+                if elements:
+                    stats = elements[0].get("totalShareStatistics", {})
+                    return {
+                        "impressions": stats.get("impressionCount", 0),
+                        "clicks": stats.get("clickCount", 0),
+                        "likes": stats.get("likeCount", 0),
+                        "comments": stats.get("commentCount", 0),
+                        "shares": stats.get("shareCount", 0),
+                        "engagement": stats.get("engagement", 0.0),
+                    }
+                else:
+                    # No stats yet (post may be too new)
+                    logger.debug(f"No analytics data yet for story {story.id}")
+                    return {
+                        "impressions": 0,
+                        "clicks": 0,
+                        "likes": 0,
+                        "comments": 0,
+                        "shares": 0,
+                        "engagement": 0.0,
+                    }
+            elif response.status_code == 403:
+                logger.warning(
+                    "Organization analytics requires rw_organization_admin permission. "
+                    "Falling back to socialActions."
+                )
+                return self._fetch_social_actions(story)
+            else:
+                logger.warning(
+                    f"Org analytics fetch failed: {response.status_code} - "
+                    f"{response.text[:200]}"
+                )
+                return self._fetch_social_actions(story)
+
+        except Exception as e:
+            logger.error(f"Error fetching org analytics: {e}")
+            return self._fetch_social_actions(story)
+
+    def _fetch_social_actions(self, story: Story) -> dict | None:
+        """
+        Fetch like/comment counts using socialActions endpoint.
+
+        This works for both personal and organization posts but only provides
+        likes and comments (not impressions, clicks, or shares).
+        """
+        try:
+            # URL-encode the post URN (already validated non-None in caller)
+            post_urn = quote(str(story.linkedin_post_id), safe="")
+
+            url = f"https://api.linkedin.com/v2/socialActions/{post_urn}"
+
+            headers = {
+                "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
+                "X-Restli-Protocol-Version": "2.0.0",
+            }
+
+            response = requests.get(url, headers=headers, timeout=15)
+
+            if response.status_code == 200:
+                data = response.json()
+                likes = data.get("likesSummary", {}).get("totalLikes", 0)
+                comments = data.get("commentsSummary", {}).get(
+                    "totalFirstLevelComments", 0
+                )
+                return {
+                    "impressions": 0,  # Not available via socialActions
+                    "clicks": 0,  # Not available via socialActions
+                    "likes": likes,
+                    "comments": comments,
+                    "shares": 0,  # Not available via socialActions
+                    "engagement": 0.0,  # Cannot calculate without impressions
+                }
+            else:
+                logger.warning(
+                    f"socialActions fetch failed: {response.status_code} - "
+                    f"{response.text[:200]}"
+                )
+                return None
+
+        except Exception as e:
+            logger.error(f"Error fetching social actions: {e}")
+            return None
+
+    def update_story_analytics(self, story: Story) -> bool:
+        """
+        Fetch and update analytics for a published story.
+
+        Returns True if analytics were successfully updated.
+        """
+        analytics = self.fetch_post_analytics(story)
+        if analytics is None:
+            return False
+
+        story.linkedin_impressions = analytics["impressions"]
+        story.linkedin_clicks = analytics["clicks"]
+        story.linkedin_likes = analytics["likes"]
+        story.linkedin_comments = analytics["comments"]
+        story.linkedin_shares = analytics["shares"]
+        story.linkedin_engagement = analytics["engagement"]
+        story.linkedin_analytics_fetched_at = datetime.now()
+
+        return self.db.update_story(story)
+
+    def refresh_all_analytics(self) -> tuple[int, int]:
+        """
+        Refresh analytics for all published stories.
+
+        Returns tuple of (success_count, failure_count).
+        """
+        published_stories = self.db.get_published_stories()
+
+        if not published_stories:
+            logger.info("No published stories to refresh analytics for")
+            return (0, 0)
+
+        success_count = 0
+        failure_count = 0
+
+        for story in published_stories:
+            if self.update_story_analytics(story):
+                success_count += 1
+                logger.debug(
+                    f"Updated analytics for story {story.id}: "
+                    f"👁 {story.linkedin_impressions} | "
+                    f"👍 {story.linkedin_likes} | "
+                    f"💬 {story.linkedin_comments}"
+                )
+            else:
+                failure_count += 1
+
+        logger.info(
+            f"Analytics refresh complete: {success_count} updated, "
+            f"{failure_count} failed"
+        )
+        return (success_count, failure_count)
+
 
 # ============================================================================
 # Unit Tests
