@@ -624,6 +624,14 @@ From the interactive menu:
 
 ## Appendix A: Chronology of Changes
 
+### Version 2.7 (January 8, 2026)
+
+- Moved ALL LLM prompts to environment configuration
+- New configurable prompts: SEARCH_DISTILL_PROMPT, LOCAL_LLM_SEARCH_PROMPT
+- New configurable prompts: LINKEDIN_MENTION_PROMPT, JSON_REPAIR_PROMPT
+- All prompts now use Config class with .env defaults
+- Updated .env.example with full prompt documentation
+
 ### Version 2.6 (January 8, 2026)
 
 - Added AI-generated hashtags to stories (up to 3 per post)
