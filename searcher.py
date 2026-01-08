@@ -689,23 +689,32 @@ class StorySearcher:
         )
         max_stories = Config.MAX_STORIES_PER_SEARCH
         prompt = f"""
-You are a news curator. I have found the following search results for the query: "{search_prompt}"
+You are a news curator and technical editor preparing short, professional briefs for a chemical/process engineer who publishes on LinkedIn.
 
 SEARCH RESULTS:
 {json.dumps(search_results, indent=2)}
 
 TASK:
-1. Select up to {max_stories} of the most relevant and interesting stories.
-2. For each story, provide:
-   - title: A catchy headline
-   - summary: A {summary_words}-word summary
-   - sources: A list containing the original link
+1. Select up to {max_stories} of the most relevant, well-sourced, and industrially-relevant stories.
+2. For each story, return a JSON object with these fields:
+   - title: A clear, professional headline
+   - summary: A {summary_words}-word technical summary (concise, factual)
+   - sources: Array with original link(s) (ONLY real URLs from SEARCH RESULTS)
    - category: One of: Technology, Business, Science, AI, Other
-   - quality_score: A score from 1-10 based on relevance and significance
-   - quality_justification: Brief explanation of the score
+   - quality_score: Integer 1-10 using this rubric:
+       * 8-10 = Strong (trustworthy sources, clear industrial relevance, actionable insight)
+       * 5-7 = Medium (interesting, some limitations in sources or relevance)
+       * 1-4 = Low (weak sources, speculative, or not industrially relevant)
+   - score_breakdown: object with keys novelty, sources, industrial_relevance, clarity (each 0-3, approximate sum 0-10)
+   - quality_justification: brief explanation referencing the rubric and the score_breakdown
+   - engineering_insight: 1-2 sentence judgement on scaling, likely engineering bottleneck(s), or industrial importance
+   - skills: list of concrete skills this touches (e.g., process modelling, reactor design, TEA)
+   - suggested_linkedin: a 1-3 sentence, first-person LinkedIn post that demonstrates engineering judgement, mentions a skill, and ends with an engagement question
+   - suggested_hashtags: up to 5 focused hashtags (avoid generic unrelated tags like #AIUpdate)
 
-Return the results as a JSON object with a "stories" key containing an array of story objects.
-Example:
+Return a strict JSON object: {{"stories": [ ... ]}}. OMIT any story with no real source URL.
+
+Example output:
 {{
   "stories": [
     {{
@@ -714,7 +723,12 @@ Example:
       "sources": ["https://example.com"],
       "category": "Technology",
       "quality_score": 8,
-      "quality_justification": "Highly relevant, reputable source"
+      "score_breakdown": {{"novelty":2,"sources":3,"industrial_relevance":2,"clarity":1}},
+      "quality_justification": "Well-sourced, industrially relevant; novelty limited.",
+      "engineering_insight": "Heat integration looks like the main scale-up bottleneck.",
+      "skills": ["process modelling","heat integration"],
+      "suggested_linkedin": "I sketched a quick mass & energy balance for this catalyst and found heat management is the real blocker; if scaling to 50 ktpa I'd test a heat-recovery loop. Thoughts?",
+      "suggested_hashtags": ["#CO2Utilization","#ProcessEngineering"]
     }}
   ]
 }}
@@ -807,20 +821,27 @@ Return ONLY the JSON object.
                 )
 
         return f"""
-You are a news curator. Find {max_stories} recent news stories matching: "{search_prompt}"
+You are a news curator and technical editor creating concise, publishable briefs for a chemical/process engineer to post on LinkedIn.
 
 REQUIREMENTS:
 - Stories must be from after {since_date.strftime("%Y-%m-%d")}
-- Each story needs:
-  * title: A clear, engaging headline
-  * sources: Array of REAL source URLs from your search results
-  * summary: {summary_words} words max
+- Each story must include these fields:
+  * title: A clear, professional headline
+  * sources: Array of REAL source URLs found in your grounding/search results
+  * summary: {summary_words} words max (technical and factual)
   * category: One of: Technology, Business, Science, AI, Other
-  * quality_score: 1-10 rating
-  * quality_justification: Brief explanation of the score
+  * quality_score: Integer 1-10 using this rubric:
+      - 8-10 = Strong (trustworthy sources, clear industrial relevance, actionable insight)
+      - 5-7 = Medium (interesting but limited industrial relevance or unclear sourcing)
+      - 1-4 = Low (weak sources, speculative, or not industrially relevant)
+  * score_breakdown: object with keys novelty, sources, industrial_relevance, clarity (each 0-3)
+  * quality_justification: Brief justification referencing the rubric and breakdown
+  * engineering_insight: 1-2 sentences describing scaling implications, likely engineering bottlenecks, or why this matters industrially
+  * skills: list of concrete skills this touches (e.g., process modelling, reactor design, TEA)
+  * suggested_linkedin: a short (1-3 sentence) FIRST-PERSON LinkedIn post that demonstrates engineering judgement and ends with an engagement question
+  * suggested_hashtags: up to 5 focused hashtags for LinkedIn (avoid generic/irrelevant tags)
 
-CRITICAL: Only include URLs you found in your search results. Do NOT invent or guess URLs.
-If you cannot find a real URL for a story, omit that story entirely.
+CRITICAL: Only include URLs you found in your search results. If you cannot find a real URL for a story, omit that story entirely.
 
 RESPOND WITH ONLY THIS JSON FORMAT:
 {{
@@ -831,7 +852,12 @@ RESPOND WITH ONLY THIS JSON FORMAT:
       "summary": "Brief summary here.",
       "category": "Technology",
       "quality_score": 8,
-      "quality_justification": "Highly relevant topic, reputable source, timely"
+      "score_breakdown": {{"novelty":2,"sources":3,"industrial_relevance":2,"clarity":1}},
+      "quality_justification": "Highly relevant topic, reputable source, timely",
+      "engineering_insight": "Identify the main scale-up bottleneck (heat, mass transfer, catalyst lifetime, etc.) and be explicit about it.",
+      "skills": ["process modelling","materials testing"],
+      "suggested_linkedin": "I found this paper's catalyst performance interesting but suspect scale-up will be constrained by catalyst lifetime and heat integration; I'd prototype a heat-recovery loop next. What would you try first?",
+      "suggested_hashtags": ["#CO2Utilization","#ProcessEngineering"]
     }}
   ]
 }}
