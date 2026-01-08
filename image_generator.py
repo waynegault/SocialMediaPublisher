@@ -227,10 +227,15 @@ class ImageGenerator:
                 client = InferenceClient()
 
             # Generate image using text_to_image - this is FREE for FLUX.1-schnell
-            image = client.text_to_image(
-                prompt=prompt,
-                model=model,
-            )
+            # Note: negative_prompt is ignored by FLUX models but works with SD/SDXL
+            kwargs = {"prompt": prompt, "model": model}
+            if Config.HF_NEGATIVE_PROMPT and "flux" not in model.lower():
+                kwargs["negative_prompt"] = Config.HF_NEGATIVE_PROMPT
+                logger.debug(
+                    f"Using negative prompt: {Config.HF_NEGATIVE_PROMPT[:50]}..."
+                )
+
+            image = client.text_to_image(**kwargs)
 
             # Add AI watermark to the image
             watermarked_image = add_ai_watermark(image)
