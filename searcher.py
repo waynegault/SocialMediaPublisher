@@ -641,24 +641,49 @@ class StorySearcher:
                     f"'{story_title[:40]}...'"
                 )
             else:
-                # No confident matches - filter out redirect URLs from LLM sources
-                logger.warning(
-                    f"No confident URL matches for story: '{story_title[:50]}'. "
-                    "Filtering redirect URLs."
-                )
-                # Filter out Vertex AI redirect URLs from any LLM-provided sources
-                existing_sources = story.get("sources", [])
-                filtered_sources = [
-                    url
-                    for url in existing_sources
-                    if "vertexaisearch.cloud.google.com" not in url
-                ]
-                if len(filtered_sources) < len(existing_sources):
-                    logger.info(
-                        f"Removed {len(existing_sources) - len(filtered_sources)} "
-                        f"redirect URL(s) from story sources"
+                # No confident matches above threshold
+                # Try to find best available unassigned URL as fallback
+                best_fallback: tuple[str, float] | None = None
+                for source in grounding_sources:
+                    url = source.get("uri", "")
+                    source_title = source.get("title", "")
+                    if not url or url in assigned_urls:
+                        continue
+                    # Skip redirect URLs
+                    if "vertexaisearch.cloud.google.com" in url:
+                        continue
+                    score = calculate_url_story_match_score(
+                        story_title, story_summary, url, source_title
                     )
-                story["sources"] = filtered_sources
+                    if best_fallback is None or score > best_fallback[1]:
+                        best_fallback = (url, score)
+
+                if best_fallback:
+                    # Use best available URL even if below threshold
+                    story["sources"] = [best_fallback[0]]
+                    assigned_urls.add(best_fallback[0])
+                    logger.warning(
+                        f"Using fallback URL for '{story_title[:40]}' "
+                        f"(score: {best_fallback[1]:.2f}, below threshold)"
+                    )
+                else:
+                    # No grounding URLs available - filter redirect URLs from LLM sources
+                    existing_sources = story.get("sources", [])
+                    filtered_sources = [
+                        url
+                        for url in existing_sources
+                        if "vertexaisearch.cloud.google.com" not in url
+                    ]
+                    if len(filtered_sources) < len(existing_sources):
+                        logger.info(
+                            f"Removed {len(existing_sources) - len(filtered_sources)} "
+                            f"redirect URL(s) from story sources"
+                        )
+                    story["sources"] = filtered_sources
+                    if not filtered_sources:
+                        logger.warning(
+                            f"No source URL available for story: '{story_title[:50]}'"
+                        )
 
         # Log unmatched URLs for review
         for source in grounding_sources:
