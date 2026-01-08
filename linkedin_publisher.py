@@ -542,8 +542,16 @@ class LinkedInPublisher:
             return self._fetch_social_actions(story)
 
         try:
-            # URL-encode the URNs (already validated non-None in caller)
-            org_urn = quote(str(Config.LINKEDIN_ORGANIZATION_URN), safe="")
+            # Determine numeric organization ID from URN if possible
+            import re
+            org_urn_value = str(Config.LINKEDIN_ORGANIZATION_URN)
+            m = re.search(r"(\d+)$", org_urn_value)
+            if m:
+                org_id = m.group(1)
+            else:
+                # Fallback to sending the URN (some endpoints accept it), but it may fail
+                org_id = None
+
             post_id = str(story.linkedin_post_id)
             post_urn = quote(post_id, safe="")
 
@@ -553,10 +561,18 @@ class LinkedInPublisher:
             else:
                 post_param = f"shares=List({post_urn})"
 
-            url = (
-                f"https://api.linkedin.com/rest/organizationalEntityShareStatistics"
-                f"?q=organizationalEntity&organizationalEntity={org_urn}&{post_param}"
-            )
+            if org_id:
+                url = (
+                    f"https://api.linkedin.com/rest/organizationalEntityShareStatistics"
+                    f"?q=organizationalEntity&organizationalEntity={org_id}&{post_param}"
+                )
+            else:
+                # Last-resort: include the full URN (may cause error if API expects a Long)
+                org_urn_encoded = quote(org_urn_value, safe="")
+                url = (
+                    f"https://api.linkedin.com/rest/organizationalEntityShareStatistics"
+                    f"?q=organizationalEntity&organizationalEntity={org_urn_encoded}&{post_param}"
+                )
 
             version = datetime.now().strftime("%Y%m")
             headers = {

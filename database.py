@@ -49,6 +49,9 @@ class Story:
         0.0  # Engagement rate (clicks+likes+comments+shares / impressions)
     )
     linkedin_analytics_fetched_at: Optional[datetime] = None
+    # Company mention enrichment
+    company_mention_enrichment: Optional[str] = None
+    enrichment_status: str = "pending"  # pending, enriched, skipped
 
     def to_dict(self) -> dict:
         """Convert story to dictionary."""
@@ -86,6 +89,8 @@ class Story:
             "linkedin_analytics_fetched_at": self.linkedin_analytics_fetched_at.isoformat()
             if self.linkedin_analytics_fetched_at
             else None,
+            "company_mention_enrichment": self.company_mention_enrichment,
+            "enrichment_status": self.enrichment_status,
         }
 
     @classmethod
@@ -159,6 +164,12 @@ class Story:
             )
             if "linkedin_analytics_fetched_at" in keys
             else None,
+            company_mention_enrichment=row["company_mention_enrichment"]
+            if "company_mention_enrichment" in keys
+            else None,
+            enrichment_status=row["enrichment_status"]
+            if "enrichment_status" in keys
+            else "pending",
         )
 
 
@@ -251,6 +262,13 @@ class Database:
             self._migrate_add_column(cursor, "linkedin_engagement", "REAL DEFAULT 0.0")
             self._migrate_add_column(
                 cursor, "linkedin_analytics_fetched_at", "TIMESTAMP"
+            )
+            # Company mention enrichment columns
+            self._migrate_add_column(
+                cursor, "company_mention_enrichment", "TEXT"
+            )
+            self._migrate_add_column(
+                cursor, "enrichment_status", "TEXT DEFAULT 'pending'"
             )
 
             # System state table for tracking last check date, etc.
@@ -368,7 +386,9 @@ class Database:
                     linkedin_comments = ?,
                     linkedin_shares = ?,
                     linkedin_engagement = ?,
-                    linkedin_analytics_fetched_at = ?
+                    linkedin_analytics_fetched_at = ?,
+                    company_mention_enrichment = ?,
+                    enrichment_status = ?
                 WHERE id = ?
                 """,
                 (
@@ -395,6 +415,8 @@ class Database:
                     story.linkedin_shares,
                     story.linkedin_engagement,
                     story.linkedin_analytics_fetched_at,
+                    story.company_mention_enrichment,
+                    story.enrichment_status,
                     story.id,
                 ),
             )
@@ -664,6 +686,24 @@ class Database:
                 "SELECT COUNT(*) FROM stories WHERE image_path IS NULL AND publish_status = 'unpublished'"
             )
             stats["needing_images"] = cursor.fetchone()[0]
+
+            # Enrichment stats
+            cursor.execute(
+                "SELECT COUNT(*) FROM stories WHERE enrichment_status = 'pending' AND verification_status = 'approved' AND image_path IS NOT NULL"
+            )
+            stats["pending_enrichment"] = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM stories WHERE enrichment_status = 'enriched'"
+            )
+            stats["enriched_count"] = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM stories WHERE enrichment_status = 'enriched' AND company_mention_enrichment IS NOT NULL"
+            )
+            stats["with_mentions"] = cursor.fetchone()[0]
+
+            stats["no_mentions"] = stats["enriched_count"] - stats["with_mentions"]
 
             return stats
 
