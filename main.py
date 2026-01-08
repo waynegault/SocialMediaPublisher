@@ -354,6 +354,10 @@ Social Media Publisher - Debug Menu
    20. Test LinkedIn Publish (due stories)
    21. Run Unit Tests
 
+  Analytics:
+   22. View LinkedIn Analytics
+   23. Refresh All Analytics
+
    0. Exit
 ============================================================
 """
@@ -421,6 +425,11 @@ Social Media Publisher - Debug Menu
             _test_linkedin_publish(engine)
         elif choice == "21":
             _run_unit_tests()
+        # Analytics
+        elif choice == "22":
+            _view_linkedin_analytics(engine)
+        elif choice == "23":
+            _refresh_linkedin_analytics(engine)
         else:
             print("Invalid choice. Please try again.")
 
@@ -1251,6 +1260,92 @@ def _run_unit_tests() -> None:
     except Exception as e:
         print(f"\nError running tests: {e}")
         logger.exception("Unit test execution failed")
+
+
+def _view_linkedin_analytics(engine: ContentEngine) -> None:
+    """View LinkedIn analytics for published stories."""
+    print("\n--- LinkedIn Analytics ---")
+
+    published_stories = engine.db.get_published_stories()
+
+    if not published_stories:
+        print("\nNo published stories found.")
+        return
+
+    print(f"\nFound {len(published_stories)} published stories:\n")
+    print("-" * 100)
+    print(
+        f"{'ID':>4} | {'Title':<40} | {'👁 Impr':>8} | {'👍 Like':>7} | "
+        f"{'💬 Cmnt':>7} | {'📤 Share':>8} | {'Last Updated':<16}"
+    )
+    print("-" * 100)
+
+    for story in published_stories:
+        title = (story.title or "Untitled")[:38]
+        if len(story.title or "") > 38:
+            title += ".."
+
+        last_updated = "Never"
+        if story.linkedin_analytics_fetched_at:
+            last_updated = story.linkedin_analytics_fetched_at.strftime(
+                "%Y-%m-%d %H:%M"
+            )
+
+        print(
+            f"{story.id:>4} | {title:<40} | {story.linkedin_impressions or 0:>8} | "
+            f"{story.linkedin_likes or 0:>7} | {story.linkedin_comments or 0:>7} | "
+            f"{story.linkedin_shares or 0:>8} | {last_updated:<16}"
+        )
+
+    print("-" * 100)
+
+    # Summary statistics
+    total_impressions = sum(s.linkedin_impressions or 0 for s in published_stories)
+    total_likes = sum(s.linkedin_likes or 0 for s in published_stories)
+    total_comments = sum(s.linkedin_comments or 0 for s in published_stories)
+    total_shares = sum(s.linkedin_shares or 0 for s in published_stories)
+
+    print(
+        f"\n{'TOTALS':>4} | {'':<40} | {total_impressions:>8} | "
+        f"{total_likes:>7} | {total_comments:>7} | {total_shares:>8}"
+    )
+
+    # Calculate engagement rate if we have impressions
+    if total_impressions > 0:
+        engagement_rate = (
+            (total_likes + total_comments + total_shares) / total_impressions * 100
+        )
+        print(f"\nOverall Engagement Rate: {engagement_rate:.2f}%")
+
+
+def _refresh_linkedin_analytics(engine: ContentEngine) -> None:
+    """Refresh LinkedIn analytics for all published stories."""
+    print("\n--- Refresh LinkedIn Analytics ---")
+
+    published_stories = engine.db.get_published_stories()
+
+    if not published_stories:
+        print("\nNo published stories to refresh.")
+        return
+
+    print(f"\nFound {len(published_stories)} published stories.")
+    confirm = input("Refresh analytics for all? (y/n): ").strip().lower()
+
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    print("\nFetching analytics from LinkedIn API...")
+
+    success_count, failure_count = engine.publisher.refresh_all_analytics()
+
+    print(f"\n✓ Successfully updated: {success_count}")
+    if failure_count > 0:
+        print(f"✗ Failed to update: {failure_count}")
+
+    # Show updated analytics
+    print("\nUpdated analytics:")
+    _view_linkedin_analytics(engine)
 
 
 def _show_all_prompts() -> None:

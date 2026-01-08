@@ -39,6 +39,16 @@ class Story:
     hashtags: list[str] = field(default_factory=list)
     # LinkedIn mentions: list of {"name": "...", "urn": "urn:li:person/organization:...", "type": "person/organization"}
     linkedin_mentions: list[dict] = field(default_factory=list)
+    # LinkedIn analytics (fetched from API after publication)
+    linkedin_impressions: int = 0
+    linkedin_clicks: int = 0
+    linkedin_likes: int = 0
+    linkedin_comments: int = 0
+    linkedin_shares: int = 0
+    linkedin_engagement: float = (
+        0.0  # Engagement rate (clicks+likes+comments+shares / impressions)
+    )
+    linkedin_analytics_fetched_at: Optional[datetime] = None
 
     def to_dict(self) -> dict:
         """Convert story to dictionary."""
@@ -67,6 +77,15 @@ class Story:
             "linkedin_post_url": self.linkedin_post_url,
             "hashtags": self.hashtags,
             "linkedin_mentions": self.linkedin_mentions,
+            "linkedin_impressions": self.linkedin_impressions,
+            "linkedin_clicks": self.linkedin_clicks,
+            "linkedin_likes": self.linkedin_likes,
+            "linkedin_comments": self.linkedin_comments,
+            "linkedin_shares": self.linkedin_shares,
+            "linkedin_engagement": self.linkedin_engagement,
+            "linkedin_analytics_fetched_at": self.linkedin_analytics_fetched_at.isoformat()
+            if self.linkedin_analytics_fetched_at
+            else None,
         }
 
     @classmethod
@@ -123,6 +142,23 @@ class Story:
             else None,
             hashtags=hashtags,
             linkedin_mentions=linkedin_mentions,
+            linkedin_impressions=row["linkedin_impressions"]
+            if "linkedin_impressions" in keys
+            else 0,
+            linkedin_clicks=row["linkedin_clicks"] if "linkedin_clicks" in keys else 0,
+            linkedin_likes=row["linkedin_likes"] if "linkedin_likes" in keys else 0,
+            linkedin_comments=row["linkedin_comments"]
+            if "linkedin_comments" in keys
+            else 0,
+            linkedin_shares=row["linkedin_shares"] if "linkedin_shares" in keys else 0,
+            linkedin_engagement=row["linkedin_engagement"]
+            if "linkedin_engagement" in keys
+            else 0.0,
+            linkedin_analytics_fetched_at=_parse_datetime(
+                row["linkedin_analytics_fetched_at"]
+            )
+            if "linkedin_analytics_fetched_at" in keys
+            else None,
         )
 
 
@@ -204,6 +240,18 @@ class Database:
             self._migrate_add_column(cursor, "linkedin_post_url", "TEXT")
             self._migrate_add_column(cursor, "hashtags", "TEXT DEFAULT '[]'")
             self._migrate_add_column(cursor, "linkedin_mentions", "TEXT DEFAULT '[]'")
+            # LinkedIn analytics columns
+            self._migrate_add_column(
+                cursor, "linkedin_impressions", "INTEGER DEFAULT 0"
+            )
+            self._migrate_add_column(cursor, "linkedin_clicks", "INTEGER DEFAULT 0")
+            self._migrate_add_column(cursor, "linkedin_likes", "INTEGER DEFAULT 0")
+            self._migrate_add_column(cursor, "linkedin_comments", "INTEGER DEFAULT 0")
+            self._migrate_add_column(cursor, "linkedin_shares", "INTEGER DEFAULT 0")
+            self._migrate_add_column(cursor, "linkedin_engagement", "REAL DEFAULT 0.0")
+            self._migrate_add_column(
+                cursor, "linkedin_analytics_fetched_at", "TIMESTAMP"
+            )
 
             # System state table for tracking last check date, etc.
             cursor.execute("""
@@ -310,7 +358,14 @@ class Database:
                     linkedin_post_id = ?,
                     linkedin_post_url = ?,
                     hashtags = ?,
-                    linkedin_mentions = ?
+                    linkedin_mentions = ?,
+                    linkedin_impressions = ?,
+                    linkedin_clicks = ?,
+                    linkedin_likes = ?,
+                    linkedin_comments = ?,
+                    linkedin_shares = ?,
+                    linkedin_engagement = ?,
+                    linkedin_analytics_fetched_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -330,6 +385,13 @@ class Database:
                     story.linkedin_post_url,
                     json.dumps(story.hashtags),
                     json.dumps(story.linkedin_mentions),
+                    story.linkedin_impressions,
+                    story.linkedin_clicks,
+                    story.linkedin_likes,
+                    story.linkedin_comments,
+                    story.linkedin_shares,
+                    story.linkedin_engagement,
+                    story.linkedin_analytics_fetched_at,
                     story.id,
                 ),
             )
@@ -447,6 +509,21 @@ class Database:
                 ORDER BY scheduled_time ASC
                 """
             )
+            return [Story.from_row(row) for row in cursor.fetchall()]
+
+    def get_published_stories(self, limit: int | None = None) -> list[Story]:
+        """Get all published stories, ordered by publish time (most recent first)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            query = """
+                SELECT * FROM stories
+                WHERE publish_status = 'published'
+                AND linkedin_post_id IS NOT NULL
+                ORDER BY published_time DESC
+            """
+            if limit:
+                query += f" LIMIT {limit}"
+            cursor.execute(query)
             return [Story.from_row(row) for row in cursor.fetchall()]
 
     def clear_scheduled_status(self) -> int:
