@@ -377,6 +377,42 @@ Return JSON format:
 If no LinkedIn profiles can be found, return: {{"mentions": []}}""",
     )
 
+    # Company mention enrichment prompt - extracts company mentions from news stories
+    # Placeholders: {story_title}, {story_summary}, {story_sources}
+    COMPANY_MENTION_PROMPT: str = _get_str(
+        "COMPANY_MENTION_PROMPT",
+        """Analyze this news story and extract the PRIMARY company mentioned.
+
+STORY TITLE: {story_title}
+
+STORY SUMMARY: {story_summary}
+
+SOURCES:
+{story_sources}
+
+TASK:
+Identify the MAIN company that is the subject or primary focus of this story.
+- Extract only ONE company name (the most central/important one)
+- It MUST be clearly mentioned in the story title, summary, or sources
+- It should be a real, verifiable company (not a generic industry term)
+- Do NOT include generic descriptors or categories
+
+OUTPUT REQUIREMENTS:
+- Return EXACTLY ONE sentence with the company name
+- Format: "[Company Name] is the primary subject of this news story."
+- Or if no clear single company can be identified: "NO_COMPANY_MENTION"
+
+EXAMPLES:
+- "Tesla is the primary subject of this news story."
+- "BASF is the primary subject of this news story."
+- "NO_COMPANY_MENTION"
+
+IMPORTANT:
+- Only one sentence OR the literal text "NO_COMPANY_MENTION"
+- No markdown, no explanations, no extra text
+- Be conservative: if uncertain, respond with "NO_COMPANY_MENTION\"""",
+    )
+
     # JSON repair prompt - attempts to fix malformed JSON from LLM responses
     # Placeholder: {malformed_json}
     JSON_REPAIR_PROMPT: str = _get_str(
