@@ -8,12 +8,72 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 from openai import OpenAI
-from huggingface_hub import InferenceClient
+from huggingface_hub import InferenceClient  # type: ignore
+from PIL import Image, ImageDraw, ImageFont
 
 from config import Config
 from database import Database, Story
 
 logger = logging.getLogger(__name__)
+
+
+def add_ai_watermark(image: Image.Image) -> Image.Image:
+    """Add 'AI generated image' watermark to bottom right corner of image."""
+    # Convert to RGBA to support transparency, then back to RGB for saving
+    img = image.convert("RGBA")
+
+    watermark_text = "AI generated image"
+
+    # Try to use a reasonable font size based on image size
+    font_size = max(14, min(img.width, img.height) // 35)
+
+    try:
+        # Try to use a system font (Windows)
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except (OSError, IOError):
+        try:
+            # Fallback fonts for Linux
+            font = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", font_size
+            )
+        except (OSError, IOError):
+            # Ultimate fallback to default font (smaller but works)
+            font = ImageFont.load_default()
+
+    # Create a transparent overlay for the watermark
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    # Get text bounding box
+    bbox = draw.textbbox((0, 0), watermark_text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+
+    # Position at bottom right with padding
+    padding = 15
+    x = img.width - text_width - padding
+    y = img.height - text_height - padding
+
+    # Draw semi-transparent background rectangle on overlay
+    bg_padding = 6
+    draw.rectangle(
+        [
+            x - bg_padding,
+            y - bg_padding,
+            x + text_width + bg_padding,
+            y + text_height + bg_padding,
+        ],
+        fill=(0, 0, 0, 160),  # Semi-transparent black
+    )
+
+    # Draw the text in white on overlay
+    draw.text((x, y), watermark_text, font=font, fill=(255, 255, 255, 255))
+
+    # Composite the overlay onto the image
+    result = Image.alpha_composite(img, overlay)
+
+    # Convert back to RGB for saving as PNG/JPEG
+    return result.convert("RGB")
 
 
 class ImageGenerator:
@@ -57,7 +117,7 @@ class ImageGenerator:
                     time.sleep(1)
 
                 logger.info(
-                    f"[{i + 1}/{len(stories)}] Generating image for: {story.title[:60]}..."
+                    f"[{i + 1}/{len(stories)}] Generating image for: {story.title}"
                 )
                 image_path = self._generate_image_for_story(story)
                 if image_path:
@@ -107,15 +167,20 @@ class ImageGenerator:
                 logger.warning(f"No image generated for story {story.id}")
                 return None
 
-            # Save the image
-            filename = f"story_{story.id}_{int(time.time())}.png"
-            filepath = os.path.join(Config.IMAGE_DIR, filename)
-
+            # Get image data and apply watermark
             image_data = response.generated_images[0].image.image_bytes
             if image_data:
-                with open(filepath, "wb") as f:
-                    f.write(image_data)
-                logger.debug(f"Saved image to {filepath}")
+                from io import BytesIO
+
+                # Load image from bytes, add watermark, and save
+                image = Image.open(BytesIO(image_data))
+                watermarked_image = add_ai_watermark(image)
+
+                filename = f"story_{story.id}_{int(time.time())}.png"
+                filepath = os.path.join(Config.IMAGE_DIR, filename)
+                watermarked_image.save(filepath)
+
+                logger.debug(f"Saved watermarked image to {filepath}")
                 return filepath
             else:
                 logger.warning(f"No image bytes for story {story.id}")
@@ -167,10 +232,13 @@ class ImageGenerator:
                 model=model,
             )
 
+            # Add AI watermark to the image
+            watermarked_image = add_ai_watermark(image)
+
             # Save the image (returns a PIL Image object)
             filename = f"story_{story.id}_{int(time.time())}_hf.png"
             filepath = os.path.join(Config.IMAGE_DIR, filename)
-            image.save(filepath)
+            watermarked_image.save(filepath)
 
             logger.info(f"Successfully generated HF image: {filepath}")
             return filepath
@@ -198,14 +266,17 @@ class ImageGenerator:
 
             if response.data and response.data[0].b64_json:
                 import base64
+                from io import BytesIO
 
                 image_data = base64.b64decode(response.data[0].b64_json)
 
+                # Load image, add watermark, and save
+                image = Image.open(BytesIO(image_data))
+                watermarked_image = add_ai_watermark(image)
+
                 filename = f"story_{story.id}_{int(time.time())}_local.png"
                 filepath = os.path.join(Config.IMAGE_DIR, filename)
-
-                with open(filepath, "wb") as f:
-                    f.write(image_data)
+                watermarked_image.save(filepath)
 
                 logger.info(f"Successfully generated local image: {filepath}")
                 return filepath
