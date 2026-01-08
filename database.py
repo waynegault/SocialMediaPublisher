@@ -91,8 +91,6 @@ class Story:
             else None,
             "company_mention_enrichment": self.company_mention_enrichment,
             "enrichment_status": self.enrichment_status,
-            "company_mention_enrichment": self.company_mention_enrichment,
-            "enrichment_status": self.enrichment_status,
         }
 
     @classmethod
@@ -166,12 +164,6 @@ class Story:
             )
             if "linkedin_analytics_fetched_at" in keys
             else None,
-            company_mention_enrichment=row["company_mention_enrichment"]
-            if "company_mention_enrichment" in keys
-            else None,
-            enrichment_status=row["enrichment_status"]
-            if "enrichment_status" in keys
-            else "pending",
             company_mention_enrichment=row["company_mention_enrichment"]
             if "company_mention_enrichment" in keys
             else None,
