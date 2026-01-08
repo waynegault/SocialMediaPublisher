@@ -1305,3 +1305,186 @@ Return ONLY valid JSON, no explanation.
                 "Consider broadening your search criteria for more options."
             )
         return f"Found {results_count} stories."
+
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+def _create_module_tests():
+    """Create unit tests for searcher module."""
+    import os
+    import tempfile
+
+    from test_framework import TestSuite
+
+    suite = TestSuite("Searcher Tests")
+
+    def test_calculate_similarity_identical():
+        result = calculate_similarity("hello world", "hello world")
+        assert result == 1.0
+
+    def test_calculate_similarity_different():
+        result = calculate_similarity("hello world", "goodbye moon")
+        assert result == 0.0
+
+    def test_calculate_similarity_partial():
+        result = calculate_similarity("hello world", "hello there")
+        assert 0.0 < result < 1.0
+
+    def test_calculate_similarity_empty():
+        result = calculate_similarity("", "")
+        assert result == 0.0
+
+    def test_validate_url_empty():
+        result = validate_url("")
+        assert result is False
+
+    def test_validate_url_valid_format():
+        result = validate_url("https://example.com")
+        # May fail if no network, but should not raise
+        assert isinstance(result, bool)
+
+    def test_validate_url_invalid_format():
+        result = validate_url("not-a-url")
+        assert result is False
+
+    def test_extract_article_date_none():
+        result = extract_article_date({})
+        assert result is None
+
+    def test_extract_article_date_valid():
+        result = extract_article_date({"date": "2024-01-15"})
+        assert result is not None
+        assert result.year == 2024
+
+    def test_filter_stories_by_date():
+        since = datetime(2024, 1, 10)
+        stories = [
+            {"title": "Old", "date": "2024-01-01"},
+            {"title": "New", "date": "2024-01-15"},
+            {"title": "NoDate"},
+        ]
+        filtered = filter_stories_by_date(stories, since)
+        titles = [s["title"] for s in filtered]
+        assert "Old" not in titles
+        assert "New" in titles
+        assert "NoDate" in titles  # Included by default
+
+    def test_searcher_init():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            searcher = StorySearcher(db, None, None)  # type: ignore
+            assert searcher.db is db
+        finally:
+            os.unlink(db_path)
+
+    def test_parse_response_empty():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            searcher = StorySearcher(db, None, None)  # type: ignore
+            result = searcher._parse_response("")
+            assert result == []
+        finally:
+            os.unlink(db_path)
+
+    def test_parse_response_valid_json():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            searcher = StorySearcher(db, None, None)  # type: ignore
+            json_str = '[{"title": "Test", "summary": "Summary", "quality_score": 8}]'
+            result = searcher._parse_response(json_str)
+            assert len(result) == 1
+            assert result[0]["title"] == "Test"
+        finally:
+            os.unlink(db_path)
+
+    def test_normalize_stories_list():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            searcher = StorySearcher(db, None, None)  # type: ignore
+            data = [{"title": "Story1"}, {"title": "Story2"}]
+            result = searcher._normalize_stories(data)
+            assert len(result) == 2
+        finally:
+            os.unlink(db_path)
+
+    def test_normalize_stories_dict_with_stories():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            searcher = StorySearcher(db, None, None)  # type: ignore
+            data = {"stories": [{"title": "Story1"}]}
+            result = searcher._normalize_stories(data)
+            assert len(result) == 1
+        finally:
+            os.unlink(db_path)
+
+    def test_get_search_feedback_zero():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            searcher = StorySearcher(db, None, None)  # type: ignore
+            feedback = searcher.get_search_feedback(0, "test query")
+            assert "No results" in feedback
+        finally:
+            os.unlink(db_path)
+
+    def test_get_search_feedback_few():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            searcher = StorySearcher(db, None, None)  # type: ignore
+            feedback = searcher.get_search_feedback(2, "test")
+            assert "2 result" in feedback
+        finally:
+            os.unlink(db_path)
+
+    def test_manual_distill():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            searcher = StorySearcher(db, None, None)  # type: ignore
+            result = searcher._manual_distill(
+                "I'm a chemical engineer looking for AI news"
+            )
+            assert len(result) > 0
+            assert "i'm" not in result.lower()
+        finally:
+            os.unlink(db_path)
+
+    suite.add_test(
+        "Calculate similarity - identical", test_calculate_similarity_identical
+    )
+    suite.add_test(
+        "Calculate similarity - different", test_calculate_similarity_different
+    )
+    suite.add_test("Calculate similarity - partial", test_calculate_similarity_partial)
+    suite.add_test("Calculate similarity - empty", test_calculate_similarity_empty)
+    suite.add_test("Validate URL - empty", test_validate_url_empty)
+    suite.add_test("Validate URL - valid format", test_validate_url_valid_format)
+    suite.add_test("Validate URL - invalid format", test_validate_url_invalid_format)
+    suite.add_test("Extract article date - none", test_extract_article_date_none)
+    suite.add_test("Extract article date - valid", test_extract_article_date_valid)
+    suite.add_test("Filter stories by date", test_filter_stories_by_date)
+    suite.add_test("Searcher init", test_searcher_init)
+    suite.add_test("Parse response - empty", test_parse_response_empty)
+    suite.add_test("Parse response - valid JSON", test_parse_response_valid_json)
+    suite.add_test("Normalize stories - list", test_normalize_stories_list)
+    suite.add_test("Normalize stories - dict", test_normalize_stories_dict_with_stories)
+    suite.add_test("Get search feedback - zero", test_get_search_feedback_zero)
+    suite.add_test("Get search feedback - few", test_get_search_feedback_few)
+    suite.add_test("Manual distill", test_manual_distill)
+
+    return suite

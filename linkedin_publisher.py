@@ -37,7 +37,6 @@ class LinkedInPublisher:
             "X-Restli-Protocol-Version": "2.0.0",
         }
 
-
     def publish_due_stories(self) -> tuple[int, int]:
         """
         Publish all stories that are due.
@@ -260,7 +259,9 @@ class LinkedInPublisher:
             "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
         }
 
-    def publish_one_off(self, author_urn: str, text: str, image_path: str | None = None) -> str | None:
+    def publish_one_off(
+        self, author_urn: str, text: str, image_path: str | None = None
+    ) -> str | None:
         """Publish a one-off UGC post for given author (person or org). Returns the post ID if successful."""
         image_asset = None
         if image_path and Path(image_path).exists():
@@ -312,7 +313,9 @@ class LinkedInPublisher:
                 logger.info(f"Published one-off post: {post_id}")
                 return post_id
             else:
-                logger.error(f"One-off post failed: {response.status_code} {response.text}")
+                logger.error(
+                    f"One-off post failed: {response.status_code} {response.text}"
+                )
                 return None
 
         except Exception as e:
@@ -351,3 +354,145 @@ class LinkedInPublisher:
             return None
         except Exception:
             return None
+
+    def verify_post_exists(self, post_id: str) -> tuple[bool, dict | None]:
+        """
+        Verify a post exists on LinkedIn by fetching its details.
+        Returns tuple of (exists, post_data).
+        """
+        if not Config.LINKEDIN_ACCESS_TOKEN or not post_id:
+            return (False, None)
+
+        try:
+            # LinkedIn UGC posts can be fetched via the ugcPosts endpoint
+            response = requests.get(
+                f"{self.BASE_URL}/ugcPosts/{post_id}",
+                headers=self._get_headers(),
+                timeout=10,
+            )
+            if response.status_code == 200:
+                return (True, response.json())
+            else:
+                logger.warning(
+                    f"Post verification failed: {response.status_code} - {response.text}"
+                )
+                return (False, None)
+        except Exception as e:
+            logger.error(f"Post verification exception: {e}")
+            return (False, None)
+
+    def publish_immediately(self, story: Story) -> str | None:
+        """
+        Publish a story immediately, bypassing scheduling.
+        Updates the story status to 'published' if successful.
+        Returns the post ID if successful, None otherwise.
+        """
+        post_id = self._publish_story(story)
+        if post_id:
+            story.publish_status = "published"
+            story.published_time = datetime.now()
+            story.linkedin_post_id = post_id
+            self.db.update_story(story)
+            logger.info(
+                f"Published story {story.id} immediately with post ID: {post_id}"
+            )
+        return post_id
+
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+def _create_module_tests():
+    """Create unit tests for linkedin_publisher module."""
+    import os
+    import tempfile
+
+    from test_framework import TestSuite
+
+    suite = TestSuite("LinkedIn Publisher Tests")
+
+    def test_publisher_init():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            assert publisher.db is db
+        finally:
+            os.unlink(db_path)
+
+    def test_get_headers():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            headers = publisher._get_headers()
+            assert "Authorization" in headers
+            assert "Content-Type" in headers
+            assert headers["Content-Type"] == "application/json"
+        finally:
+            os.unlink(db_path)
+
+    def test_format_post_text():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            story = Story(
+                title="Test Title",
+                summary="Test summary content",
+                source_links=["https://example.com"],
+                quality_score=8,
+            )
+            text = publisher._format_post_text(story)
+            assert "Test Title" in text
+            assert "Test summary content" in text
+            assert "https://example.com" in text
+        finally:
+            os.unlink(db_path)
+
+    def test_build_image_post_payload():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            story = Story(
+                title="Test", summary="Summary", source_links=[], quality_score=7
+            )
+            payload = publisher._build_image_post_payload(
+                "Test text", story, "urn:li:digitalmediaAsset:123"
+            )
+            assert "author" in payload
+            assert "specificContent" in payload
+            assert "visibility" in payload
+        finally:
+            os.unlink(db_path)
+
+    def test_build_article_post_payload():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            story = Story(
+                title="Test",
+                summary="Summary",
+                source_links=["https://example.com"],
+                quality_score=7,
+            )
+            payload = publisher._build_article_post_payload("Test text", story)
+            assert "author" in payload
+            assert "specificContent" in payload
+        finally:
+            os.unlink(db_path)
+
+    suite.add_test("Publisher init", test_publisher_init)
+    suite.add_test("Get headers", test_get_headers)
+    suite.add_test("Format post text", test_format_post_text)
+    suite.add_test("Build image post payload", test_build_image_post_payload)
+    suite.add_test("Build article post payload", test_build_article_post_payload)
+
+    return suite

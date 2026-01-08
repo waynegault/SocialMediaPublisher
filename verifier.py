@@ -49,6 +49,27 @@ class ContentVerifier:
         for i, story in enumerate(stories, 1):
             try:
                 logger.info(f"[{i}/{total}] Verifying: {story.title}")
+
+                # Check if story has no image due to low quality score
+                if not story.image_path:
+                    if story.quality_score < Config.MIN_QUALITY_SCORE:
+                        reason = (
+                            f"Quality score ({story.quality_score}) below minimum "
+                            f"threshold ({Config.MIN_QUALITY_SCORE}) - no image generated"
+                        )
+                        story.verification_status = "rejected"
+                        story.verification_reason = reason
+                        rejected += 1
+                        logger.warning(f"  ✗ REJECTED: {reason}")
+                        self.db.update_story(story)
+                        continue
+                    else:
+                        # Quality is good but image missing - skip for now
+                        reason = "No image available - generate images first"
+                        logger.info(f"  ⏳ SKIPPED: {reason}")
+                        skipped += 1
+                        continue
+
                 is_approved, reason = self._verify_story(story)
 
                 if is_approved:
@@ -281,3 +302,100 @@ Then on a new line, provide a brief (one sentence) reason.
             "pending": stats.get("pending_verification", 0),
             "available": stats.get("available_count", 0),
         }
+
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+def _create_module_tests():
+    """Create unit tests for verifier module."""
+    import os
+    import tempfile
+
+    from test_framework import TestSuite
+
+    suite = TestSuite("Verifier Tests")
+
+    def test_parse_verification_response_approved():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            # Create minimal verifier without real clients
+            verifier = ContentVerifier(db, None, None)  # type: ignore
+            result, reason = verifier._parse_verification_response(
+                "APPROVED\nGood content"
+            )
+            assert result is True
+            assert "Good content" in reason
+        finally:
+            os.unlink(db_path)
+
+    def test_parse_verification_response_rejected():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            verifier = ContentVerifier(db, None, None)  # type: ignore
+            result, reason = verifier._parse_verification_response(
+                "REJECTED\nNot suitable"
+            )
+            assert result is False
+            assert "Not suitable" in reason
+        finally:
+            os.unlink(db_path)
+
+    def test_parse_verification_response_unclear():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            verifier = ContentVerifier(db, None, None)  # type: ignore
+            result, reason = verifier._parse_verification_response("Maybe")
+            assert result is False  # Default to rejection
+            assert "Unclear" in reason
+        finally:
+            os.unlink(db_path)
+
+    def test_build_verification_prompt():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            verifier = ContentVerifier(db, None, None)  # type: ignore
+            story = Story(
+                title="Test Story",
+                summary="Test summary about AI",
+                quality_score=8,
+            )
+            prompt = verifier._build_verification_prompt(story)
+            assert "Test Story" in prompt
+            assert "Test summary" in prompt
+            assert "APPROVED" in prompt
+            assert "REJECTED" in prompt
+        finally:
+            os.unlink(db_path)
+
+    def test_get_verification_stats():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            verifier = ContentVerifier(db, None, None)  # type: ignore
+            stats = verifier.get_verification_stats()
+            assert "pending" in stats
+            assert "available" in stats
+        finally:
+            os.unlink(db_path)
+
+    suite.add_test(
+        "Parse response - approved", test_parse_verification_response_approved
+    )
+    suite.add_test(
+        "Parse response - rejected", test_parse_verification_response_rejected
+    )
+    suite.add_test("Parse response - unclear", test_parse_verification_response_unclear)
+    suite.add_test("Build verification prompt", test_build_verification_prompt)
+    suite.add_test("Get verification stats", test_get_verification_stats)
+
+    return suite

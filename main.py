@@ -323,34 +323,33 @@ def interactive_menu(engine: ContentEngine) -> None:
 Social Media Publisher - Debug Menu
 ============================================================
 
-  Component Testing:
-    1. Test Story Search
-    2. Test Image Generation
-    3. Test Content Verification
-    4. Test Scheduling
-    5. Test LinkedIn Connection
-    6. Test LinkedIn Publish (due stories)
-
-  Database Operations:
-    7. View Database Statistics
-    8. List All Stories
-    9. List Pending Stories
-   10. List Scheduled Stories
-   11. Cleanup Old Stories
-   16. Backup Database
-   17. Verify Database Integrity
-   18. Restore Database from Backup
-   19. Retry Rejected Stories (regenerate image + re-verify)
+  Pipeline:
+    1. Run Full Pipeline (search → images → verify → schedule → publish)
+    2. Publish One Story Now (immediate test publish)
 
   Configuration:
-   12. Show Configuration
-   13. Show Full Status
+    3. Show Configuration
+    4. Show Full Status
 
-  Pipeline:
-   14. Run Full Search Cycle
+  Database Operations:
+    5. View Database Statistics
+    6. List All Stories
+    7. List Pending Stories
+    8. List Scheduled Stories
+    9. Cleanup Old Stories
+   10. Backup Database
+   11. Restore Database from Backup
+   12. Verify Database Integrity
+   13. Retry Rejected Stories (regenerate image + re-verify)
 
-  Testing:
-   15. Run Unit Tests
+  Component Testing:
+   14. Test Story Search
+   15. Test Image Generation
+   16. Test Content Verification
+   17. Test Scheduling
+   18. Test LinkedIn Connection
+   19. Test LinkedIn Publish (due stories)
+   20. Run Unit Tests
 
    0. Exit
 ============================================================
@@ -372,45 +371,51 @@ Social Media Publisher - Debug Menu
         if choice == "0":
             print("Exiting...")
             break
+        # Pipeline
         elif choice == "1":
-            _test_search(engine)
+            _run_full_cycle(engine)
         elif choice == "2":
-            _test_image_generation(engine)
+            _test_publish_one_story(engine)
+        # Configuration
         elif choice == "3":
-            _test_verification(engine)
-        elif choice == "4":
-            _test_scheduling(engine)
-        elif choice == "5":
-            _test_linkedin_connection(engine)
-        elif choice == "6":
-            _test_linkedin_publish(engine)
-        elif choice == "7":
-            _show_database_stats(engine)
-        elif choice == "8":
-            _list_all_stories(engine)
-        elif choice == "9":
-            _list_pending_stories(engine)
-        elif choice == "10":
-            _list_scheduled_stories(engine)
-        elif choice == "11":
-            _cleanup_old_stories(engine)
-        elif choice == "12":
             Config.print_config()
             _test_api_keys(engine)
-        elif choice == "13":
+        elif choice == "4":
             engine.status()
-        elif choice == "14":
-            _run_full_cycle(engine)
-        elif choice == "15":
-            _run_unit_tests()
-        elif choice == "16":
+        # Database Operations
+        elif choice == "5":
+            _show_database_stats(engine)
+        elif choice == "6":
+            _list_all_stories(engine)
+        elif choice == "7":
+            _list_pending_stories(engine)
+        elif choice == "8":
+            _list_scheduled_stories(engine)
+        elif choice == "9":
+            _cleanup_old_stories(engine)
+        elif choice == "10":
             _backup_database(engine)
-        elif choice == "17":
-            _verify_database(engine)
-        elif choice == "18":
+        elif choice == "11":
             _restore_database(engine)
-        elif choice == "19":
+        elif choice == "12":
+            _verify_database(engine)
+        elif choice == "13":
             _retry_rejected_stories(engine)
+        # Component Testing
+        elif choice == "14":
+            _test_search(engine)
+        elif choice == "15":
+            _test_image_generation(engine)
+        elif choice == "16":
+            _test_verification(engine)
+        elif choice == "17":
+            _test_scheduling(engine)
+        elif choice == "18":
+            _test_linkedin_connection(engine)
+        elif choice == "19":
+            _test_linkedin_publish(engine)
+        elif choice == "20":
+            _run_unit_tests()
         else:
             print("Invalid choice. Please try again.")
 
@@ -599,6 +604,90 @@ def _check_and_fix_missing_images(engine: ContentEngine) -> int:
     return updated_count
 
 
+def _check_and_offer_image_retry(engine: ContentEngine) -> None:
+    """Check for image-related rejections and offer to retry them."""
+    rejected_stories = engine.db.get_rejected_stories()
+
+    # Filter for image-related rejections
+    image_keywords = ["image", "picture", "photo", "visual", "graphic", "illustration"]
+    image_rejected = [
+        s
+        for s in rejected_stories
+        if s.verification_reason
+        and any(keyword in s.verification_reason.lower() for keyword in image_keywords)
+    ]
+
+    if not image_rejected:
+        return
+
+    print(f"\n--- Found {len(image_rejected)} stories rejected due to image issues ---")
+    for story in image_rejected:
+        print(f"  [{story.id}] {story.title}")
+        print(f"       Reason: {story.verification_reason}")
+
+    retry = input("\nRetry these with new images? (y/n): ").strip().lower()
+    if retry != "y":
+        return
+
+    # Run the retry logic for these specific stories
+    print(f"\nRetrying {len(image_rejected)} stories...")
+
+    success_count = 0
+    for story in image_rejected:
+        print(f"\n--- Processing story {story.id}: {story.title} ---")
+
+        # Delete old image if exists
+        if story.image_path:
+            old_image = Path(story.image_path)
+            if old_image.exists():
+                try:
+                    old_image.unlink()
+                    print(f"  Deleted old image: {story.image_path}")
+                except Exception as e:
+                    print(f"  Warning: Could not delete old image: {e}")
+
+        # Clear image path and reset status
+        story.image_path = None
+        story.verification_status = "pending"
+        story.verification_reason = None
+        engine.db.update_story(story)
+
+        # Generate new image
+        print("  Generating new image...")
+        try:
+            image_path = engine.image_generator._generate_image_for_story(story)
+            if image_path:
+                story.image_path = image_path
+                engine.db.update_story(story)
+                print(f"  ✓ New image generated: {image_path}")
+            else:
+                print("  ✗ Failed to generate new image")
+                continue
+        except Exception as e:
+            print(f"  ✗ Image generation error: {e}")
+            continue
+
+        # Re-verify
+        print("  Re-verifying...")
+        try:
+            is_approved, reason = engine.verifier._verify_story(story)
+            story.verification_status = "approved" if is_approved else "rejected"
+            story.verification_reason = reason
+            engine.db.update_story(story)
+
+            if is_approved:
+                print(f"  ✓ APPROVED: {reason}")
+                success_count += 1
+            else:
+                print(f"  ✗ REJECTED again: {reason}")
+        except Exception as e:
+            print(f"  ✗ Verification error: {e}")
+
+    print(
+        f"\n=== Retry Summary: {success_count}/{len(image_rejected)} stories now approved ==="
+    )
+
+
 def _test_verification(engine: ContentEngine) -> None:
     """Test the content verification component."""
     print("\n--- Testing Content Verification ---")
@@ -611,11 +700,6 @@ def _test_verification(engine: ContentEngine) -> None:
 
         if stats.get("total_stories", 0) == 0:
             print("No stories in database. Search for stories first (Choice 1).")
-        elif stats.get("needing_images", 0) > 0:
-            print(
-                f"Found {stats.get('needing_images', 0)} stories without images. "
-                "Generate images first (Choice 2)."
-            )
         elif (
             stats.get("available_count", 0) > 0
             and stats.get("ready_for_verification", 0) == 0
@@ -627,13 +711,23 @@ def _test_verification(engine: ContentEngine) -> None:
             print("No stories are currently pending verification.")
             print(f"  Total stories: {stats.get('total_stories', 0)}")
             print(f"  Needing images: {stats.get('needing_images', 0)}")
-            print(f"  Ready for verification: {stats.get('ready_for_verification', 0)}")
             print(f"  Available (approved): {stats.get('available_count', 0)}")
         return
 
     print(f"Stories pending verification: {len(stories)}")
+    with_images = sum(1 for s in stories if s.image_path)
+    low_quality = sum(
+        1
+        for s in stories
+        if not s.image_path and s.quality_score < Config.MIN_QUALITY_SCORE
+    )
+    print(f"  - {with_images} with images (will be AI-verified)")
+    print(f"  - {low_quality} low quality without images (will be auto-rejected)")
+    print()
     for story in stories[:5]:  # Show first 5
-        print(f"  - [{story.id}] {story.title}")
+        img_status = "✓" if story.image_path else f"✗ (score={story.quality_score})"
+        print(f"  [{story.id}] {story.title}")
+        print(f"       Image: {img_status}")
 
     confirm = input("\nVerify these stories? (y/n): ").strip().lower()
     if confirm != "y":
@@ -643,6 +737,11 @@ def _test_verification(engine: ContentEngine) -> None:
     try:
         approved, rejected = engine.verifier.verify_pending_content()
         print(f"\nResult: {approved} approved, {rejected} rejected")
+
+        # Check for image-related rejections and offer to retry
+        if rejected > 0:
+            _check_and_offer_image_retry(engine)
+
     except KeyboardInterrupt:
         print("\n\nVerification interrupted by user.")
     except RuntimeError as e:
@@ -741,6 +840,106 @@ def _test_linkedin_publish(engine: ContentEngine) -> None:
     except Exception as e:
         print(f"\nError: {e}")
         logger.exception("LinkedIn publish test failed")
+
+
+def _test_publish_one_story(engine: ContentEngine) -> None:
+    """Test publishing by immediately publishing one approved story and verifying it."""
+    print("\n--- Test Publish One Story ---")
+    print("This will publish ONE approved story immediately to LinkedIn,")
+    print("then verify the post exists on the platform.\n")
+
+    # Check LinkedIn credentials
+    if not Config.LINKEDIN_ACCESS_TOKEN or not Config.LINKEDIN_AUTHOR_URN:
+        print("✗ LinkedIn credentials not configured.")
+        return
+
+    # Test connection first
+    print("Testing LinkedIn connection...")
+    if not engine.publisher.test_connection():
+        print("✗ LinkedIn connection failed. Check your credentials.")
+        return
+    print("✓ LinkedIn connection OK\n")
+
+    # Get approved unpublished stories
+    stories = engine.db.get_approved_unpublished_stories(limit=5)
+    if not stories:
+        print("No approved unpublished stories available.")
+        print("Run Actions 1-3 first to get stories ready for publishing.")
+        return
+
+    print(f"Available approved stories ({len(stories)}):")
+    for story in stories:
+        has_image = "✓" if story.image_path else "✗"
+        print(f"  [{story.id}] {story.title}")
+        print(f"       Image: {has_image} | Score: {story.quality_score}")
+
+    # Ask which story to publish
+    story_input = input("\nEnter story ID to publish (or 'q' to cancel): ").strip()
+    if story_input.lower() == "q" or not story_input:
+        print("Cancelled.")
+        return
+
+    try:
+        story_id = int(story_input)
+        story = next((s for s in stories if s.id == story_id), None)
+        if not story:
+            print(f"Story ID {story_id} not found in the available list.")
+            return
+    except ValueError:
+        print("Invalid input. Please enter a numeric story ID.")
+        return
+
+    # Final confirmation
+    print("\n--- About to publish ---")
+    print(f"Title: {story.title}")
+    print(f"Summary: {story.summary[:100]}...")
+    if story.image_path:
+        print(f"Image: {story.image_path}")
+
+    confirm = input("\nPublish this story NOW to LinkedIn? (y/n): ").strip().lower()
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    # Publish immediately
+    print("\n[1/3] Publishing to LinkedIn...")
+    try:
+        post_id = engine.publisher.publish_immediately(story)
+        if not post_id:
+            print("✗ Publishing failed. Check logs for details.")
+            return
+        print(f"✓ Published! Post ID: {post_id}")
+    except Exception as e:
+        print(f"✗ Publishing error: {e}")
+        logger.exception("Test publish failed")
+        return
+
+    # Wait a moment for LinkedIn to process
+    print("\n[2/3] Waiting for LinkedIn to process...")
+    import time
+
+    time.sleep(3)
+
+    # Verify the post exists
+    print("\n[3/3] Verifying post exists on LinkedIn...")
+    try:
+        exists, post_data = engine.publisher.verify_post_exists(post_id)
+        if exists:
+            print("✓ Post verified on LinkedIn!")
+            if post_data:
+                created = post_data.get("created", {}).get("time", "Unknown")
+                print(f"  Created: {created}")
+        else:
+            print(
+                "⚠ Could not verify post (may still exist - API permissions may be limited)"
+            )
+    except Exception as e:
+        print(f"⚠ Verification error: {e}")
+        print("  (Post may still have been published successfully)")
+
+    print("\n=== Test Complete ===")
+    print(f"Story {story.id} has been published to LinkedIn.")
+    print("Check your LinkedIn profile to confirm the post is visible.")
 
 
 def _show_database_stats(engine: ContentEngine) -> None:
@@ -1027,18 +1226,18 @@ def _run_unit_tests() -> None:
     print("Executing all unit tests...\n")
 
     try:
-        # Import and run tests from unit_tests module
-        from unit_tests import run_tests
+        # Import and run tests from run_tests module
+        from run_tests import main as run_tests_main
 
-        success = run_tests()
+        exit_code = run_tests_main()
 
-        if success:
+        if exit_code == 0:
             print("\n✓ All tests passed!")
         else:
             print("\n✗ Some tests failed. Review output above.")
     except ImportError as e:
         print(f"\nError importing test module: {e}")
-        print("Make sure unit_tests.py and test_framework.py are present.")
+        print("Make sure run_tests.py and test_framework.py are present.")
     except Exception as e:
         print(f"\nError running tests: {e}")
         logger.exception("Unit test execution failed")

@@ -160,6 +160,7 @@ class Database:
                     quality_justification TEXT DEFAULT '',
                     image_path TEXT,
                     verification_status TEXT DEFAULT 'pending',
+                    verification_reason TEXT,
                     publish_status TEXT DEFAULT 'unpublished',
                     scheduled_time TIMESTAMP,
                     published_time TIMESTAMP,
@@ -333,14 +334,18 @@ class Database:
             return [Story.from_row(row) for row in cursor.fetchall()]
 
     def get_stories_needing_verification(self) -> list[Story]:
-        """Get stories that need content verification."""
+        """Get stories that need content verification.
+
+        Returns all pending stories regardless of image status.
+        Stories without images will be auto-rejected during verification
+        if their quality score is too low.
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
                 SELECT * FROM stories
                 WHERE verification_status = 'pending'
-                AND image_path IS NOT NULL
                 ORDER BY quality_score DESC
                 """
             )
@@ -598,3 +603,154 @@ class Database:
             True if backup exists
         """
         return Path(self.db_name + suffix).exists()
+
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+def _create_module_tests():
+    """Create unit tests for database module."""
+    import os
+    import tempfile
+
+    from test_framework import TestSuite
+
+    suite = TestSuite("Database Tests")
+
+    def test_story_dataclass():
+        story = Story(title="Test", summary="Summary", quality_score=8)
+        assert story.title == "Test"
+        assert story.quality_score == 8
+        assert story.category == "Other"
+
+    def test_story_to_dict():
+        story = Story(
+            title="Test", summary="Summary", source_links=["http://example.com"]
+        )
+        d = story.to_dict()
+        assert d["title"] == "Test"
+        assert "http://example.com" in d["source_links"]
+
+    def test_story_from_row():
+        # Test _parse_datetime helper
+        result = _parse_datetime("2024-01-01T12:00:00")
+        assert result is not None
+        assert result.year == 2024
+        assert _parse_datetime(None) is None
+        assert _parse_datetime("invalid") is None
+
+    def test_database_init():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            Database(db_path)
+            assert os.path.exists(db_path)
+        finally:
+            os.unlink(db_path)
+
+    def test_database_add_story():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            story = Story(title="Test Story", summary="Test summary", quality_score=7)
+            story_id = db.add_story(story)
+            assert story_id is not None
+            assert story_id > 0
+        finally:
+            os.unlink(db_path)
+
+    def test_database_get_story():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            story = Story(title="Fetch Test", summary="Summary", quality_score=8)
+            story_id = db.add_story(story)
+            fetched = db.get_story(story_id)
+            assert fetched is not None
+            assert fetched.title == "Fetch Test"
+        finally:
+            os.unlink(db_path)
+
+    def test_database_get_story_by_title():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            story = Story(title="Unique Title", summary="Summary", quality_score=7)
+            db.add_story(story)
+            found = db.get_story_by_title("Unique Title")
+            assert found is not None
+            assert found.title == "Unique Title"
+            not_found = db.get_story_by_title("Nonexistent")
+            assert not_found is None
+        finally:
+            os.unlink(db_path)
+
+    def test_database_update_story():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            story = Story(title="Update Test", summary="Original", quality_score=5)
+            story_id = db.add_story(story)
+            story.id = story_id
+            story.summary = "Updated"
+            result = db.update_story(story)
+            assert result is True
+            fetched = db.get_story(story_id)
+            assert fetched is not None
+            assert fetched.summary == "Updated"
+        finally:
+            os.unlink(db_path)
+
+    def test_database_delete_story():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            story = Story(title="Delete Test", summary="Summary", quality_score=5)
+            story_id = db.add_story(story)
+            result = db.delete_story(story_id)
+            assert result is True
+            fetched = db.get_story(story_id)
+            assert fetched is None
+        finally:
+            os.unlink(db_path)
+
+    def test_database_statistics():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            stats = db.get_statistics()
+            assert "total_stories" in stats
+            assert stats["total_stories"] == 0
+        finally:
+            os.unlink(db_path)
+
+    def test_database_state():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            db.set_state("test_key", "test_value")
+            value = db.get_state("test_key")
+            assert value == "test_value"
+        finally:
+            os.unlink(db_path)
+
+    suite.add_test("Story dataclass", test_story_dataclass)
+    suite.add_test("Story to_dict", test_story_to_dict)
+    suite.add_test("Story from_row and _parse_datetime", test_story_from_row)
+    suite.add_test("Database init", test_database_init)
+    suite.add_test("Database add story", test_database_add_story)
+    suite.add_test("Database get story", test_database_get_story)
+    suite.add_test("Database get story by title", test_database_get_story_by_title)
+    suite.add_test("Database update story", test_database_update_story)
+    suite.add_test("Database delete story", test_database_delete_story)
+    suite.add_test("Database statistics", test_database_statistics)
+    suite.add_test("Database state", test_database_state)
+
+    return suite
