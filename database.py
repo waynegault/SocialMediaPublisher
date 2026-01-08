@@ -29,6 +29,7 @@ class Story:
     quality_justification: str = ""  # Reasoning for the quality score
     image_path: Optional[str] = None
     verification_status: str = "pending"  # pending, approved, rejected
+    verification_reason: Optional[str] = None  # AI's reason for approval/rejection
     publish_status: str = "unpublished"  # unpublished, scheduled, published
     scheduled_time: Optional[datetime] = None
     published_time: Optional[datetime] = None
@@ -49,6 +50,7 @@ class Story:
             "quality_justification": self.quality_justification,
             "image_path": self.image_path,
             "verification_status": self.verification_status,
+            "verification_reason": self.verification_reason,
             "publish_status": self.publish_status,
             "scheduled_time": self.scheduled_time.isoformat()
             if self.scheduled_time
@@ -85,6 +87,9 @@ class Story:
             else "",
             image_path=row["image_path"],
             verification_status=row["verification_status"],
+            verification_reason=row["verification_reason"]
+            if "verification_reason" in keys
+            else None,
             publish_status=row["publish_status"],
             scheduled_time=_parse_datetime(row["scheduled_time"]),
             published_time=_parse_datetime(row["published_time"]),
@@ -165,6 +170,7 @@ class Database:
             # Migrate existing databases: add new columns if they don't exist
             self._migrate_add_column(cursor, "category", "TEXT DEFAULT 'Other'")
             self._migrate_add_column(cursor, "quality_justification", "TEXT DEFAULT ''")
+            self._migrate_add_column(cursor, "verification_reason", "TEXT")
 
             # System state table for tracking last check date, etc.
             cursor.execute("""
@@ -262,6 +268,7 @@ class Database:
                     quality_justification = ?,
                     image_path = ?,
                     verification_status = ?,
+                    verification_reason = ?,
                     publish_status = ?,
                     scheduled_time = ?,
                     published_time = ?,
@@ -277,6 +284,7 @@ class Database:
                     story.quality_justification,
                     story.image_path,
                     story.verification_status,
+                    story.verification_reason,
                     story.publish_status,
                     story.scheduled_time,
                     story.published_time,
@@ -351,6 +359,19 @@ class Database:
                 LIMIT ?
                 """,
                 (limit,),
+            )
+            return [Story.from_row(row) for row in cursor.fetchall()]
+
+    def get_rejected_stories(self) -> list[Story]:
+        """Get stories that were rejected during verification."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM stories
+                WHERE verification_status = 'rejected'
+                ORDER BY quality_score DESC, acquire_date DESC
+                """
             )
             return [Story.from_row(row) for row in cursor.fetchall()]
 
@@ -488,6 +509,18 @@ class Database:
                 "SELECT COUNT(*) FROM stories WHERE verification_status = 'pending'"
             )
             stats["pending_verification"] = cursor.fetchone()[0]
+
+            # Stories with images ready for verification
+            cursor.execute(
+                "SELECT COUNT(*) FROM stories WHERE verification_status = 'pending' AND image_path IS NOT NULL"
+            )
+            stats["ready_for_verification"] = cursor.fetchone()[0]
+
+            # Stories needing images
+            cursor.execute(
+                "SELECT COUNT(*) FROM stories WHERE image_path IS NULL AND publish_status = 'unpublished'"
+            )
+            stats["needing_images"] = cursor.fetchone()[0]
 
             return stats
 

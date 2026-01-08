@@ -39,37 +39,52 @@ class ContentVerifier:
             logger.info("No stories pending verification")
             return (0, 0)
 
-        logger.info(f"Verifying {len(stories)} stories...")
+        total = len(stories)
+        logger.info(f"Verifying {total} stories...")
 
         approved = 0
         rejected = 0
+        skipped = 0
 
-        for story in stories:
+        for i, story in enumerate(stories, 1):
             try:
-                is_approved = self._verify_story(story)
+                logger.info(f"[{i}/{total}] Verifying: {story.title}")
+                is_approved, reason = self._verify_story(story)
 
                 if is_approved:
                     story.verification_status = "approved"
+                    story.verification_reason = reason
                     approved += 1
-                    logger.info(f"Story {story.id} APPROVED: {story.title}")
+                    logger.info(f"  ✓ APPROVED: {reason}" if reason else "  ✓ APPROVED")
                 else:
                     story.verification_status = "rejected"
+                    story.verification_reason = reason
                     rejected += 1
-                    logger.warning(f"Story {story.id} REJECTED: {story.title}")
+                    logger.warning(
+                        f"  ✗ REJECTED: {reason}" if reason else "  ✗ REJECTED"
+                    )
 
                 self.db.update_story(story)
 
+            except KeyboardInterrupt:
+                logger.warning(
+                    f"\nVerification interrupted by user at story {i}/{total}"
+                )
+                break
             except Exception as e:
-                logger.error(f"Verification failed for story {story.id}: {e}")
+                logger.error(f"  ! Error: {e}")
+                skipped += 1
                 continue
 
-        logger.info(f"Verification complete: {approved} approved, {rejected} rejected")
+        logger.info(
+            f"Verification complete: {approved} approved, {rejected} rejected, {skipped} skipped"
+        )
         return (approved, rejected)
 
-    def _verify_story(self, story: Story) -> bool:
+    def _verify_story(self, story: Story) -> tuple[bool, str]:
         """
         Verify a single story for publication suitability.
-        Returns True if approved, False if rejected.
+        Returns tuple of (is_approved, reason).
         """
         # Build verification prompt
         prompt = self._build_verification_prompt(story)
@@ -91,10 +106,12 @@ class ContentVerifier:
                 ) from e
             logger.error(f"Verification error for story {story.id}: {e}")
             # Default to rejection on error for safety
-            return False
+            return (False, f"Error during verification: {e}")
 
-    def _verify_with_image(self, story: Story, prompt: str) -> bool:
-        """Verify story content with its associated image."""
+    def _verify_with_image(self, story: Story, prompt: str) -> tuple[bool, str]:
+        """Verify story content with its associated image.
+        Returns tuple of (is_approved, reason).
+        """
         try:
             if not story.image_path:
                 return self._verify_text_only(prompt)
@@ -144,15 +161,17 @@ class ContentVerifier:
             )
             if not response.text:
                 logger.warning("Empty response from Gemini during image verification")
-                return False
+                return (False, "Empty response from API")
             return self._parse_verification_response(response.text)
 
         except Exception as e:
             logger.warning(f"Image verification failed, falling back to text: {e}")
             return self._verify_text_only(prompt)
 
-    def _verify_text_only(self, prompt: str) -> bool:
-        """Verify story content without image."""
+    def _verify_text_only(self, prompt: str) -> tuple[bool, str]:
+        """Verify story content without image.
+        Returns tuple of (is_approved, reason).
+        """
         # Use local LLM if available
         if self.local_client:
             try:
@@ -175,7 +194,7 @@ class ContentVerifier:
         )
         if not response.text:
             logger.warning("Empty response from Gemini during text verification")
-            return False
+            return (False, "Empty response from API")
         return self._parse_verification_response(response.text)
 
     def _build_verification_prompt(self, story: Story) -> str:
@@ -202,6 +221,10 @@ If an image is provided, also evaluate:
 6. IMAGE APPROPRIATENESS: Is the image professional and suitable for the story?
 7. IMAGE RELEVANCE: Does the image relate to the story topic?
 
+IMPORTANT IMAGE NOTES:
+- All images are AI-generated, so "AI generated" watermarks/tags are ACCEPTABLE and should NOT cause rejection
+- Focus on whether the image content is professional and relevant to the story
+
 DECISION RULES:
 - APPROVE only if ALL criteria are satisfactorily met
 - REJECT if ANY criteria is not met
@@ -215,23 +238,30 @@ REJECTED
 Then on a new line, provide a brief (one sentence) reason.
 """
 
-    def _parse_verification_response(self, response_text: str) -> bool:
-        """Parse the verification response to determine approval status."""
-        response = response_text.strip().upper()
+    def _parse_verification_response(self, response_text: str) -> tuple[bool, str]:
+        """Parse the verification response to determine approval status.
+        Returns tuple of (is_approved, reason).
+        """
+        lines = response_text.strip().split("\n")
+        first_line = lines[0].strip().upper()
 
-        # Check first line for decision
-        first_line = response.split("\n")[0].strip()
+        # Extract reason from second line onwards
+        reason = ""
+        if len(lines) > 1:
+            reason = " ".join(line.strip() for line in lines[1:] if line.strip())
 
         if "APPROVED" in first_line:
-            return True
+            return (True, reason)
         elif "REJECTED" in first_line:
-            return False
+            return (False, reason)
         else:
             # If unclear, default to rejection for safety
             logger.warning(f"Unclear verification response: {first_line}")
-            return False
+            return (False, f"Unclear response: {first_line}")
 
-    def force_verify_story(self, story_id: int, approved: bool) -> bool:
+    def force_verify_story(
+        self, story_id: int, approved: bool, reason: str = "Manually set by user"
+    ) -> bool:
         """
         Manually force verification status for a story.
         Returns True if successful.
@@ -241,6 +271,7 @@ Then on a new line, provide a brief (one sentence) reason.
             return False
 
         story.verification_status = "approved" if approved else "rejected"
+        story.verification_reason = reason
         return self.db.update_story(story)
 
     def get_verification_stats(self) -> dict:

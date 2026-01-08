@@ -53,7 +53,7 @@ class Scheduler:
             scheduled_stories.append(story)
             logger.info(
                 f"Scheduled story {story.id} for {scheduled_time.strftime('%Y-%m-%d %H:%M')}: "
-                f"{story.title[:50]}..."
+                f"{story.title}"
             )
 
         logger.info(f"Scheduled {len(scheduled_stories)} stories for publication")
@@ -170,6 +170,6 @@ class Scheduler:
                 if story.scheduled_time
                 else "Unknown"
             )
-            lines.append(f"  [{time_str}] {story.title[:60]}...")
+            lines.append(f"  [{time_str}] {story.title}")
 
         return "\n".join(lines)

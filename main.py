@@ -340,6 +340,7 @@ Social Media Publisher - Debug Menu
    16. Backup Database
    17. Verify Database Integrity
    18. Restore Database from Backup
+   19. Retry Rejected Stories (regenerate image + re-verify)
 
   Configuration:
    12. Show Configuration
@@ -408,6 +409,8 @@ Social Media Publisher - Debug Menu
             _verify_database(engine)
         elif choice == "18":
             _restore_database(engine)
+        elif choice == "19":
+            _retry_rejected_stories(engine)
         else:
             print("Invalid choice. Please try again.")
 
@@ -487,9 +490,8 @@ def _test_image_generation(engine: ContentEngine) -> None:
                 f"the minimum quality score of {Config.MIN_QUALITY_SCORE}."
             )
             for story in all_pending[:5]:
-                print(
-                    f"  - [{story.id}] {story.title[:50]}... (score: {story.quality_score})"
-                )
+                print(f"  - [{story.id}] {story.title}")
+                print(f"      Score: {story.quality_score}")
             print(
                 "\nYou can lower MIN_QUALITY_SCORE in your .env file to include these."
             )
@@ -503,7 +505,8 @@ def _test_image_generation(engine: ContentEngine) -> None:
         f"\nStories meeting quality threshold ({Config.MIN_QUALITY_SCORE}+): {len(stories)}"
     )
     for story in stories[:5]:  # Show first 5
-        print(f"  - [{story.id}] {story.title[:50]}... (score: {story.quality_score})")
+        print(f"  - [{story.id}] {story.title}")
+        print(f"      Score: {story.quality_score}")
     if len(stories) > 5:
         print(f"  ... and {len(stories) - 5} more")
 
@@ -570,9 +573,8 @@ def _check_and_fix_missing_images(engine: ContentEngine) -> int:
 
         if story_date >= cutoff_date:
             # Story is less than 14 days old - clear path so it can be regenerated
-            print(
-                f"  [REGENERATE] Story {story.id}: '{story.title[:40]}...' - image missing, will regenerate"
-            )
+            print(f"  [REGENERATE] Story {story.id}: image missing, will regenerate")
+            print(f"      {story.title}")
             story.image_path = None
             engine.db.update_story(story)
             regenerate_count += 1
@@ -581,8 +583,9 @@ def _check_and_fix_missing_images(engine: ContentEngine) -> int:
             # Story is 14+ days old - just clear the reference
             days_old = (datetime.now() - story_date).days
             print(
-                f"  [EXPIRED] Story {story.id}: '{story.title[:40]}...' - image missing, story is {days_old} days old"
+                f"  [EXPIRED] Story {story.id}: image missing, story is {days_old} days old"
             )
+            print(f"      {story.title}")
             story.image_path = None
             engine.db.update_story(story)
             expired_count += 1
@@ -603,19 +606,34 @@ def _test_verification(engine: ContentEngine) -> None:
     stories = engine.db.get_stories_needing_verification()
 
     if not stories:
-        # Check why none are pending
-        all_pending = engine.db.get_stories_needing_images(0)
-        if all_pending:
+        # Check why none are pending - provide helpful diagnostics
+        stats = engine.db.get_statistics()
+
+        if stats.get("total_stories", 0) == 0:
+            print("No stories in database. Search for stories first (Choice 1).")
+        elif stats.get("needing_images", 0) > 0:
             print(
-                "Stories are in the database, but they first need images generated (Choice 2)."
+                f"Found {stats.get('needing_images', 0)} stories without images. "
+                "Generate images first (Choice 2)."
+            )
+        elif (
+            stats.get("available_count", 0) > 0
+            and stats.get("ready_for_verification", 0) == 0
+        ):
+            print(
+                f"All stories have been verified. {stats.get('available_count', 0)} are approved and ready."
             )
         else:
             print("No stories are currently pending verification.")
+            print(f"  Total stories: {stats.get('total_stories', 0)}")
+            print(f"  Needing images: {stats.get('needing_images', 0)}")
+            print(f"  Ready for verification: {stats.get('ready_for_verification', 0)}")
+            print(f"  Available (approved): {stats.get('available_count', 0)}")
         return
 
     print(f"Stories pending verification: {len(stories)}")
     for story in stories[:5]:  # Show first 5
-        print(f"  - [{story.id}] {story.title[:50]}...")
+        print(f"  - [{story.id}] {story.title}")
 
     confirm = input("\nVerify these stories? (y/n): ").strip().lower()
     if confirm != "y":
@@ -625,6 +643,8 @@ def _test_verification(engine: ContentEngine) -> None:
     try:
         approved, rejected = engine.verifier.verify_pending_content()
         print(f"\nResult: {approved} approved, {rejected} rejected")
+    except KeyboardInterrupt:
+        print("\n\nVerification interrupted by user.")
     except RuntimeError as e:
         if "quota exceeded" in str(e).lower():
             print(f"\n[!] API Quota Exceeded: {e}")
@@ -708,7 +728,7 @@ def _test_linkedin_publish(engine: ContentEngine) -> None:
         return
 
     for story in due:
-        print(f"  - [{story.id}] {story.title[:50]}...")
+        print(f"  - [{story.id}] {story.title}")
 
     confirm = input("\nPublish these stories now? (y/n): ").strip().lower()
     if confirm != "y":
@@ -740,7 +760,8 @@ def _list_all_stories(engine: ContentEngine) -> None:
     with engine.db._get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, title, quality_score, verification_status, publish_status, acquire_date
+            SELECT id, title, quality_score, verification_status, verification_reason,
+                   publish_status, acquire_date, image_path
             FROM stories ORDER BY acquire_date DESC LIMIT 20
         """)
         rows = cursor.fetchall()
@@ -749,14 +770,17 @@ def _list_all_stories(engine: ContentEngine) -> None:
         print("No stories in database.")
         return
 
-    print(f"{'ID':<4} {'Score':<5} {'Verify':<10} {'Publish':<12} {'Title':<40}")
-    print("-" * 75)
     for row in rows:
-        title = row["title"][:38] + ".." if len(row["title"]) > 40 else row["title"]
+        has_image = "Yes" if row["image_path"] else "No"
+        verify_status = row["verification_status"] or "pending"
+        verify_reason = row["verification_reason"] or ""
+        print(f"\n[{row['id']}] {row['title']}")
         print(
-            f"{row['id']:<4} {row['quality_score']:<5} {row['verification_status']:<10} "
-            f"{row['publish_status']:<12} {title:<40}"
+            f"    Score: {row['quality_score']} | Verify: {verify_status} | "
+            f"Publish: {row['publish_status']} | Image: {has_image}"
         )
+        if verify_reason:
+            print(f"    Reason: {verify_reason}")
 
     if len(rows) == 20:
         print("\n(Showing first 20 stories)")
@@ -772,16 +796,115 @@ def _list_pending_stories(engine: ContentEngine) -> None:
         return
 
     for story in stories:
-        has_image = "✓" if story.image_path else "✗"
-        print(
-            f"  [{story.id}] {has_image} {story.title[:50]}... (score: {story.quality_score})"
-        )
+        has_image = "Yes" if story.image_path else "No"
+        print(f"\n[{story.id}] {story.title}")
+        print(f"    Score: {story.quality_score} | Image: {has_image}")
 
 
 def _list_scheduled_stories(engine: ContentEngine) -> None:
     """List scheduled stories."""
     print("\n--- Scheduled Stories ---")
     print(engine.scheduler.get_schedule_summary())
+
+
+def _retry_rejected_stories(engine: ContentEngine) -> None:
+    """Retry rejected stories by regenerating images and re-verifying."""
+    print("\n--- Retry Rejected Stories ---")
+
+    rejected = engine.db.get_rejected_stories()
+    if not rejected:
+        print("No rejected stories found.")
+        return
+
+    print(f"Found {len(rejected)} rejected stories:\n")
+    for story in rejected:
+        print(f"[{story.id}] {story.title}")
+        print(f"    Reason: {story.verification_reason or 'Unknown'}")
+        print()
+
+    # Ask user which stories to retry
+    story_input = (
+        input(
+            "Enter story IDs to retry (comma-separated), 'all' for all, or 'q' to cancel: "
+        )
+        .strip()
+        .lower()
+    )
+
+    if story_input == "q" or not story_input:
+        print("Cancelled.")
+        return
+
+    # Determine which stories to retry
+    if story_input == "all":
+        stories_to_retry = rejected
+    else:
+        try:
+            ids_to_retry = [int(x.strip()) for x in story_input.split(",")]
+            stories_to_retry = [s for s in rejected if s.id in ids_to_retry]
+            if not stories_to_retry:
+                print("No matching stories found.")
+                return
+        except ValueError:
+            print("Invalid input. Please enter comma-separated IDs or 'all'.")
+            return
+
+    print(f"\nRetrying {len(stories_to_retry)} story/stories...")
+
+    success_count = 0
+    for story in stories_to_retry:
+        print(f"\n--- Processing story {story.id}: {story.title} ---")
+
+        # Step 1: Delete old image if exists
+        if story.image_path:
+            old_image = Path(story.image_path)
+            if old_image.exists():
+                try:
+                    old_image.unlink()
+                    print(f"  Deleted old image: {story.image_path}")
+                except Exception as e:
+                    print(f"  Warning: Could not delete old image: {e}")
+
+        # Step 2: Clear image path and reset status
+        story.image_path = None
+        story.verification_status = "pending"
+        story.verification_reason = None
+        engine.db.update_story(story)
+
+        # Step 3: Generate new image
+        print("  Generating new image...")
+        try:
+            image_path = engine.image_generator._generate_image_for_story(story)
+            if image_path:
+                story.image_path = image_path
+                engine.db.update_story(story)
+                print(f"  ✓ New image generated: {image_path}")
+            else:
+                print("  ✗ Failed to generate new image")
+                continue
+        except Exception as e:
+            print(f"  ✗ Image generation error: {e}")
+            continue
+
+        # Step 4: Re-verify
+        print("  Re-verifying...")
+        try:
+            is_approved, reason = engine.verifier._verify_story(story)
+            story.verification_status = "approved" if is_approved else "rejected"
+            story.verification_reason = reason
+            engine.db.update_story(story)
+
+            if is_approved:
+                print(f"  ✓ APPROVED: {reason}")
+                success_count += 1
+            else:
+                print(f"  ✗ REJECTED again: {reason}")
+        except Exception as e:
+            print(f"  ✗ Verification error: {e}")
+
+    print(
+        f"\n=== Summary: {success_count}/{len(stories_to_retry)} stories now approved ==="
+    )
 
 
 def _cleanup_old_stories(engine: ContentEngine) -> None:

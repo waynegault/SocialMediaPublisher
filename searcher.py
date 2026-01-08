@@ -974,7 +974,7 @@ IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real UR
                     continue
 
                 self._report_progress(
-                    f"Processing story {i + 1}/{len(stories_data)}: {title[:50]}..."
+                    f"Processing story {i + 1}/{len(stories_data)}: {title}"
                 )
 
                 # Get sources from either 'sources' or 'source_links'
@@ -1012,7 +1012,7 @@ IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real UR
                     if similarity >= similarity_threshold:
                         logger.info(
                             f"Semantic duplicate detected (similarity={similarity:.2f}): "
-                            f"'{title[:40]}...' matches '{existing_title[:40]}...'"
+                            f"'{title}' matches '{existing_title}'"
                         )
                         # Merge sources into the existing story
                         existing_story = self.db.get_story(existing_id)
