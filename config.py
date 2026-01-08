@@ -106,12 +106,13 @@ class Config:
     HF_PREFER_IF_CONFIGURED: bool = _get_bool("HF_PREFER_IF_CONFIGURED", True)
 
     # --- Image Style Settings ---
-    # Style directive for image generation prompts - professional industrial photography
+    # Style directive for image generation prompts - eye-catching professional photography
     IMAGE_STYLE: str = _get_str(
         "IMAGE_STYLE",
-        "professional industrial photography featuring an attractive female engineer or scientist, "
-        "photorealistic, documentary style, clean corporate aesthetic, neutral color palette, "
-        "realistic lighting, sharp focus, high resolution, suitable for engineering trade publication",
+        "eye-catching professional industrial photography, dramatic lighting, bold composition, "
+        "striking visual impact, confident professional woman as focal point, "
+        "cinematic quality, vivid colors, dynamic angle, high contrast, sharp focus, "
+        "attention-grabbing, magazine cover quality, photorealistic",
     )
     # Aspect ratio for generated images (options: 1:1, 16:9, 9:16, 4:3, 3:4)
     IMAGE_ASPECT_RATIO: str = _get_str("IMAGE_ASPECT_RATIO", "16:9")
@@ -121,62 +122,61 @@ class Config:
     # Placeholders: {story_title}, {story_summary}, {image_style}
     IMAGE_REFINEMENT_PROMPT: str = _get_str(
         "IMAGE_REFINEMENT_PROMPT",
-        """You are creating an image for a professional chemical engineering publication (like Chemical Engineering Magazine or AIChE publications).
+        """You are creating an EYE-CATCHING image for a professional chemical engineering publication.
 
 STORY CONTEXT:
 - Title: {story_title}
 - Summary: {story_summary}
 
-YOUR TASK: Create an image prompt for a REALISTIC, PROFESSIONAL photograph that would appear in an engineering trade journal.
+YOUR TASK: Create an image prompt for a VISUALLY STRIKING, ATTENTION-GRABBING photograph.
 
-MANDATORY: Every image MUST feature an attractive professional woman (engineer, scientist, technician, or executive) as the main human subject. She should be appropriately dressed for the industrial/lab setting and engaged with the equipment or process.
+MANDATORY: Feature a confident, professional woman (engineer, scientist, or executive) as the focal point. She should command attention through her presence, expression, and positioning.
 
 CRITICAL REQUIREMENTS - THE IMAGE MUST BE:
-1. PHOTOREALISTIC - like a real photograph, NOT artistic, NOT fantasy, NOT stylized
-2. PROFESSIONAL - suitable for a serious engineering publication
-3. TECHNICALLY ACCURATE - showing real equipment, processes, or concepts correctly
-4. CREDIBLE - something a chemical engineer would recognize as realistic
-5. FEATURE AN ATTRACTIVE WOMAN - as engineer, scientist, technician, or executive
+1. ATTENTION-GRABBING - stops scrolling, makes viewers look twice
+2. DRAMATIC - bold lighting, strong composition, visual impact
+3. PROFESSIONAL - suitable for a business publication
+4. PHOTOREALISTIC - like a high-end magazine photograph
+5. FEATURE A CONFIDENT WOMAN - as the commanding focal point
 
-SUBJECT SELECTION - ALWAYS INCLUDE AN ATTRACTIVE WOMAN:
-- Industrial equipment: attractive female engineer inspecting reactors, distillation columns, heat exchangers
-- Laboratory settings: attractive female scientist with analytical instruments, lab glassware
-- Manufacturing facilities: attractive female process engineer at chemical plants, refineries
-- Control rooms: attractive female operator at control panels, SCADA screens, process monitoring
-- Executive settings: attractive female executive or manager reviewing plans, in meetings
+TECHNIQUES FOR VISUAL IMPACT:
+- Dramatic lighting: golden hour, rim lighting, high contrast, spotlight effects
+- Bold composition: rule of thirds, leading lines, dramatic angles (low angle = power)
+- Scale contrast: woman against massive industrial equipment
+- Color pop: vibrant safety gear, colorful reactions, striking backgrounds
+- Confident poses: hands on hips, examining equipment, directing team
+- Dynamic action: walking purposefully, pointing at data, engaged in work
+
+SUBJECT IDEAS - WOMAN AS FOCAL POINT:
+- Confident engineer before massive reactor or distillation column (scale contrast)
+- Scientist in lab with colorful chemical reactions (color pop)
+- Executive in control room with glowing screens (dramatic lighting)
+- Process engineer on elevated platform overlooking plant (power angle)
+- Team leader directing workers at industrial site (leadership presence)
 
 WHAT TO AVOID:
-- Images without a woman present
+- Boring, static compositions
+- Flat lighting
+- Woman as background element (she must be the STAR)
 - Fantasy or sci-fi elements
-- Artistic interpretations or abstract concepts
-- Glowing/magical effects
-- Futuristic imaginary technology
-- Cartoonish or illustrated styles
-- Anything that would look silly to a practicing chemical engineer
+- Cartoonish styles
 
 STYLE REQUIREMENTS:
 {image_style}
 
-PHOTOGRAPHY SPECS:
-- Professional industrial photography style
-- Clean, well-lit scenes (industrial facility lighting or natural daylight)
-- Sharp focus, high resolution
-- Neutral, realistic colors
-- Documentary/journalistic aesthetic
-- MUST feature an attractive professional woman as main subject
-
 OUTPUT: Write ONLY the image prompt. No explanations. Maximum 100 words.
-Format: "Attractive female [role] [action], [specific industrial subject], [realistic setting], professional industrial photograph, photorealistic, sharp focus, natural lighting\"""",
+Focus on: dramatic lighting, bold composition, confident woman as focal point, visual impact.""",
     )
 
     # Fallback image prompt template when LLM refinement fails
     # Placeholders: {story_title}
     IMAGE_FALLBACK_PROMPT: str = _get_str(
         "IMAGE_FALLBACK_PROMPT",
-        "Professional industrial photograph for chemical engineering publication: "
-        "{story_title}. Attractive female chemical engineer in industrial facility "
-        "or laboratory setting, photorealistic, documentary style, natural lighting, "
-        "sharp focus, neutral colors, suitable for engineering trade journal",
+        "Eye-catching professional photograph: {story_title}. "
+        "Confident female engineer as focal point, dramatic rim lighting, "
+        "bold composition, low angle power shot, industrial facility background, "
+        "vivid colors, high contrast, magazine cover quality, photorealistic, "
+        "attention-grabbing, cinematic",
     )
 
     # Search instruction prompt - the system prompt for story search
