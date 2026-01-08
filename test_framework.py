@@ -117,7 +117,8 @@ class MockLogger:
     def __init__(self) -> None:
         self.messages: list[dict[str, Any]] = []
 
-    def _log(self, level: str, msg: str, *args: Any, **_kwargs: Any) -> None:
+    def _log(self, level: str, msg: str, *args: Any, **kwargs: Any) -> None:
+        del kwargs  # Unused but accepted for compatibility
         formatted = msg % args if args else msg
         self.messages.append({"level": level, "message": formatted})
 

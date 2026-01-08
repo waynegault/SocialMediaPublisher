@@ -34,6 +34,11 @@ class Story:
     scheduled_time: Optional[datetime] = None
     published_time: Optional[datetime] = None
     linkedin_post_id: Optional[str] = None
+    linkedin_post_url: Optional[str] = None
+    # Hashtags for LinkedIn posts (max 3)
+    hashtags: list[str] = field(default_factory=list)
+    # LinkedIn mentions: list of {"name": "...", "urn": "urn:li:person/organization:...", "type": "person/organization"}
+    linkedin_mentions: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Convert story to dictionary."""
@@ -59,6 +64,9 @@ class Story:
             if self.published_time
             else None,
             "linkedin_post_id": self.linkedin_post_id,
+            "linkedin_post_url": self.linkedin_post_url,
+            "hashtags": self.hashtags,
+            "linkedin_mentions": self.linkedin_mentions,
         }
 
     @classmethod
@@ -73,6 +81,22 @@ class Story:
 
         # Handle optional columns that may not exist in older databases
         keys = row.keys()
+
+        # Parse hashtags (JSON array)
+        hashtags = []
+        if "hashtags" in keys and row["hashtags"]:
+            try:
+                hashtags = json.loads(row["hashtags"])
+            except json.JSONDecodeError:
+                hashtags = []
+
+        # Parse linkedin_mentions (JSON array of objects)
+        linkedin_mentions = []
+        if "linkedin_mentions" in keys and row["linkedin_mentions"]:
+            try:
+                linkedin_mentions = json.loads(row["linkedin_mentions"])
+            except json.JSONDecodeError:
+                linkedin_mentions = []
 
         return cls(
             id=row["id"],
@@ -94,6 +118,11 @@ class Story:
             scheduled_time=_parse_datetime(row["scheduled_time"]),
             published_time=_parse_datetime(row["published_time"]),
             linkedin_post_id=row["linkedin_post_id"],
+            linkedin_post_url=row["linkedin_post_url"]
+            if "linkedin_post_url" in keys
+            else None,
+            hashtags=hashtags,
+            linkedin_mentions=linkedin_mentions,
         )
 
 
@@ -172,6 +201,9 @@ class Database:
             self._migrate_add_column(cursor, "category", "TEXT DEFAULT 'Other'")
             self._migrate_add_column(cursor, "quality_justification", "TEXT DEFAULT ''")
             self._migrate_add_column(cursor, "verification_reason", "TEXT")
+            self._migrate_add_column(cursor, "linkedin_post_url", "TEXT")
+            self._migrate_add_column(cursor, "hashtags", "TEXT DEFAULT '[]'")
+            self._migrate_add_column(cursor, "linkedin_mentions", "TEXT DEFAULT '[]'")
 
             # System state table for tracking last check date, etc.
             cursor.execute("""
@@ -208,8 +240,8 @@ class Database:
                 INSERT INTO stories
                 (title, summary, source_links, acquire_date, quality_score,
                  category, quality_justification, image_path, verification_status,
-                 publish_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 publish_status, hashtags, linkedin_mentions)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     story.title,
@@ -222,6 +254,8 @@ class Database:
                     story.image_path,
                     story.verification_status,
                     story.publish_status,
+                    json.dumps(story.hashtags),
+                    json.dumps(story.linkedin_mentions),
                 ),
             )
             story_id = cursor.lastrowid or 0
@@ -273,7 +307,10 @@ class Database:
                     publish_status = ?,
                     scheduled_time = ?,
                     published_time = ?,
-                    linkedin_post_id = ?
+                    linkedin_post_id = ?,
+                    linkedin_post_url = ?,
+                    hashtags = ?,
+                    linkedin_mentions = ?
                 WHERE id = ?
                 """,
                 (
@@ -290,6 +327,9 @@ class Database:
                     story.scheduled_time,
                     story.published_time,
                     story.linkedin_post_id,
+                    story.linkedin_post_url,
+                    json.dumps(story.hashtags),
+                    json.dumps(story.linkedin_mentions),
                     story.id,
                 ),
             )
@@ -608,7 +648,7 @@ class Database:
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     """Create unit tests for database module."""
     import os
     import tempfile

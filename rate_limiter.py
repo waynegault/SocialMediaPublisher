@@ -247,7 +247,7 @@ class AdaptiveRateLimiter:
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     """Create unit tests for rate_limiter module."""
     from test_framework import TestSuite, suppress_logging
 

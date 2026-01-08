@@ -220,44 +220,12 @@ class ContentVerifier:
 
     def _build_verification_prompt(self, story: Story) -> str:
         """Build the verification prompt for a story."""
-        return f"""
-You are a strict editorial standards board for a professional social media publication.
-
-ORIGINAL SELECTION CRITERIA:
-"{Config.SEARCH_PROMPT}"
-
-STORY TO EVALUATE:
-Title: {story.title}
-Summary: {story.summary}
-Sources: {", ".join(story.source_links[:3])}
-
-EVALUATION CRITERIA:
-1. RELEVANCE: Does this story genuinely match the original selection criteria?
-2. PROFESSIONALISM: Is the content written in a professional, objective tone?
-3. DECENCY: Is the content appropriate for all professional audiences?
-4. ACCURACY: Does the summary appear factual and well-sourced?
-5. QUALITY: Is this content worth sharing on a professional social media account?
-
-If an image is provided, also evaluate:
-6. IMAGE APPROPRIATENESS: Is the image professional and suitable for the story?
-7. IMAGE RELEVANCE: Does the image relate to the story topic?
-
-IMPORTANT IMAGE NOTES:
-- All images are AI-generated, so "AI generated" watermarks/tags are ACCEPTABLE and should NOT cause rejection
-- Focus on whether the image content is professional and relevant to the story
-
-DECISION RULES:
-- APPROVE only if ALL criteria are satisfactorily met
-- REJECT if ANY criteria is not met
-- When in doubt, REJECT
-
-Respond with ONLY one of these exact words:
-APPROVED
-or
-REJECTED
-
-Then on a new line, provide a brief (one sentence) reason.
-"""
+        return Config.VERIFICATION_PROMPT.format(
+            search_prompt=Config.SEARCH_PROMPT,
+            story_title=story.title,
+            story_summary=story.summary,
+            story_sources=", ".join(story.source_links[:3]),
+        )
 
     def _parse_verification_response(self, response_text: str) -> tuple[bool, str]:
         """Parse the verification response to determine approval status.
@@ -307,7 +275,7 @@ Then on a new line, provide a brief (one sentence) reason.
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     """Create unit tests for verifier module."""
     import os
     import tempfile

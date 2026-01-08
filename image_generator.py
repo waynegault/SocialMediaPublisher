@@ -159,7 +159,7 @@ class ImageGenerator:
                     # API requires "block_low_and_above"
                     safety_filter_level=types.SafetyFilterLevel.BLOCK_LOW_AND_ABOVE,
                     person_generation=types.PersonGeneration.ALLOW_ADULT,
-                    aspect_ratio="16:9",
+                    aspect_ratio=Config.IMAGE_ASPECT_RATIO,
                 ),
             )
 
@@ -294,58 +294,12 @@ class ImageGenerator:
 
     def _build_image_prompt(self, story: Story) -> str:
         """Build a prompt for image generation using an LLM for refinement."""
-        context = f"""
-Story Title: {story.title}
-Summary: {story.summary}
-"""
-
-        # Get the configurable image style
-        image_style = Config.IMAGE_STYLE
-
-        # Professional prompt for industrial/engineering trade publications
-        refinement_prompt = f"""
-You are creating an image for a professional chemical engineering trade publication (like Chemical Engineering Magazine or AIChE publications).
-
-STORY CONTEXT:
-{context}
-
-YOUR TASK: Create an image prompt for a REALISTIC, PROFESSIONAL photograph that would appear in an engineering trade journal.
-
-CRITICAL REQUIREMENTS - THE IMAGE MUST BE:
-1. PHOTOREALISTIC - like a real photograph, NOT artistic, NOT fantasy, NOT stylized
-2. PROFESSIONAL - suitable for a serious engineering publication
-3. TECHNICALLY ACCURATE - showing real equipment, processes, or concepts correctly
-4. CREDIBLE - something a chemical engineer would recognize as realistic
-
-SUBJECT SELECTION (choose the most appropriate):
-- Industrial equipment: reactors, distillation columns, heat exchangers, piping systems, control rooms
-- Laboratory settings: analytical instruments, lab glassware, researchers in lab coats
-- Manufacturing facilities: chemical plants, refineries, pharmaceutical production
-- Process technology: flow diagrams visualized as real equipment, process units
-- Materials and products: chemicals, polymers, catalysts, finished products
-- Data/monitoring: control panels, SCADA screens, process monitoring (if story is about digitalization)
-
-WHAT TO AVOID:
-- Fantasy or sci-fi elements
-- Artistic interpretations or abstract concepts
-- Glowing/magical effects
-- Futuristic imaginary technology
-- Cartoonish or illustrated styles
-- Anything that would look silly to a practicing engineer
-
-STYLE REQUIREMENTS:
-{image_style}
-
-PHOTOGRAPHY SPECS:
-- Professional industrial photography style
-- Clean, well-lit scenes (industrial facility lighting or natural daylight)
-- Sharp focus, high resolution
-- Neutral, realistic colors
-- Documentary/journalistic aesthetic
-
-OUTPUT: Write ONLY the image prompt. No explanations. Maximum 100 words.
-Format: "[Specific industrial subject], [realistic setting], professional industrial photograph, photorealistic, sharp focus, natural lighting"
-"""
+        # Build refinement prompt from config template
+        refinement_prompt = Config.IMAGE_REFINEMENT_PROMPT.format(
+            story_title=story.title,
+            story_summary=story.summary,
+            image_style=Config.IMAGE_STYLE,
+        )
 
         try:
             if self.local_client:
@@ -369,13 +323,8 @@ Format: "[Specific industrial subject], [realistic setting], professional indust
         except Exception as e:
             logger.warning(f"Prompt refinement failed: {e}. Using base prompt.")
 
-        # Ultimate fallback - professional industrial photography prompt
-        return (
-            f"Professional industrial photograph for chemical engineering publication: "
-            f"{story.title[:60]}. Industrial facility or laboratory setting, "
-            f"photorealistic, documentary style, natural lighting, sharp focus, "
-            f"neutral colors, suitable for engineering trade journal"
-        )
+        # Ultimate fallback - use configurable fallback template
+        return Config.IMAGE_FALLBACK_PROMPT.format(story_title=story.title[:60])
 
     def get_stories_with_images_count(self) -> int:
         """Get count of stories that have images."""
@@ -414,7 +363,7 @@ Format: "[Specific industrial subject], [realistic setting], professional indust
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     """Create unit tests for image_generator module."""
     import os
     import tempfile
