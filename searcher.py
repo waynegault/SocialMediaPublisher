@@ -641,14 +641,49 @@ class StorySearcher:
                     f"'{story_title[:40]}...'"
                 )
             else:
-                # No confident matches - leave sources as-is or empty
-                logger.warning(
-                    f"No confident URL matches for story: '{story_title[:50]}'. "
-                    "Sources may be unreliable."
-                )
-                # Keep any LLM-provided sources as fallback
-                if "sources" not in story:
-                    story["sources"] = []
+                # No confident matches above threshold
+                # Try to find best available unassigned URL as fallback
+                best_fallback: tuple[str, float] | None = None
+                for source in grounding_sources:
+                    url = source.get("uri", "")
+                    source_title = source.get("title", "")
+                    if not url or url in assigned_urls:
+                        continue
+                    # Skip redirect URLs
+                    if "vertexaisearch.cloud.google.com" in url:
+                        continue
+                    score = calculate_url_story_match_score(
+                        story_title, story_summary, url, source_title
+                    )
+                    if best_fallback is None or score > best_fallback[1]:
+                        best_fallback = (url, score)
+
+                if best_fallback:
+                    # Use best available URL even if below threshold
+                    story["sources"] = [best_fallback[0]]
+                    assigned_urls.add(best_fallback[0])
+                    logger.warning(
+                        f"Using fallback URL for '{story_title[:40]}' "
+                        f"(score: {best_fallback[1]:.2f}, below threshold)"
+                    )
+                else:
+                    # No grounding URLs available - filter redirect URLs from LLM sources
+                    existing_sources = story.get("sources", [])
+                    filtered_sources = [
+                        url
+                        for url in existing_sources
+                        if "vertexaisearch.cloud.google.com" not in url
+                    ]
+                    if len(filtered_sources) < len(existing_sources):
+                        logger.info(
+                            f"Removed {len(existing_sources) - len(filtered_sources)} "
+                            f"redirect URL(s) from story sources"
+                        )
+                    story["sources"] = filtered_sources
+                    if not filtered_sources:
+                        logger.warning(
+                            f"No source URL available for story: '{story_title[:50]}'"
+                        )
 
         # Log unmatched URLs for review
         for source in grounding_sources:
@@ -681,7 +716,7 @@ class StorySearcher:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a search query optimizer. Convert long requests into 3-5 keyword search terms.",
+                        "content": Config.SEARCH_DISTILL_PROMPT,
                     },
                     {
                         "role": "user",
@@ -855,51 +890,13 @@ class StorySearcher:
         )
         max_stories = Config.MAX_STORIES_PER_SEARCH
         author_name = Config.LINKEDIN_AUTHOR_NAME or "the LinkedIn profile owner"
-        prompt = f"""
-You are a news curator writing for {author_name}'s LinkedIn profile. I have found the following search results for the query: "{search_prompt}"
-
-SEARCH RESULTS:
-{json.dumps(search_results, indent=2)}
-
-TASK:
-1. Select up to {max_stories} of the most relevant and interesting stories.
-2. For each story, provide:
-   - title: A catchy headline
-   - summary: A {summary_words}-word summary written in FIRST PERSON as if {author_name} is sharing their perspective
-   - sources: A list containing the original link
-   - category: One of: Technology, Business, Science, AI, Other
-   - quality_score: A score from 1-10 based on relevance and significance
-   - quality_justification: Brief explanation of the score
-   - hashtags: Array of 1-3 relevant hashtags (without # symbol)
-
-WRITING STYLE FOR SUMMARIES:
-- Write in first person (use "I", "my", "I've found", "I'm excited about", etc.)
-- Sound like a professional sharing industry insights with their network
-- Be conversational but authoritative
-- Example: "I've been following this development closely, and I think it represents..."
-
-HASHTAG GUIDELINES:
-- Use 1-3 relevant, professional hashtags per story
-- CamelCase for multi-word hashtags (e.g., ChemicalEngineering, ProcessOptimization)
-
-Return the results as a JSON object with a "stories" key containing an array of story objects.
-Example:
-{{
-  "stories": [
-    {{
-      "title": "Example Story",
-      "summary": "I found this fascinating development... [first-person summary]",
-      "sources": ["https://example.com"],
-      "category": "Technology",
-      "quality_score": 8,
-      "quality_justification": "Highly relevant, reputable source",
-      "hashtags": ["ChemicalEngineering", "Innovation"]
-    }}
-  ]
-}}
-
-Return ONLY the JSON object. Write ALL summaries in first person.
-"""
+        prompt = Config.LOCAL_LLM_SEARCH_PROMPT.format(
+            author_name=author_name,
+            search_prompt=search_prompt,
+            search_results=json.dumps(search_results, indent=2),
+            max_stories=max_stories,
+            summary_words=summary_words,
+        )
 
         try:
             response = self.local_client.chat.completions.create(
@@ -1136,6 +1133,18 @@ Return ONLY the JSON object. Write ALL summaries in first person.
 
                 # Get sources from either 'sources' or 'source_links'
                 sources = data.get("sources") or data.get("source_links") or []
+
+                # Always filter out redirect URLs (they should have been resolved earlier)
+                original_count = len(sources)
+                sources = [
+                    url
+                    for url in sources
+                    if "vertexaisearch.cloud.google.com" not in url
+                ]
+                if len(sources) < original_count:
+                    logger.debug(
+                        f"Filtered {original_count - len(sources)} redirect URLs from sources"
+                    )
 
                 # Validate URLs if enabled
                 if Config.VALIDATE_SOURCE_URLS and sources:
@@ -1391,31 +1400,13 @@ Return ONLY the JSON object. Write ALL summaries in first person.
 
         max_stories = Config.MAX_STORIES_PER_SEARCH
         author_name = Config.LINKEDIN_AUTHOR_NAME or "the LinkedIn profile owner"
-        prompt = f"""
-You are a news curator writing for {author_name}'s LinkedIn profile. I have found the following search results for: "{search_prompt}"
-
-SEARCH RESULTS:
-{json.dumps(search_results, indent=2)}
-
-TASK: Select up to {max_stories} of the BEST stories and provide for each:
-- title: A clear, engaging headline based on the search result
-- summary: {summary_words} words max, written in FIRST PERSON as if {author_name} is sharing their perspective
-- sources: Array containing ONLY the exact "link" URL from the search result above
-- category: One of: Technology, Business, Science, AI, Other
-- quality_score: 1-10 rating
-- quality_justification: Brief explanation of the score
-- hashtags: Array of 1-3 relevant hashtags (without # symbol, e.g., ["ChemicalEngineering"])
-
-WRITING STYLE FOR SUMMARIES:
-- Write in first person (use "I", "my", "I've found", "I'm excited about", etc.)
-- Sound like a professional sharing industry insights with their network
-- Be conversational but authoritative
-
-CRITICAL: For the "sources" field, you MUST use the EXACT "link" URL from the search
-results provided above. Do NOT invent, modify, or guess URLs. Copy the link exactly.
-
-Return JSON: {{"stories": [...]}}. Write ALL summaries in first person. Include hashtags.
-"""
+        prompt = Config.LOCAL_LLM_SEARCH_PROMPT.format(
+            author_name=author_name,
+            search_prompt=search_prompt,
+            search_results=json.dumps(search_results, indent=2),
+            max_stories=max_stories,
+            summary_words=summary_words,
+        )
 
         try:
             response = self.local_client.chat.completions.create(
@@ -1503,13 +1494,9 @@ Return JSON: {{"stories": [...]}}. Write ALL summaries in first person. Include 
         Attempt to repair malformed JSON using an LLM.
         This is a fallback when initial parsing fails.
         """
-        repair_prompt = f"""
-The following JSON is malformed. Please fix it and return ONLY the corrected JSON:
-
-{malformed_json[:3000]}
-
-Return ONLY valid JSON, no explanation.
-"""
+        repair_prompt = Config.JSON_REPAIR_PROMPT.format(
+            malformed_json=malformed_json[:3000]
+        )
 
         try:
             if self.local_client:
