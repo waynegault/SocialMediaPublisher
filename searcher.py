@@ -641,14 +641,24 @@ class StorySearcher:
                     f"'{story_title[:40]}...'"
                 )
             else:
-                # No confident matches - leave sources as-is or empty
+                # No confident matches - filter out redirect URLs from LLM sources
                 logger.warning(
                     f"No confident URL matches for story: '{story_title[:50]}'. "
-                    "Sources may be unreliable."
+                    "Filtering redirect URLs."
                 )
-                # Keep any LLM-provided sources as fallback
-                if "sources" not in story:
-                    story["sources"] = []
+                # Filter out Vertex AI redirect URLs from any LLM-provided sources
+                existing_sources = story.get("sources", [])
+                filtered_sources = [
+                    url
+                    for url in existing_sources
+                    if "vertexaisearch.cloud.google.com" not in url
+                ]
+                if len(filtered_sources) < len(existing_sources):
+                    logger.info(
+                        f"Removed {len(existing_sources) - len(filtered_sources)} "
+                        f"redirect URL(s) from story sources"
+                    )
+                story["sources"] = filtered_sources
 
         # Log unmatched URLs for review
         for source in grounding_sources:
@@ -1098,6 +1108,18 @@ class StorySearcher:
 
                 # Get sources from either 'sources' or 'source_links'
                 sources = data.get("sources") or data.get("source_links") or []
+
+                # Always filter out redirect URLs (they should have been resolved earlier)
+                original_count = len(sources)
+                sources = [
+                    url
+                    for url in sources
+                    if "vertexaisearch.cloud.google.com" not in url
+                ]
+                if len(sources) < original_count:
+                    logger.debug(
+                        f"Filtered {original_count - len(sources)} redirect URLs from sources"
+                    )
 
                 # Validate URLs if enabled
                 if Config.VALIDATE_SOURCE_URLS and sources:
