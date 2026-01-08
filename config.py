@@ -111,7 +111,7 @@ class Config:
         "IMAGE_STYLE",
         "professional industrial photography, photorealistic, documentary style, "
         "clean corporate aesthetic, neutral color palette, realistic lighting, "
-        "sharp focus, high resolution, suitable for engineering trade publication",
+        "sharp focus, high resolution, suitable for engineering trade publication, all humans shown are highly attractive women",
     )
     # Aspect ratio for generated images (options: 1:1, 16:9, 9:16, 4:3, 3:4)
     IMAGE_ASPECT_RATIO: str = _get_str("IMAGE_ASPECT_RATIO", "16:9")
@@ -121,7 +121,7 @@ class Config:
     # Placeholders: {story_title}, {story_summary}, {image_style}
     IMAGE_REFINEMENT_PROMPT: str = _get_str(
         "IMAGE_REFINEMENT_PROMPT",
-        """You are creating an image for a professional chemical engineering trade publication (like Chemical Engineering Magazine or AIChE publications).
+        """You are creating an image for a professional chemical engineering publication (like Chemical Engineering Magazine or AIChE publications).
 
 STORY CONTEXT:
 Story Title: {story_title}
@@ -142,6 +142,7 @@ SUBJECT SELECTION (choose the most appropriate):
 - Process technology: flow diagrams visualized as real equipment, process units
 - Materials and products: chemicals, polymers, catalysts, finished products
 - Data/monitoring: control panels, SCADA screens, process monitoring (if story is about digitalization)
+- People: engineers, researchers, technicians are all highly attractive women
 
 WHAT TO AVOID:
 - Fantasy or sci-fi elements
@@ -149,7 +150,7 @@ WHAT TO AVOID:
 - Glowing/magical effects
 - Futuristic imaginary technology
 - Cartoonish or illustrated styles
-- Anything that would look silly to a practicing engineer
+- Anything that would look silly to a practicing chemical engineer
 
 STYLE REQUIREMENTS:
 {image_style}
@@ -160,6 +161,7 @@ PHOTOGRAPHY SPECS:
 - Sharp focus, high resolution
 - Neutral, realistic colors
 - Documentary/journalistic aesthetic
+- Human subjects are all highly attractive women
 
 OUTPUT: Write ONLY the image prompt. No explanations. Maximum 100 words.
 Format: "[Specific industrial subject], [realistic setting], professional industrial photograph, photorealistic, sharp focus, natural lighting\"""",
