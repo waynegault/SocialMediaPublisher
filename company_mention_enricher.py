@@ -6,7 +6,6 @@ it defaults to NO_COMPANY_MENTION.
 """
 
 import logging
-from pathlib import Path
 
 from google import genai  # type: ignore
 from openai import OpenAI
@@ -85,9 +84,7 @@ class CompanyMentionEnricher:
                 skipped += 1
                 continue
 
-        logger.info(
-            f"Enrichment complete: {enriched} enriched, {skipped} skipped"
-        )
+        logger.info(f"Enrichment complete: {enriched} enriched, {skipped} skipped")
         return (enriched, skipped)
 
     def _enrich_story(self, story: Story) -> tuple[str, str]:
@@ -133,9 +130,7 @@ class CompanyMentionEnricher:
                 if content:
                     return content.strip()
             except Exception as e:
-                logger.warning(
-                    f"Local enrichment failed: {e}. Falling back to Gemini."
-                )
+                logger.warning(f"Local enrichment failed: {e}. Falling back to Gemini.")
 
         # Fallback to Gemini
         response = self.client.models.generate_content(
@@ -148,7 +143,11 @@ class CompanyMentionEnricher:
 
     def _build_enrichment_prompt(self, story: Story) -> str:
         """Build the enrichment prompt for a story."""
-        sources_str = ", ".join(story.source_links[:5]) if story.source_links else "No sources provided"
+        sources_str = (
+            ", ".join(story.source_links[:5])
+            if story.source_links
+            else "No sources provided"
+        )
         return Config.COMPANY_MENTION_PROMPT.format(
             story_title=story.title,
             story_summary=story.summary,
@@ -185,7 +184,7 @@ class CompanyMentionEnricher:
             return NO_COMPANY_MENTION
 
         # Ensure it ends with proper punctuation
-        if not mention.endswith((".","!","?")):
+        if not mention.endswith((".", "!", "?")):
             # If it doesn't end with punctuation, check if it looks like a sentence
             # Default to rejection if ambiguous
             logger.warning(f"Invalid mention (no ending punctuation): {mention}")
@@ -193,7 +192,7 @@ class CompanyMentionEnricher:
 
         # Check for multiple sentences (more than one . ! or ?)
         # Count sentence-ending punctuation
-        sentence_count = mention.count('.') + mention.count('!') + mention.count('?')
+        sentence_count = mention.count(".") + mention.count("!") + mention.count("?")
         if sentence_count > 1:
             logger.warning(f"Invalid mention (multiple sentences): {mention[:50]}")
             return NO_COMPANY_MENTION
@@ -264,7 +263,10 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
             result = enricher._validate_mention(
                 "This work integrates BASF's established catalysis technology."
             )
-            assert result == "This work integrates BASF's established catalysis technology."
+            assert (
+                result
+                == "This work integrates BASF's established catalysis technology."
+            )
         finally:
             os.unlink(db_path)
 
@@ -307,7 +309,9 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         try:
             db = Database(db_path)
             enricher = CompanyMentionEnricher(db, None, None)  # type: ignore
-            result = enricher._validate_mention("This mentions Dow. #ChemicalEngineering")
+            result = enricher._validate_mention(
+                "This mentions Dow. #ChemicalEngineering"
+            )
             assert result == NO_COMPANY_MENTION
         finally:
             os.unlink(db_path)
@@ -364,14 +368,23 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
-    suite.add_test("Validate mention - valid sentence", test_validate_mention_valid_sentence)
-    suite.add_test("Validate mention - NO_COMPANY_MENTION", test_validate_mention_no_company)
+    suite.add_test(
+        "Validate mention - valid sentence", test_validate_mention_valid_sentence
+    )
+    suite.add_test(
+        "Validate mention - NO_COMPANY_MENTION", test_validate_mention_no_company
+    )
     suite.add_test("Validate mention - empty string", test_validate_mention_empty)
-    suite.add_test("Validate mention - with newlines", test_validate_mention_with_newlines)
-    suite.add_test("Validate mention - with hashtag", test_validate_mention_with_hashtag)
+    suite.add_test(
+        "Validate mention - with newlines", test_validate_mention_with_newlines
+    )
+    suite.add_test(
+        "Validate mention - with hashtag", test_validate_mention_with_hashtag
+    )
     suite.add_test("Validate mention - with list", test_validate_mention_with_list)
     suite.add_test(
-        "Validate mention - missing punctuation", test_validate_mention_missing_punctuation
+        "Validate mention - missing punctuation",
+        test_validate_mention_missing_punctuation,
     )
     suite.add_test("Build enrichment prompt", test_build_enrichment_prompt)
     suite.add_test("Get enrichment stats", test_get_enrichment_stats)

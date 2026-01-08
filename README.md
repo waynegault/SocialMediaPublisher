@@ -648,6 +648,23 @@ From the interactive menu:
 
 ## Appendix A: Chronology of Changes
 
+### Version 2.8 (January 8, 2026)
+
+- **Fixed source_links bug**: Stories no longer saved with empty sources
+  - Added early exit check before URL validation
+  - Ensures every saved story has at least one valid source URL
+- **Enhanced image generation for more attractive women**:
+  - Updated IMAGE_STYLE to emphasize glamour and model-quality beauty
+  - Updated IMAGE_REFINEMENT_PROMPT with detailed beauty requirements
+  - Updated IMAGE_FALLBACK_PROMPT for consistency
+  - Women now featured with flawless skin, styled hair, fashion-forward workwear
+- **Codebase cleanup**: Removed 10 redundant/unused files
+  - Removed: linkedin_diagnostics.py, linkedin_test.py, test_linkedin_connection.py
+  - Removed: publish_story.py, linkedin_dryrun_publish.py, linkedin_mentions.py
+  - Removed: scripts/ folder, archive/ folder
+- Added COMPANY_MENTION_PROMPT to config.py (was missing)
+- Fixed unused import in company_mention_enricher.py
+
 ### Version 2.7 (January 8, 2026)
 
 - Added LinkedIn Analytics tracking for published posts

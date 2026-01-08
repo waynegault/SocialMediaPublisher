@@ -1146,8 +1146,13 @@ class StorySearcher:
                         f"Filtered {original_count - len(sources)} redirect URLs from sources"
                     )
 
+                # Skip stories with no sources before any further processing
+                if not sources:
+                    logger.warning(f"Skipping story with no sources: {title}")
+                    continue
+
                 # Validate URLs if enabled
-                if Config.VALIDATE_SOURCE_URLS and sources:
+                if Config.VALIDATE_SOURCE_URLS:
                     valid_sources = [url for url in sources if validate_url(url)]
                     if len(valid_sources) < len(sources):
                         logger.debug(

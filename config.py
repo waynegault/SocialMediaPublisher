@@ -110,9 +110,10 @@ class Config:
     IMAGE_STYLE: str = _get_str(
         "IMAGE_STYLE",
         "eye-catching professional industrial photography, dramatic lighting, bold composition, "
-        "striking visual impact, confident professional woman as focal point, "
+        "striking visual impact, glamorous attractive professional woman as focal point, "
+        "model-quality beauty with flawless skin, styled hair, subtle makeup even in industrial setting, "
         "cinematic quality, vivid colors, dynamic angle, high contrast, sharp focus, "
-        "attention-grabbing, magazine cover quality, photorealistic",
+        "attention-grabbing, magazine cover quality, photorealistic, fashion-forward workwear",
     )
     # Aspect ratio for generated images (options: 1:1, 16:9, 9:16, 4:3, 3:4)
     IMAGE_ASPECT_RATIO: str = _get_str("IMAGE_ASPECT_RATIO", "16:9")
@@ -130,31 +131,39 @@ STORY CONTEXT:
 
 YOUR TASK: Create an image prompt for a VISUALLY STRIKING, ATTENTION-GRABBING photograph.
 
-MANDATORY: Feature a confident, professional woman (engineer, scientist, or executive) as the focal point. She should command attention through her presence, expression, and positioning.
+MANDATORY: Feature a GLAMOROUS, ATTRACTIVE professional woman (engineer, scientist, or executive) as the focal point. She should be stunningly beautiful with model-quality features while maintaining professional credibility.
 
 CRITICAL REQUIREMENTS - THE IMAGE MUST BE:
 1. ATTENTION-GRABBING - stops scrolling, makes viewers look twice
 2. DRAMATIC - bold lighting, strong composition, visual impact
-3. PROFESSIONAL - suitable for a business publication
+3. PROFESSIONAL yet GLAMOROUS - like a high-fashion editorial in an industrial setting
 4. PHOTOREALISTIC - like a high-end magazine photograph
-5. FEATURE A CONFIDENT WOMAN - as the commanding focal point
+5. FEATURE A BEAUTIFUL, CONFIDENT WOMAN - as the commanding focal point
+
+THE WOMAN MUST HAVE:
+- Model-quality beauty: flawless skin, symmetrical features, striking eyes
+- Styled hair that looks perfect even in industrial settings
+- Subtle but polished makeup
+- Confident, commanding presence with elegant posture
+- Fashion-forward interpretation of workwear (fitted coveralls, stylish hard hat, designer safety glasses)
 
 TECHNIQUES FOR VISUAL IMPACT:
 - Dramatic lighting: golden hour, rim lighting, high contrast, spotlight effects
 - Bold composition: rule of thirds, leading lines, dramatic angles (low angle = power)
-- Scale contrast: woman against massive industrial equipment
+- Scale contrast: glamorous woman against massive industrial equipment
 - Color pop: vibrant safety gear, colorful reactions, striking backgrounds
 - Confident poses: hands on hips, examining equipment, directing team
 - Dynamic action: walking purposefully, pointing at data, engaged in work
 
-SUBJECT IDEAS - WOMAN AS FOCAL POINT:
-- Confident engineer before massive reactor or distillation column (scale contrast)
-- Scientist in lab with colorful chemical reactions (color pop)
-- Executive in control room with glowing screens (dramatic lighting)
-- Process engineer on elevated platform overlooking plant (power angle)
-- Team leader directing workers at industrial site (leadership presence)
+SUBJECT IDEAS - GLAMOROUS WOMAN AS FOCAL POINT:
+- Stunning engineer before massive reactor, hair catching rim light
+- Beautiful scientist in lab coat with colorful chemical reactions
+- Glamorous executive in control room with glowing screens illuminating her face
+- Attractive process engineer on elevated platform, wind in her hair
+- Elegant team leader commanding attention at industrial site
 
 WHAT TO AVOID:
+- Plain or average-looking subjects
 - Boring, static compositions
 - Flat lighting
 - Woman as background element (she must be the STAR)
@@ -165,7 +174,7 @@ STYLE REQUIREMENTS:
 {image_style}
 
 OUTPUT: Write ONLY the image prompt. No explanations. Maximum 100 words.
-Focus on: dramatic lighting, bold composition, confident woman as focal point, visual impact.""",
+Focus on: dramatic lighting, bold composition, beautiful glamorous woman as focal point, visual impact.""",
     )
 
     # Fallback image prompt template when LLM refinement fails
@@ -173,10 +182,11 @@ Focus on: dramatic lighting, bold composition, confident woman as focal point, v
     IMAGE_FALLBACK_PROMPT: str = _get_str(
         "IMAGE_FALLBACK_PROMPT",
         "Eye-catching professional photograph: {story_title}. "
-        "Confident female engineer as focal point, dramatic rim lighting, "
-        "bold composition, low angle power shot, industrial facility background, "
-        "vivid colors, high contrast, magazine cover quality, photorealistic, "
-        "attention-grabbing, cinematic",
+        "Glamorous attractive female engineer with model-quality beauty as focal point, "
+        "flawless skin, styled hair, subtle makeup, fashion-forward workwear, "
+        "dramatic rim lighting, bold composition, low angle power shot, "
+        "industrial facility background, vivid colors, high contrast, "
+        "magazine cover quality, photorealistic, attention-grabbing, cinematic",
     )
 
     # Search instruction prompt - the system prompt for story search
@@ -375,6 +385,36 @@ Return JSON format:
 }}
 
 If no LinkedIn profiles can be found, return: {{"mentions": []}}""",
+    )
+
+    # Company mention enrichment prompt - identifies companies for professional mentions
+    # Placeholders: {story_title}, {story_summary}, {story_sources}
+    COMPANY_MENTION_PROMPT: str = _get_str(
+        "COMPANY_MENTION_PROMPT",
+        """Analyze this news story and identify if a specific company is EXPLICITLY NAMED as the primary subject.
+
+STORY TITLE: {story_title}
+
+STORY SUMMARY: {story_summary}
+
+SOURCES: {story_sources}
+
+TASK: Determine if a specific, real company is explicitly named and central to this story.
+
+RULES:
+1. Only identify companies that are EXPLICITLY NAMED in the story (not inferred)
+2. The company must be the PRIMARY subject of the story, not just mentioned
+3. Do NOT guess or infer company names from context
+4. Do NOT include industry associations, government bodies, or research institutions
+5. If multiple companies are mentioned, choose the most prominent one
+6. If no specific company is clearly the primary subject, respond with: NO_COMPANY_MENTION
+
+If a company qualifies, respond with a single professional sentence like:
+"This development from [Company Name] demonstrates their commitment to [area]."
+
+If no company qualifies, respond with exactly: NO_COMPANY_MENTION
+
+Respond with ONLY the sentence or NO_COMPANY_MENTION, nothing else.""",
     )
 
     # JSON repair prompt - attempts to fix malformed JSON from LLM responses
