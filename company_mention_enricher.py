@@ -9,6 +9,8 @@ import logging
 
 from google import genai  # type: ignore
 from openai import OpenAI
+import requests
+import re
 
 from config import Config
 from database import Database, Story
@@ -60,15 +62,42 @@ class CompanyMentionEnricher:
                     story.company_mention_enrichment = (
                         mention if mention != NO_COMPANY_MENTION else None
                     )
-                    story.enrichment_status = "completed"
                     if mention and mention != NO_COMPANY_MENTION:
+                        story.enrichment_status = "enriched"
+
+                        # Extract company name from the standard reply format: "<Company> is the primary subject..."
+                        try:
+                            company_name = mention.split(" is ", 1)[0].strip().strip('"')
+                        except Exception:
+                            company_name = mention
+
+                        # Add to linkedin_mentions as a minimal fallback entry if not already present
+                        existing_mentions = story.linkedin_mentions or []
+                        names = {m.get("name") for m in existing_mentions if isinstance(m, dict)}
+                        if company_name and company_name not in names:
+                            mention_entry = {"name": company_name, "urn": None, "type": "organization"}
+
+                            # Attempt to resolve a LinkedIn URN if credentials are available
+                            urn = None
+                            try:
+                                urn = self._resolve_linkedin_urn(company_name)
+                            except Exception as e:
+                                logger.debug(f"URN resolution failed for {company_name}: {e}")
+
+                            if urn:
+                                mention_entry["urn"] = urn
+
+                            existing_mentions.append(mention_entry)
+                            story.linkedin_mentions = existing_mentions
+
                         logger.info(f"  ✓ ENRICHED: {mention}")
                         enriched += 1
                     else:
+                        story.enrichment_status = "enriched"
                         logger.info("  ⏭ SKIPPED: No companies found")
                         skipped += 1
                 else:
-                    story.enrichment_status = "skipped"
+                    story.enrichment_status = "enriched"
                     skipped += 1
                     logger.info(f"  ⏳ SKIPPED: {mention}")
 
@@ -213,6 +242,97 @@ class CompanyMentionEnricher:
         # If all validation passes, it's acceptable
         return mention
 
+    def _resolve_linkedin_urn(self, company_name: str) -> str | None:
+        """Try to resolve a LinkedIn organization URN for the company name.
+
+        Uses the LinkedIn Organizations endpoint with `q=vanityName` and a few
+        heuristic attempts (original name and a slugified form).
+        Returns a URN string like 'urn:li:organization:12345' on success or None.
+        """
+        if not Config.LINKEDIN_ACCESS_TOKEN:
+            return None
+
+        headers = {
+            "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
+            "X-Restli-Protocol-Version": "2.0.0",
+        }
+
+        # Build simple slug candidate
+        slug = re.sub(r"[^a-z0-9-]", "", company_name.lower().replace(" ", "-"))
+
+        candidates = [company_name, slug]
+
+        for candidate in candidates:
+            if not candidate:
+                continue
+            params = {"q": "vanityName", "vanityName": candidate}
+            try:
+                resp = requests.get(
+                    "https://api.linkedin.com/v2/organizations",
+                    headers=headers,
+                    params=params,
+                    timeout=10,
+                )
+            except requests.RequestException:
+                continue
+
+            if resp.status_code != 200:
+                continue
+
+            data = resp.json()
+            elements = data.get("elements", [])
+            if not elements:
+                continue
+
+            # Iterate returned elements and verify match heuristically
+            for elem in elements:
+                org_id = elem.get("id") or elem.get("organization", {}).get("id")
+                if not org_id:
+                    continue
+
+                try:
+                    if self._confirm_organization(company_name, elem):
+                        return f"urn:li:organization:{org_id}"
+                except Exception:
+                    # If verification fails, still fall back to first id
+                    return f"urn:li:organization:{org_id}"
+
+        return None
+
+    def _confirm_organization(self, company_name: str, org_elem: dict) -> bool:
+        """Heuristic check whether org_elem matches company_name.
+
+        Checks localizedName, vanityName and some token overlap. Conservative by design.
+        """
+        try:
+            name = company_name.lower().strip()
+            localized = "".join(org_elem.get("localizedName", "") or "").lower()
+            vanity = "".join(org_elem.get("vanityName", "") or "").lower()
+
+            # Exact match or substring match
+            if localized and (name == localized or name in localized or localized in name):
+                return True
+            if vanity and (name == vanity or name in vanity or vanity in name):
+                return True
+
+            # Token overlap (at least 2 tokens in common)
+            def tokens(s: str):
+                return {t for t in re.split(r"\W+", s) if t}
+
+            name_tokens = tokens(name)
+            if localized:
+                loc_tokens = tokens(localized)
+                if len(name_tokens & loc_tokens) >= 2:
+                    return True
+            if vanity:
+                van_tokens = tokens(vanity)
+                if len(name_tokens & van_tokens) >= 2:
+                    return True
+
+        except Exception as e:
+            logger.debug(f"Error in _confirm_organization: {e}")
+        return False
+
     def get_enrichment_stats(self) -> dict:
         """Get enrichment statistics."""
         stats = self.db.get_statistics()
@@ -253,6 +373,31 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     from test_framework import TestSuite
 
     suite = TestSuite("Company Mention Enricher Tests")
+
+    def test_confirm_organization_exact_match():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            enricher = CompanyMentionEnricher(db, None, None)  # type: ignore
+            elem = {"localizedName": "SOLVE Chemistry", "vanityName": "solve-chemistry", "id": 123}
+            assert enricher._confirm_organization("SOLVE Chemistry", elem)
+        finally:
+            os.unlink(db_path)
+
+    def test_confirm_organization_token_overlap():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            enricher = CompanyMentionEnricher(db, None, None)  # type: ignore
+            elem = {"localizedName": "Greentown Labs", "vanityName": "greentownlabs", "id": 456}
+            assert enricher._confirm_organization("Greentown Labs", elem)
+        finally:
+            os.unlink(db_path)
+
+    suite.add_test("Confirm org - exact match", test_confirm_organization_exact_match)
+    suite.add_test("Confirm org - token overlap", test_confirm_organization_token_overlap)
 
     def test_validate_mention_valid_sentence():
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:

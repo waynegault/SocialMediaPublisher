@@ -359,10 +359,11 @@ Social Media Publisher - Debug Menu
    15. Test Story Search
    16. Test Image Generation
    17. Test Content Verification
-   18. Test Scheduling
-   19. Test LinkedIn Connection
-   20. Test LinkedIn Publish (due stories)
-   21. Run Unit Tests
+   18. Test Company Mention Enrichment
+   19. Test Scheduling
+   20. Test LinkedIn Connection
+   21. Test LinkedIn Publish (due stories)
+   22. Run Unit Tests
 
   Analytics:
    22. View LinkedIn Analytics
@@ -428,17 +429,19 @@ Social Media Publisher - Debug Menu
         elif choice == "17":
             _test_verification(engine)
         elif choice == "18":
-            _test_scheduling(engine)
+            _test_enrichment(engine)
         elif choice == "19":
-            _test_linkedin_connection(engine)
+            _test_scheduling(engine)
         elif choice == "20":
-            _test_linkedin_publish(engine)
+            _test_linkedin_connection(engine)
         elif choice == "21":
+            _test_linkedin_publish(engine)
+        elif choice == "22":
             _run_unit_tests()
         # Analytics
-        elif choice == "22":
-            _view_linkedin_analytics(engine)
         elif choice == "23":
+            _view_linkedin_analytics(engine)
+        elif choice == "24":
             _refresh_linkedin_analytics(engine)
         else:
             print("Invalid choice. Please try again.")
@@ -779,6 +782,110 @@ def _test_verification(engine: ContentEngine) -> None:
     except Exception as e:
         print(f"\nError: {e}")
         logger.exception("Verification test failed")
+
+
+def _test_enrichment(engine: ContentEngine) -> None:
+    """Test the company mention enrichment component."""
+    print("\n--- Testing Company Mention Enrichment ---")
+
+    stories = engine.db.get_stories_needing_enrichment()
+
+    if not stories:
+        # Check why none are pending
+        stats = engine.db.get_statistics()
+        print("No stories pending enrichment.")
+        if stats.get("total_stories", 0) == 0:
+            print("  No stories in database. Search for stories first (Choice 15).")
+        else:
+            print(f"  Total stories: {stats.get('total_stories', 0)}")
+            print(f"\nRequired for enrichment:")
+            print(f"  ✓ verification_status = 'approved'")
+            print(f"  ✓ image_path IS NOT NULL (has an image)")
+            print(f"  ✓ enrichment_status = 'pending'")
+            print(f"\nStory Status Breakdown:")
+            # Show status of all stories
+            skipped_eligible = []
+            with engine.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, title, verification_status, image_path, enrichment_status, company_mention_enrichment 
+                    FROM stories ORDER BY id
+                """)
+                for row in cursor.fetchall():
+                    has_image = "✓" if row["image_path"] else "✗"
+                    mention = row["company_mention_enrichment"] or ""
+                    mention_display = f" | Mention: {mention}" if mention else ""
+                    print(f"  [{row['id']}] {row['title'][:50]}...")
+                    print(f"      Verified: {row['verification_status']} | Image: {has_image} | Enrichment: {row['enrichment_status']}{mention_display}")
+                    # Track stories that were skipped but could be re-enriched
+                    if (row['verification_status'] == 'approved' and 
+                        row['image_path'] and 
+                        row['enrichment_status'] == 'skipped'):
+                        skipped_eligible.append(row['id'])
+            
+            # Offer to reset skipped stories
+            if skipped_eligible:
+                print(f"\n⚠ Found {len(skipped_eligible)} previously skipped stories that can now be enriched:")
+                for story_id in skipped_eligible:
+                    print(f"    Story {story_id}")
+                reset = input("\nReset these stories back to 'pending' for enrichment? (y/n): ").strip().lower()
+                if reset == "y":
+                    with engine.db._get_connection() as conn:
+                        cursor = conn.cursor()
+                        for story_id in skipped_eligible:
+                            cursor.execute(
+                                "UPDATE stories SET enrichment_status = 'pending' WHERE id = ?",
+                                (story_id,)
+                            )
+                    print(f"✓ Reset {len(skipped_eligible)} stories. Run enrichment again.")
+                    return
+        return
+
+    print(f"Stories pending enrichment: {len(stories)}")
+    for story in stories[:5]:  # Show first 5
+        print(f"  [{story.id}] {story.title}")
+        print(f"       Status: {story.enrichment_status}")
+    if len(stories) > 5:
+        print(f"  ... and {len(stories) - 5} more")
+
+    confirm = input("\nEnrich these stories with company mentions? (y/n): ").strip().lower()
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    try:
+        print(f"\nEnriching {len(stories)} story/stories...")
+        enriched, skipped = engine.enricher.enrich_pending_stories()
+        print(f"\nResult: {enriched} enriched, {skipped} skipped")
+
+        if enriched > 0:
+            print("\nEnriched stories:")
+            # Show recently enriched stories
+            with engine.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT id, title, company_mention_enrichment FROM stories WHERE enrichment_status = 'enriched' ORDER BY id DESC LIMIT ?",
+                    (enriched,),
+                )
+                for row in cursor.fetchall():
+                    mention = row["company_mention_enrichment"] or "NO_COMPANY_MENTION"
+                    if mention == "NO_COMPANY_MENTION":
+                        mention_display = "⚠ No company mention found"
+                    else:
+                        mention_display = f"✓ {mention}"
+                    print(f"  [{row['id']}] {row['title'][:50]}...")
+                    print(f"       {mention_display}")
+
+        # Show enrichment stats
+        stats = engine.enricher.get_enrichment_stats()
+        print("\nEnrichment Statistics:")
+        print(f"  Total enriched: {stats.get('total_enriched', 0)}")
+        print(f"  With mentions: {stats.get('with_mentions', 0)}")
+        print(f"  No mentions: {stats.get('no_mentions', 0)}")
+
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Enrichment test failed")
 
 
 def _test_scheduling(engine: ContentEngine) -> None:
