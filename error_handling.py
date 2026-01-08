@@ -421,7 +421,7 @@ def safe_execute(
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     """Create unit tests for error_handling module."""
     from test_framework import TestSuite, suppress_logging
 

@@ -170,6 +170,144 @@ def validate_url(url: str) -> bool:
     return True
 
 
+def extract_url_keywords(url: str) -> set[str]:
+    """
+    Extract meaningful keywords from a URL path.
+    E.g., "https://news.rice.edu/news/2026/researchers-unlock-catalyst-behavior"
+    -> {"researchers", "unlock", "catalyst", "behavior"}
+    """
+    if not url:
+        return set()
+
+    try:
+        parsed = urlparse(url)
+        # Combine path segments
+        path = parsed.path
+
+        # Replace common separators with spaces
+        path = re.sub(r"[-_/.]", " ", path)
+
+        # Remove numbers (years, IDs, etc.)
+        path = re.sub(r"\b\d+\b", "", path)
+
+        # Split into words and filter
+        words = path.lower().split()
+
+        # Remove very short words and common URL fragments
+        url_stopwords = {
+            "www",
+            "com",
+            "org",
+            "net",
+            "edu",
+            "html",
+            "htm",
+            "php",
+            "asp",
+            "aspx",
+            "jsp",
+            "news",
+            "article",
+            "articles",
+            "post",
+            "posts",
+            "blog",
+            "index",
+            "page",
+            "pages",
+            "en",
+            "us",
+            "uk",
+            "http",
+            "https",
+        }
+        keywords = {
+            word for word in words if len(word) > 3 and word not in url_stopwords
+        }
+
+        return keywords
+    except Exception:
+        return set()
+
+
+def calculate_url_story_match_score(
+    story_title: str, story_summary: str, url: str, source_title: str = ""
+) -> float:
+    """
+    Calculate how well a URL matches a story based on multiple signals.
+    Returns a score between 0.0 (no match) and 1.0 (strong match).
+    """
+    scores: list[float] = []
+
+    story_text = f"{story_title} {story_summary}".lower()
+    story_words = set(re.sub(r"[^\w\s]", "", story_text).split())
+
+    # Remove stopwords from story
+    stopwords = {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "this",
+        "that",
+        "it",
+        "its",
+        "as",
+        "new",
+        "how",
+        "could",
+        "can",
+        "will",
+    }
+    story_words -= stopwords
+
+    # Signal 1: URL keywords match story words
+    url_keywords = extract_url_keywords(url)
+    if url_keywords and story_words:
+        url_overlap = len(url_keywords & story_words) / len(url_keywords)
+        scores.append(url_overlap * 0.5)  # Weight: 50%
+
+    # Signal 2: Source title similarity (if available)
+    if source_title:
+        title_sim = calculate_similarity(story_title, source_title)
+        scores.append(title_sim * 0.3)  # Weight: 30%
+
+    # Signal 3: Domain relevance (bonus for reputable sources)
+    try:
+        domain = urlparse(url).netloc.lower()
+        # Check if domain keywords appear in story
+        domain_words = set(re.sub(r"[^\w]", " ", domain).split())
+        domain_words -= {"www", "com", "org", "net", "edu", "co", "uk", "io"}
+        if domain_words and story_words:
+            domain_overlap = len(domain_words & story_words) / len(domain_words)
+            scores.append(domain_overlap * 0.2)  # Weight: 20%
+    except Exception:
+        pass
+
+    return sum(scores) if scores else 0.0
+
+
+# Minimum score required to confidently match a URL to a story
+URL_MATCH_THRESHOLD = 0.15
+
+
 def extract_article_date(story_data: dict) -> datetime | None:
     """
     Extract article date from story data.
@@ -316,7 +454,7 @@ class StorySearcher:
             contents=prompt,
             config={
                 "tools": [{"google_search": {}}],
-                "max_output_tokens": 8192,
+                "max_output_tokens": Config.LLM_MAX_OUTPUT_TOKENS,
             },
         )
 
@@ -440,62 +578,89 @@ class StorySearcher:
     ) -> list[dict]:
         """
         Replace LLM-generated sources with real grounding URLs.
-        Tries to match sources to stories by title similarity.
+        Uses semantic matching to associate URLs with stories.
+
+        Matching strategy:
+        1. Calculate match score for each URL-story pair using:
+           - URL path keywords vs story content
+           - Source title similarity (if available)
+           - Domain relevance
+        2. Only assign URLs that meet the minimum threshold
+        3. Log unmatched URLs for review (no blind positional assignment)
         """
         if not grounding_sources:
             return stories_data
 
-        num_stories = len(stories_data)
-        if num_stories == 0:
+        if not stories_data:
             return stories_data
 
-        # Extract just the URIs
-        grounding_urls = [s["uri"] for s in grounding_sources]
-        grounding_titles = [s.get("title", "").lower() for s in grounding_sources]
+        # Track which URLs have been assigned
+        assigned_urls: set[str] = set()
+        unmatched_urls: list[str] = []
 
         for story in stories_data:
-            story_title = story.get("title", "").lower()
-            story_summary = story.get("summary", "").lower()
-            matched_urls: list[str] = []
+            story_title = story.get("title", "")
+            story_summary = story.get("summary", "")
+            matched_urls: list[tuple[str, float]] = []  # (url, score)
 
-            # Try to find matching sources by title/content similarity
-            for url, source_title in zip(grounding_urls, grounding_titles):
-                # Check if source title appears in story or vice versa
-                if source_title and (
-                    source_title in story_title
-                    or source_title in story_summary
-                    or any(
-                        word in story_title
-                        for word in source_title.split()
-                        if len(word) > 4
-                    )
-                ):
-                    matched_urls.append(url)
+            # Calculate match score for each grounding source
+            for source in grounding_sources:
+                url = source.get("uri", "")
+                source_title = source.get("title", "")
 
-            # If no matches found, assign based on position
-            if not matched_urls and grounding_urls:
-                # Give each story at least one URL from the pool
-                idx = stories_data.index(story)
-                urls_per_story = max(1, len(grounding_urls) // num_stories)
-                start = idx * urls_per_story
-                end = (
-                    start + urls_per_story
-                    if idx < num_stories - 1
-                    else len(grounding_urls)
+                if not url:
+                    continue
+
+                score = calculate_url_story_match_score(
+                    story_title, story_summary, url, source_title
                 )
-                matched_urls = grounding_urls[start:end]
+
+                if score >= URL_MATCH_THRESHOLD:
+                    matched_urls.append((url, score))
+                    logger.debug(
+                        f"URL match score {score:.2f} for "
+                        f"'{story_title[:30]}' <-> '{url[:50]}'"
+                    )
+
+            # Sort by score (best matches first) and take top URLs
+            matched_urls.sort(key=lambda x: x[1], reverse=True)
 
             if matched_urls:
-                # Remove duplicates while preserving order
+                # Take URLs that meet threshold, remove duplicates
                 seen: set[str] = set()
-                unique_urls = [
-                    u for u in matched_urls if not (u in seen or seen.add(u))
-                ]  # type: ignore
+                unique_urls = []
+                for url, score in matched_urls:
+                    if url not in seen:
+                        seen.add(url)
+                        unique_urls.append(url)
+                        assigned_urls.add(url)
+
                 story["sources"] = unique_urls
-                logger.debug(
-                    f"Assigned {len(unique_urls)} grounded URLs to "
-                    f"'{story.get('title', 'Unknown')[:40]}...'"
+                logger.info(
+                    f"Matched {len(unique_urls)} URL(s) to story: "
+                    f"'{story_title[:40]}...'"
                 )
+            else:
+                # No confident matches - leave sources as-is or empty
+                logger.warning(
+                    f"No confident URL matches for story: '{story_title[:50]}'. "
+                    "Sources may be unreliable."
+                )
+                # Keep any LLM-provided sources as fallback
+                if "sources" not in story:
+                    story["sources"] = []
+
+        # Log unmatched URLs for review
+        for source in grounding_sources:
+            url = source.get("uri", "")
+            if url and url not in assigned_urls:
+                unmatched_urls.append(url)
+
+        if unmatched_urls:
+            logger.warning(
+                f"{len(unmatched_urls)} grounding URL(s) not matched to any story: "
+                f"{unmatched_urls[:3]}{'...' if len(unmatched_urls) > 3 else ''}"
+            )
 
         return stories_data
 
@@ -617,6 +782,7 @@ class StorySearcher:
 
         # 1. Search DuckDuckGo
         search_results = []
+        max_results = Config.DUCKDUCKGO_MAX_RESULTS
         try:
             logger.info(f"Querying DuckDuckGo (timelimit={timelimit}): {search_query}")
             with DDGS() as ddgs:
@@ -626,7 +792,7 @@ class StorySearcher:
                     ddgs.news(
                         search_query,
                         timelimit=timelimit,
-                        max_results=10,
+                        max_results=max_results,
                     )
                 )
 
@@ -637,7 +803,7 @@ class StorySearcher:
                         ddgs.text(
                             search_query,
                             timelimit=timelimit,
-                            max_results=10,
+                            max_results=max_results,
                         )
                     )
 
@@ -648,7 +814,7 @@ class StorySearcher:
                         ddgs.text(
                             search_query,
                             timelimit=None,
-                            max_results=10,
+                            max_results=max_results,
                         )
                     )
 
@@ -688,8 +854,9 @@ class StorySearcher:
             f"Processing {len(search_results)} results with Local LLM ({Config.LM_STUDIO_MODEL})..."
         )
         max_stories = Config.MAX_STORIES_PER_SEARCH
+        author_name = Config.LINKEDIN_AUTHOR_NAME or "the LinkedIn profile owner"
         prompt = f"""
-You are a news curator. I have found the following search results for the query: "{search_prompt}"
+You are a news curator writing for {author_name}'s LinkedIn profile. I have found the following search results for the query: "{search_prompt}"
 
 SEARCH RESULTS:
 {json.dumps(search_results, indent=2)}
@@ -698,11 +865,22 @@ TASK:
 1. Select up to {max_stories} of the most relevant and interesting stories.
 2. For each story, provide:
    - title: A catchy headline
-   - summary: A {summary_words}-word summary
+   - summary: A {summary_words}-word summary written in FIRST PERSON as if {author_name} is sharing their perspective
    - sources: A list containing the original link
    - category: One of: Technology, Business, Science, AI, Other
    - quality_score: A score from 1-10 based on relevance and significance
    - quality_justification: Brief explanation of the score
+   - hashtags: Array of 1-3 relevant hashtags (without # symbol)
+
+WRITING STYLE FOR SUMMARIES:
+- Write in first person (use "I", "my", "I've found", "I'm excited about", etc.)
+- Sound like a professional sharing industry insights with their network
+- Be conversational but authoritative
+- Example: "I've been following this development closely, and I think it represents..."
+
+HASHTAG GUIDELINES:
+- Use 1-3 relevant, professional hashtags per story
+- CamelCase for multi-word hashtags (e.g., ChemicalEngineering, ProcessOptimization)
 
 Return the results as a JSON object with a "stories" key containing an array of story objects.
 Example:
@@ -710,16 +888,17 @@ Example:
   "stories": [
     {{
       "title": "Example Story",
-      "summary": "This is a summary...",
+      "summary": "I found this fascinating development... [first-person summary]",
       "sources": ["https://example.com"],
       "category": "Technology",
       "quality_score": 8,
-      "quality_justification": "Highly relevant, reputable source"
+      "quality_justification": "Highly relevant, reputable source",
+      "hashtags": ["ChemicalEngineering", "Innovation"]
     }}
   ]
 }}
 
-Return ONLY the JSON object.
+Return ONLY the JSON object. Write ALL summaries in first person.
 """
 
         try:
@@ -729,7 +908,7 @@ Return ONLY the JSON object.
                 response_format={"type": "json_object"}
                 if "json" in Config.LM_STUDIO_MODEL.lower()
                 else {"type": "text"},
-                timeout=120,  # Increased timeout for local LLMs
+                timeout=Config.LLM_LOCAL_TIMEOUT,
             )
         except Exception as e:
             error_msg = str(e)
@@ -791,8 +970,9 @@ Return ONLY the JSON object.
     ) -> str:
         """Build the prompt for story search."""
         max_stories = Config.MAX_STORIES_PER_SEARCH
+        author_name = Config.LINKEDIN_AUTHOR_NAME or "the LinkedIn profile owner"
 
-        # Allow overriding the full instruction via .env with placeholders
+        # Allow overriding the full instruction via legacy .env variable
         if Config.SEARCH_PROMPT_TEMPLATE:
             try:
                 return Config.SEARCH_PROMPT_TEMPLATE.format(
@@ -800,44 +980,21 @@ Return ONLY the JSON object.
                     since_date=since_date.strftime("%Y-%m-%d"),
                     summary_words=summary_words,
                     max_stories=max_stories,
+                    author_name=author_name,
                 )
             except Exception as e:
                 logger.warning(
                     f"SEARCH_PROMPT_TEMPLATE formatting failed: {e}. Using default template."
                 )
 
-        return f"""
-You are a news curator. Find {max_stories} recent news stories matching: "{search_prompt}"
-
-REQUIREMENTS:
-- Stories must be from after {since_date.strftime("%Y-%m-%d")}
-- Each story needs:
-  * title: A clear, engaging headline
-  * sources: Array of REAL source URLs from your search results
-  * summary: {summary_words} words max
-  * category: One of: Technology, Business, Science, AI, Other
-  * quality_score: 1-10 rating
-  * quality_justification: Brief explanation of the score
-
-CRITICAL: Only include URLs you found in your search results. Do NOT invent or guess URLs.
-If you cannot find a real URL for a story, omit that story entirely.
-
-RESPOND WITH ONLY THIS JSON FORMAT:
-{{
-  "stories": [
-    {{
-      "title": "Story Title",
-      "sources": ["https://real-url-from-search.com/article"],
-      "summary": "Brief summary here.",
-      "category": "Technology",
-      "quality_score": 8,
-      "quality_justification": "Highly relevant topic, reputable source, timely"
-    }}
-  ]
-}}
-
-IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real URLs.
-"""
+        # Use configurable search instruction prompt
+        return Config.SEARCH_INSTRUCTION_PROMPT.format(
+            max_stories=max_stories,
+            search_prompt=search_prompt,
+            since_date=since_date.strftime("%Y-%m-%d"),
+            summary_words=summary_words,
+            author_name=author_name,
+        )
 
     def _parse_response(self, response_text: str) -> list[dict]:
         """Parse the JSON response from the LLM."""
@@ -1032,6 +1189,12 @@ IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real UR
                 quality_score = data.get("quality_score", 5)
                 category = data.get("category", "Other")
                 quality_justification = data.get("quality_justification", "")
+                # Extract hashtags (limit to 3)
+                hashtags = data.get("hashtags", [])
+                if isinstance(hashtags, list):
+                    hashtags = [str(h).strip().lstrip("#") for h in hashtags[:3]]
+                else:
+                    hashtags = []
 
                 story = Story(
                     title=title,
@@ -1043,6 +1206,7 @@ IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real UR
                     quality_justification=quality_justification,
                     verification_status="pending",
                     publish_status="unpublished",
+                    hashtags=hashtags,
                 )
 
                 self.db.add_story(story)
@@ -1125,7 +1289,7 @@ IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real UR
                     config={
                         "tools": [{"google_search": {}}],
                         "response_mime_type": "application/json",
-                        "max_output_tokens": 8192,
+                        "max_output_tokens": Config.LLM_MAX_OUTPUT_TOKENS,
                     },
                 )
                 if not response.text:
@@ -1176,21 +1340,26 @@ IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real UR
     ) -> list[dict]:
         """Fetch search results from DuckDuckGo with retry logic."""
         search_results = []
+        max_results = Config.DUCKDUCKGO_MAX_RESULTS
 
         @retry_with_backoff(retryable_exceptions=(Exception,))
         def do_search():
             with DDGS() as ddgs:
                 # Try News search first
                 results = list(
-                    ddgs.news(search_query, timelimit=timelimit, max_results=10)
+                    ddgs.news(
+                        search_query, timelimit=timelimit, max_results=max_results
+                    )
                 )
                 if not results:
                     results = list(
-                        ddgs.text(search_query, timelimit=timelimit, max_results=10)
+                        ddgs.text(
+                            search_query, timelimit=timelimit, max_results=max_results
+                        )
                     )
                 if not results and timelimit:
                     results = list(
-                        ddgs.text(search_query, timelimit=None, max_results=10)
+                        ddgs.text(search_query, timelimit=None, max_results=max_results)
                     )
                 return results
 
@@ -1221,39 +1390,113 @@ IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real UR
             return []
 
         max_stories = Config.MAX_STORIES_PER_SEARCH
+        author_name = Config.LINKEDIN_AUTHOR_NAME or "the LinkedIn profile owner"
         prompt = f"""
-You are a news curator. I have found the following search results for: "{search_prompt}"
+You are a news curator writing for {author_name}'s LinkedIn profile. I have found the following search results for: "{search_prompt}"
 
 SEARCH RESULTS:
 {json.dumps(search_results, indent=2)}
 
 TASK: Select up to {max_stories} of the BEST stories and provide for each:
 - title: A clear, engaging headline based on the search result
-- summary: {summary_words} words max summarizing the story
+- summary: {summary_words} words max, written in FIRST PERSON as if {author_name} is sharing their perspective
 - sources: Array containing ONLY the exact "link" URL from the search result above
 - category: One of: Technology, Business, Science, AI, Other
 - quality_score: 1-10 rating
 - quality_justification: Brief explanation of the score
+- hashtags: Array of 1-3 relevant hashtags (without # symbol, e.g., ["ChemicalEngineering"])
+
+WRITING STYLE FOR SUMMARIES:
+- Write in first person (use "I", "my", "I've found", "I'm excited about", etc.)
+- Sound like a professional sharing industry insights with their network
+- Be conversational but authoritative
 
 CRITICAL: For the "sources" field, you MUST use the EXACT "link" URL from the search
 results provided above. Do NOT invent, modify, or guess URLs. Copy the link exactly.
 
-Return JSON: {{"stories": [...]}}
+Return JSON: {{"stories": [...]}}. Write ALL summaries in first person. Include hashtags.
 """
 
         try:
             response = self.local_client.chat.completions.create(
                 model=Config.LM_STUDIO_MODEL,
                 messages=[{"role": "user", "content": prompt}],
-                timeout=120,
+                timeout=Config.LLM_LOCAL_TIMEOUT,
             )
             content = response.choices[0].message.content
             if content:
-                return self._parse_response(content)
+                stories_data = self._parse_response(content)
+                # Validate and fix URLs - LLM may hallucinate or mismatch URLs
+                stories_data = self._validate_story_urls(stories_data, search_results)
+                return stories_data
         except Exception as e:
             logger.error(f"Local LLM processing failed: {e}")
 
         return []
+
+    def _validate_story_urls(
+        self, stories_data: list[dict], search_results: list[dict]
+    ) -> list[dict]:
+        """
+        Validate that story URLs match the original search results.
+        If LLM hallucinated or mismatched URLs, attempt to fix them.
+        """
+        if not stories_data or not search_results:
+            return stories_data
+
+        # Build set of valid URLs from search results
+        valid_urls = {r.get("link", "") for r in search_results if r.get("link")}
+
+        for story in stories_data:
+            story_title = story.get("title", "")
+            story_summary = story.get("summary", "")
+            sources = story.get("sources") or story.get("source_links") or []
+
+            # Check each source URL
+            validated_sources: list[str] = []
+            invalid_sources: list[str] = []
+
+            for url in sources:
+                if url in valid_urls:
+                    validated_sources.append(url)
+                else:
+                    invalid_sources.append(url)
+
+            if invalid_sources:
+                logger.warning(
+                    f"Story '{story_title[:40]}' has {len(invalid_sources)} "
+                    f"invalid URL(s) not from search results: {invalid_sources[:2]}"
+                )
+
+                # Try to find correct URLs using semantic matching
+                for search_result in search_results:
+                    result_url = search_result.get("link", "")
+                    result_title = search_result.get("title", "")
+
+                    if not result_url or result_url in validated_sources:
+                        continue
+
+                    # Calculate match score
+                    score = calculate_url_story_match_score(
+                        story_title, story_summary, result_url, result_title
+                    )
+
+                    if score >= URL_MATCH_THRESHOLD:
+                        validated_sources.append(result_url)
+                        logger.info(
+                            f"  -> Fixed: Matched URL '{result_url[:50]}' "
+                            f"(score: {score:.2f})"
+                        )
+                        break  # One URL per story is usually enough
+
+            story["sources"] = validated_sources
+
+            if not validated_sources:
+                logger.warning(
+                    f"Story '{story_title[:40]}' has no valid sources after validation"
+                )
+
+        return stories_data
 
     def _repair_json_with_llm(self, malformed_json: str) -> str | None:
         """
@@ -1273,7 +1516,7 @@ Return ONLY valid JSON, no explanation.
                 response = self.local_client.chat.completions.create(
                     model=Config.LM_STUDIO_MODEL,
                     messages=[{"role": "user", "content": repair_prompt}],
-                    timeout=60,
+                    timeout=Config.LLM_LOCAL_TIMEOUT,
                 )
                 return response.choices[0].message.content
             else:
@@ -1310,7 +1553,7 @@ Return ONLY valid JSON, no explanation.
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     """Create unit tests for searcher module."""
     import os
     import tempfile

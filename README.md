@@ -32,8 +32,11 @@ For detailed architecture and component documentation, see the [Overview wiki](h
   decency, and adherence to your criteria
 - **Smart Scheduling**: Publishes stories spread evenly across your preferred
   hours with configurable jitter
-- **LinkedIn Integration**: Posts stories with images, source links, and your
-  signature block
+- **LinkedIn Integration**: Posts stories with images, source links, hashtags,
+  @ mentions, and your signature block
+- **Smart Hashtags**: AI-generated relevant hashtags (up to 3 per post)
+- **LinkedIn Mentions**: Automatic @ mentions for companies/people in stories
+- **Opportunity Messages**: Optional professional postscript about job openings
 - **Automatic Cleanup**: Removes old unused stories after a configurable
   exclusion period
 - **Retry Logic**: Automatic retry with exponential backoff for transient API
@@ -446,6 +449,16 @@ All configuration is loaded at import time from environment variables.
 The `Config` class uses `@staticmethod` properties for lazy evaluation
 where needed.
 
+#### Timeout and Search Settings
+
+These settings control API timeouts and search behavior:
+
+- `API_TIMEOUT_DEFAULT` (30): Default timeout for cloud API calls in seconds
+- `LLM_LOCAL_TIMEOUT` (120): Timeout for local LLM calls (LM Studio) in seconds - local models often need longer processing time
+- `DUCKDUCKGO_MAX_RESULTS` (10): Maximum number of results to fetch from DuckDuckGo searches
+- `LLM_MAX_OUTPUT_TOKENS` (8192): Maximum output tokens for LLM responses
+- `IMAGE_ASPECT_RATIO` (16:9): Aspect ratio for generated images (options: 1:1, 16:9, 9:16, 4:3, 3:4)
+
 ### Database Migrations
 
 New columns are added with `ALTER TABLE` statements that use
@@ -610,6 +623,32 @@ From the interactive menu:
 ---
 
 ## Appendix A: Chronology of Changes
+
+### Version 2.6 (January 8, 2026)
+
+- Added AI-generated hashtags to stories (up to 3 per post)
+- Added LinkedIn @ mentions for companies/people in stories
+- Created linkedin_mentions.py for URN lookup
+- Added opportunity_messages.py with 50 professional postscripts
+- New INCLUDE_OPPORTUNITY_MESSAGE config setting
+- Updated Story dataclass with hashtags and linkedin_mentions fields
+- Enhanced _format_post_text to include new elements
+
+### Version 2.5 (January 8, 2026)
+
+- Improved URL-to-Story Matching with semantic scoring
+- New extract_url_keywords function for URL path analysis
+- New calculate_url_story_match_score for match confidence
+- Removed blind positional URL assignment that caused mix-ups
+- Added URL validation for local LLM path
+- Unmatched URLs now logged as warnings
+
+### Version 2.4 (January 8, 2026)
+
+- Added configurable timeout and search settings to .env
+- New settings: API_TIMEOUT_DEFAULT, LLM_LOCAL_TIMEOUT, DUCKDUCKGO_MAX_RESULTS
+- New settings: LLM_MAX_OUTPUT_TOKENS, IMAGE_ASPECT_RATIO
+- Moved hardcoded values from searcher.py and image_generator.py to config
 
 ### Version 2.3 (January 7, 2026)
 

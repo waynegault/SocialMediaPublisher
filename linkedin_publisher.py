@@ -4,9 +4,11 @@ import logging
 import requests
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from config import Config
 from database import Database, Story
+from opportunity_messages import get_random_opportunity_message
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,19 @@ class LinkedInPublisher:
             "X-Restli-Protocol-Version": "2.0.0",
         }
 
+    def _get_post_url(self, post_id: str) -> str:
+        """
+        Convert a LinkedIn post ID (URN) to a viewable URL.
+
+        Args:
+            post_id: The post URN (e.g., 'urn:li:share:7415014901590642688')
+
+        Returns:
+            The LinkedIn URL to view the post
+        """
+        # LinkedIn feed URLs use the format: /feed/update/{urn}
+        return f"https://www.linkedin.com/feed/update/{post_id}"
+
     def publish_due_stories(self) -> tuple[int, int]:
         """
         Publish all stories that are due.
@@ -59,6 +74,7 @@ class LinkedInPublisher:
                     story.publish_status = "published"
                     story.published_time = datetime.now()
                     story.linkedin_post_id = post_id
+                    story.linkedin_post_url = self._get_post_url(post_id)
                     self.db.update_story(story)
                     success_count += 1
                     logger.info(
@@ -203,11 +219,69 @@ class LinkedInPublisher:
                 text_parts.append(f"• {source}")
             text_parts.append("")
 
+        # Add LinkedIn mentions (companies/people related to the story)
+        if story.linkedin_mentions:
+            mentions_text = self._format_mentions(story.linkedin_mentions)
+            if mentions_text:
+                text_parts.append(mentions_text)
+                text_parts.append("")
+
+        # Add hashtags (max 3)
+        if story.hashtags:
+            hashtag_str = " ".join(f"#{tag}" for tag in story.hashtags[:3])
+            text_parts.append(hashtag_str)
+            text_parts.append("")
+
         # Signature block
         if Config.SIGNATURE_BLOCK:
             text_parts.append(Config.SIGNATURE_BLOCK.strip())
+            text_parts.append("")
+
+        # Job opportunity postscript
+        if Config.INCLUDE_OPPORTUNITY_MESSAGE:
+            opportunity_msg = get_random_opportunity_message()
+            text_parts.append(opportunity_msg)
 
         return "\n".join(text_parts)
+
+    def _format_mentions(self, mentions: list[dict]) -> str:
+        """
+        Format LinkedIn mentions for the post.
+
+        Uses LinkedIn's mention syntax: @[Name](urn:li:organization:ID)
+        Falls back to including LinkedIn URLs if URN is not available.
+        """
+        if not mentions:
+            return ""
+
+        mention_parts = []
+        for mention in mentions[:3]:  # Limit to 3 mentions
+            name = mention.get("name", "")
+            urn = mention.get("urn", "")
+            linkedin_url = mention.get("linkedin_url", "")
+
+            if not name:
+                continue
+
+            # If we have a proper URN with numeric ID, use @ mention syntax
+            # URN format: urn:li:organization:12345 or urn:li:person:12345
+            if urn and self._is_valid_urn(urn):
+                mention_parts.append(f"@[{name}]({urn})")
+            elif linkedin_url:
+                # Fallback: include as a regular link
+                mention_parts.append(f"{name}: {linkedin_url}")
+
+        if mention_parts:
+            return "Related: " + " | ".join(mention_parts)
+        return ""
+
+    def _is_valid_urn(self, urn: str) -> bool:
+        """Check if URN has a numeric ID (required for @ mentions)."""
+        import re
+
+        # Valid URN must end with numeric ID
+        pattern = r"^urn:li:(person|organization):\d+$"
+        return bool(re.match(pattern, urn))
 
     def _build_image_post_payload(
         self, text: str, story: Story, image_asset: str
@@ -359,19 +433,46 @@ class LinkedInPublisher:
         """
         Verify a post exists on LinkedIn by fetching its details.
         Returns tuple of (exists, post_data).
+
+        Uses the LinkedIn REST API /rest/posts endpoint which requires:
+        - URL-encoded URN in the path
+        - Linkedin-Version header in YYYYMM format
+        - X-Restli-Protocol-Version: 2.0.0
         """
         if not Config.LINKEDIN_ACCESS_TOKEN or not post_id:
             return (False, None)
 
         try:
-            # LinkedIn UGC posts can be fetched via the ugcPosts endpoint
-            response = requests.get(
-                f"{self.BASE_URL}/ugcPosts/{post_id}",
-                headers=self._get_headers(),
-                timeout=10,
-            )
+            # URL-encode the URN (urn:li:share:123 -> urn%3Ali%3Ashare%3A123)
+            encoded_urn = quote(post_id, safe="")
+
+            # Use REST API endpoint with required headers
+            rest_url = f"https://api.linkedin.com/rest/posts/{encoded_urn}"
+
+            # Get current month in YYYYMM format for Linkedin-Version header
+            version = datetime.now().strftime("%Y%m")
+
+            headers = {
+                "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
+                "X-Restli-Protocol-Version": "2.0.0",
+                "Linkedin-Version": version,
+            }
+
+            response = requests.get(rest_url, headers=headers, timeout=10)
+
             if response.status_code == 200:
-                return (True, response.json())
+                post_data = response.json()
+                # Check if the post has a valid lifecycle state
+                lifecycle = post_data.get("lifecycleState", "")
+                if lifecycle == "PUBLISHED":
+                    logger.info(f"Post verified: {post_id} is PUBLISHED")
+                    return (True, post_data)
+                else:
+                    logger.info(f"Post found but state is: {lifecycle}")
+                    return (True, post_data)
+            elif response.status_code == 404:
+                logger.warning(f"Post not found: {post_id}")
+                return (False, None)
             else:
                 logger.warning(
                     f"Post verification failed: {response.status_code} - {response.text}"
@@ -392,17 +493,19 @@ class LinkedInPublisher:
             story.publish_status = "published"
             story.published_time = datetime.now()
             story.linkedin_post_id = post_id
+            story.linkedin_post_url = self._get_post_url(post_id)
             self.db.update_story(story)
             logger.info(
                 f"Published story {story.id} immediately with post ID: {post_id}"
             )
+            logger.info(f"Post URL: {story.linkedin_post_url}")
         return post_id
 
 
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     """Create unit tests for linkedin_publisher module."""
     import os
     import tempfile

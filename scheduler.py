@@ -178,7 +178,7 @@ class Scheduler:
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     """Create unit tests for scheduler module."""
     import os
     import tempfile

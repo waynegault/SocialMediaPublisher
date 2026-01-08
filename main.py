@@ -306,7 +306,9 @@ class ContentEngine:
         if self.publisher.test_connection():
             profile = self.publisher.get_profile_info()
             if profile:
-                print(f"  Connected as: {profile.get('localizedFirstName', 'Unknown')}")
+                # OpenID userinfo returns 'name' or 'given_name'/'family_name'
+                name = profile.get("name") or profile.get("given_name", "Unknown")
+                print(f"  Connected as: {name}")
             else:
                 print("  Connected (profile unavailable)")
         else:
@@ -329,27 +331,28 @@ Social Media Publisher - Debug Menu
 
   Configuration:
     3. Show Configuration
-    4. Show Full Status
+    4. View All Prompts (full text)
+    5. Show Full Status
 
   Database Operations:
-    5. View Database Statistics
-    6. List All Stories
-    7. List Pending Stories
-    8. List Scheduled Stories
-    9. Cleanup Old Stories
-   10. Backup Database
-   11. Restore Database from Backup
-   12. Verify Database Integrity
-   13. Retry Rejected Stories (regenerate image + re-verify)
+    6. View Database Statistics
+    7. List All Stories
+    8. List Pending Stories
+    9. List Scheduled Stories
+   10. Cleanup Old Stories
+   11. Backup Database
+   12. Restore Database from Backup
+   13. Verify Database Integrity
+   14. Retry Rejected Stories (regenerate image + re-verify)
 
   Component Testing:
-   14. Test Story Search
-   15. Test Image Generation
-   16. Test Content Verification
-   17. Test Scheduling
-   18. Test LinkedIn Connection
-   19. Test LinkedIn Publish (due stories)
-   20. Run Unit Tests
+   15. Test Story Search
+   16. Test Image Generation
+   17. Test Content Verification
+   18. Test Scheduling
+   19. Test LinkedIn Connection
+   20. Test LinkedIn Publish (due stories)
+   21. Run Unit Tests
 
    0. Exit
 ============================================================
@@ -381,40 +384,42 @@ Social Media Publisher - Debug Menu
             Config.print_config()
             _test_api_keys(engine)
         elif choice == "4":
+            _show_all_prompts()
+        elif choice == "5":
             engine.status()
         # Database Operations
-        elif choice == "5":
-            _show_database_stats(engine)
         elif choice == "6":
-            _list_all_stories(engine)
+            _show_database_stats(engine)
         elif choice == "7":
-            _list_pending_stories(engine)
+            _list_all_stories(engine)
         elif choice == "8":
-            _list_scheduled_stories(engine)
+            _list_pending_stories(engine)
         elif choice == "9":
-            _cleanup_old_stories(engine)
+            _list_scheduled_stories(engine)
         elif choice == "10":
-            _backup_database(engine)
+            _cleanup_old_stories(engine)
         elif choice == "11":
-            _restore_database(engine)
+            _backup_database(engine)
         elif choice == "12":
-            _verify_database(engine)
+            _restore_database(engine)
         elif choice == "13":
+            _verify_database(engine)
+        elif choice == "14":
             _retry_rejected_stories(engine)
         # Component Testing
-        elif choice == "14":
-            _test_search(engine)
         elif choice == "15":
-            _test_image_generation(engine)
+            _test_search(engine)
         elif choice == "16":
-            _test_verification(engine)
+            _test_image_generation(engine)
         elif choice == "17":
-            _test_scheduling(engine)
+            _test_verification(engine)
         elif choice == "18":
-            _test_linkedin_connection(engine)
+            _test_scheduling(engine)
         elif choice == "19":
-            _test_linkedin_publish(engine)
+            _test_linkedin_connection(engine)
         elif choice == "20":
+            _test_linkedin_publish(engine)
+        elif choice == "21":
             _run_unit_tests()
         else:
             print("Invalid choice. Please try again.")
@@ -804,10 +809,15 @@ def _test_linkedin_connection(engine: ContentEngine) -> None:
             print("✓ Connection successful!")
             profile = engine.publisher.get_profile_info()
             if profile:
-                print(
-                    f"  Profile: {profile.get('localizedFirstName', '')} "
-                    f"{profile.get('localizedLastName', '')}"
+                # OpenID userinfo endpoint returns given_name/family_name, not localizedFirstName
+                first_name = profile.get("given_name") or profile.get(
+                    "localizedFirstName", ""
                 )
+                last_name = profile.get("family_name") or profile.get(
+                    "localizedLastName", ""
+                )
+                name = profile.get("name") or f"{first_name} {last_name}".strip()
+                print(f"  Profile: {name}")
         else:
             print("✗ Connection failed. Check your credentials.")
     except Exception as e:
@@ -1241,6 +1251,67 @@ def _run_unit_tests() -> None:
     except Exception as e:
         print(f"\nError running tests: {e}")
         logger.exception("Unit test execution failed")
+
+
+def _show_all_prompts() -> None:
+    """Display all configured prompts in full."""
+    print("\n" + "=" * 80)
+    print("ALL CONFIGURED PROMPTS")
+    print("=" * 80)
+
+    print("\n" + "-" * 80)
+    print("1. SEARCH_PROMPT (topic/criteria for finding stories)")
+    print("-" * 80)
+    print(Config.SEARCH_PROMPT)
+
+    print("\n" + "-" * 80)
+    print("2. SEARCH_INSTRUCTION_PROMPT (system prompt for LLM search)")
+    print(
+        "   Placeholders: {max_stories}, {search_prompt}, {since_date}, {summary_words}"
+    )
+    print("-" * 80)
+    print(Config.SEARCH_INSTRUCTION_PROMPT)
+
+    print("\n" + "-" * 80)
+    print("3. IMAGE_STYLE (style directive for image generation)")
+    print("-" * 80)
+    print(Config.IMAGE_STYLE)
+
+    print("\n" + "-" * 80)
+    print("4. IMAGE_REFINEMENT_PROMPT (LLM prompt to create image prompts)")
+    print("   Placeholders: {story_title}, {story_summary}, {image_style}")
+    print("-" * 80)
+    print(Config.IMAGE_REFINEMENT_PROMPT)
+
+    print("\n" + "-" * 80)
+    print("5. IMAGE_FALLBACK_PROMPT (fallback when LLM refinement fails)")
+    print("   Placeholders: {story_title}")
+    print("-" * 80)
+    print(Config.IMAGE_FALLBACK_PROMPT)
+
+    print("\n" + "-" * 80)
+    print("6. VERIFICATION_PROMPT (content verification prompt)")
+    print(
+        "   Placeholders: {search_prompt}, {story_title}, {story_summary}, {story_sources}"
+    )
+    print("-" * 80)
+    print(Config.VERIFICATION_PROMPT)
+
+    if Config.SEARCH_PROMPT_TEMPLATE:
+        print("\n" + "-" * 80)
+        print(
+            "7. SEARCH_PROMPT_TEMPLATE (legacy override - if set, replaces SEARCH_INSTRUCTION_PROMPT)"
+        )
+        print(
+            "   Placeholders: {criteria}, {since_date}, {summary_words}, {max_stories}"
+        )
+        print("-" * 80)
+        print(Config.SEARCH_PROMPT_TEMPLATE)
+
+    print("\n" + "=" * 80)
+    print("To customize these prompts, add them to your .env file.")
+    print("=" * 80)
+    input("\nPress Enter to continue...")
 
 
 def _test_api_keys(engine: ContentEngine) -> None:
