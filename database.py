@@ -49,6 +49,9 @@ class Story:
         0.0  # Engagement rate (clicks+likes+comments+shares / impressions)
     )
     linkedin_analytics_fetched_at: Optional[datetime] = None
+    # Company mention enrichment fields
+    company_mention_enrichment: Optional[str] = None  # Company name or None
+    enrichment_status: str = "pending"  # pending, enriched, skipped, error
 
     def to_dict(self) -> dict:
         """Convert story to dictionary."""
@@ -86,6 +89,8 @@ class Story:
             "linkedin_analytics_fetched_at": self.linkedin_analytics_fetched_at.isoformat()
             if self.linkedin_analytics_fetched_at
             else None,
+            "company_mention_enrichment": self.company_mention_enrichment,
+            "enrichment_status": self.enrichment_status,
         }
 
     @classmethod
@@ -159,6 +164,12 @@ class Story:
             )
             if "linkedin_analytics_fetched_at" in keys
             else None,
+            company_mention_enrichment=row["company_mention_enrichment"]
+            if "company_mention_enrichment" in keys
+            else None,
+            enrichment_status=row["enrichment_status"]
+            if "enrichment_status" in keys
+            else "pending",
         )
 
 
@@ -251,6 +262,11 @@ class Database:
             self._migrate_add_column(cursor, "linkedin_engagement", "REAL DEFAULT 0.0")
             self._migrate_add_column(
                 cursor, "linkedin_analytics_fetched_at", "TIMESTAMP"
+            )
+            # Company mention enrichment columns
+            self._migrate_add_column(cursor, "company_mention_enrichment", "TEXT")
+            self._migrate_add_column(
+                cursor, "enrichment_status", "TEXT DEFAULT 'pending'"
             )
 
             # System state table for tracking last check date, etc.
