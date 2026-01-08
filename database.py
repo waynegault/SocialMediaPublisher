@@ -39,6 +39,10 @@ class Story:
     hashtags: list[str] = field(default_factory=list)
     # LinkedIn mentions: list of {"name": "...", "urn": "urn:li:person/organization:...", "type": "person/organization"}
     linkedin_mentions: list[dict] = field(default_factory=list)
+    # Company mention enrichment: None if no mention, or a sentence for LinkedIn post
+    company_mention_enrichment: Optional[str] = None
+    # Enrichment status: pending, completed, skipped (no mention found)
+    enrichment_status: str = "pending"
 
     def to_dict(self) -> dict:
         """Convert story to dictionary."""
@@ -67,6 +71,8 @@ class Story:
             "linkedin_post_url": self.linkedin_post_url,
             "hashtags": self.hashtags,
             "linkedin_mentions": self.linkedin_mentions,
+            "company_mention_enrichment": self.company_mention_enrichment,
+            "enrichment_status": self.enrichment_status,
         }
 
     @classmethod
@@ -123,6 +129,12 @@ class Story:
             else None,
             hashtags=hashtags,
             linkedin_mentions=linkedin_mentions,
+            company_mention_enrichment=row["company_mention_enrichment"]
+            if "company_mention_enrichment" in keys
+            else None,
+            enrichment_status=row["enrichment_status"]
+            if "enrichment_status" in keys
+            else "pending",
         )
 
 
@@ -204,6 +216,8 @@ class Database:
             self._migrate_add_column(cursor, "linkedin_post_url", "TEXT")
             self._migrate_add_column(cursor, "hashtags", "TEXT DEFAULT '[]'")
             self._migrate_add_column(cursor, "linkedin_mentions", "TEXT DEFAULT '[]'")
+            self._migrate_add_column(cursor, "company_mention_enrichment", "TEXT")
+            self._migrate_add_column(cursor, "enrichment_status", "TEXT DEFAULT 'pending'")
 
             # System state table for tracking last check date, etc.
             cursor.execute("""
@@ -240,8 +254,9 @@ class Database:
                 INSERT INTO stories
                 (title, summary, source_links, acquire_date, quality_score,
                  category, quality_justification, image_path, verification_status,
-                 publish_status, hashtags, linkedin_mentions)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 publish_status, hashtags, linkedin_mentions, company_mention_enrichment,
+                 enrichment_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     story.title,
@@ -256,6 +271,8 @@ class Database:
                     story.publish_status,
                     json.dumps(story.hashtags),
                     json.dumps(story.linkedin_mentions),
+                    story.company_mention_enrichment,
+                    story.enrichment_status,
                 ),
             )
             story_id = cursor.lastrowid or 0
@@ -310,7 +327,9 @@ class Database:
                     linkedin_post_id = ?,
                     linkedin_post_url = ?,
                     hashtags = ?,
-                    linkedin_mentions = ?
+                    linkedin_mentions = ?,
+                    company_mention_enrichment = ?,
+                    enrichment_status = ?
                 WHERE id = ?
                 """,
                 (
@@ -330,6 +349,8 @@ class Database:
                     story.linkedin_post_url,
                     json.dumps(story.hashtags),
                     json.dumps(story.linkedin_mentions),
+                    story.company_mention_enrichment,
+                    story.enrichment_status,
                     story.id,
                 ),
             )
@@ -386,6 +407,24 @@ class Database:
                 """
                 SELECT * FROM stories
                 WHERE verification_status = 'pending'
+                ORDER BY quality_score DESC
+                """
+            )
+            return [Story.from_row(row) for row in cursor.fetchall()]
+
+    def get_stories_needing_enrichment(self) -> list[Story]:
+        """Get stories that need company mention enrichment.
+
+        Returns all pending enrichment stories that have been approved and have images.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM stories
+                WHERE enrichment_status = 'pending'
+                AND verification_status = 'approved'
+                AND image_path IS NOT NULL
                 ORDER BY quality_score DESC
                 """
             )

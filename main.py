@@ -21,6 +21,7 @@ from database import Database
 from searcher import StorySearcher
 from image_generator import ImageGenerator
 from verifier import ContentVerifier
+from company_mention_enricher import CompanyMentionEnricher
 from scheduler import Scheduler
 from linkedin_publisher import LinkedInPublisher
 
@@ -60,6 +61,9 @@ class ContentEngine:
             self.db, self.genai_client, self.local_client
         )
         self.verifier = ContentVerifier(self.db, self.genai_client, self.local_client)
+        self.enricher = CompanyMentionEnricher(
+            self.db, self.genai_client, self.local_client
+        )
         self.scheduler = Scheduler(self.db)
         self.publisher = LinkedInPublisher(self.db)
 
@@ -160,8 +164,9 @@ class ContentEngine:
         1. Search for new stories
         2. Generate images for qualifying stories
         3. Verify content quality
-        4. Schedule for publication
-        5. Clean up old unused stories
+        4. Enrich with company mentions from sources
+        5. Schedule for publication
+        6. Clean up old unused stories
         """
         logger.info("=" * 60)
         logger.info("Starting Search Cycle")
@@ -183,8 +188,13 @@ class ContentEngine:
             approved, rejected = self.verifier.verify_pending_content()
             logger.info(f"Verification: {approved} approved, {rejected} rejected")
 
-            # Step 4: Schedule stories
-            logger.info("Step 4: Scheduling stories...")
+            # Step 4: Enrich with company mentions
+            logger.info("Step 4: Enriching with company mentions...")
+            enriched, skipped = self.enricher.enrich_pending_stories()
+            logger.info(f"Enrichment: {enriched} enriched, {skipped} skipped")
+
+            # Step 5: Schedule stories
+            logger.info("Step 5: Scheduling stories...")
             scheduled = self.scheduler.schedule_stories()
             logger.info(f"Scheduled {len(scheduled)} stories for publication")
 
@@ -192,8 +202,8 @@ class ContentEngine:
             schedule_summary = self.scheduler.get_schedule_summary()
             logger.info(schedule_summary)
 
-            # Step 5: Cleanup old stories
-            logger.info("Step 5: Cleaning up old stories...")
+            # Step 6: Cleanup old stories
+            logger.info("Step 6: Cleaning up old stories...")
             cutoff = datetime.now() - timedelta(days=Config.EXCLUSION_PERIOD_DAYS)
             self.db.delete_old_unused_stories(cutoff)
             self.image_generator.cleanup_orphaned_images()

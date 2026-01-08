@@ -121,48 +121,54 @@ class Config:
     # Placeholders: {story_title}, {story_summary}, {image_style}
     IMAGE_REFINEMENT_PROMPT: str = _get_str(
         "IMAGE_REFINEMENT_PROMPT",
-        """You are creating an image for a professional chemical engineering trade publication (like Chemical Engineering Magazine or AIChE publications).
+        """You are creating an image for a professional chemical or process engineering trade publication (e.g. Chemical Engineering Magazine, AIChE publications).
 
 STORY CONTEXT:
-Story Title: {story_title}
-Summary: {story_summary}
+- Title: {story_title}
+- Summary: {story_summary}
 
-YOUR TASK: Create an image prompt for a REALISTIC, PROFESSIONAL photograph that would appear in an engineering trade journal.
+TASK:
+Write a prompt to generate a PHOTOREALISTIC, documentary-style industrial photograph that directly represents the core technical theme of the story.
 
-CRITICAL REQUIREMENTS - THE IMAGE MUST BE:
-1. PHOTOREALISTIC - like a real photograph, NOT artistic, NOT fantasy, NOT stylized
-2. PROFESSIONAL - suitable for a serious engineering publication
-3. TECHNICALLY ACCURATE - showing real equipment, processes, or concepts correctly
-4. CREDIBLE - something a chemical engineer would recognize as realistic
+CRITICAL REQUIREMENTS — THE IMAGE MUST:
+1. Be photorealistic and indistinguishable from a real photograph
+2. Be suitable for a serious engineering trade journal (not marketing or promotional)
+3. Be technically accurate and recognizable to a practicing chemical/process engineer
+4. Show real industrial or laboratory equipment used correctly
+5. Include realistic industrial imperfections (minor wear, asymmetry, non-ideal layouts)
 
-SUBJECT SELECTION (choose the most appropriate):
-- Industrial equipment: reactors, distillation columns, heat exchangers, piping systems, control rooms
-- Laboratory settings: analytical instruments, lab glassware, researchers in lab coats
-- Manufacturing facilities: chemical plants, refineries, pharmaceutical production
-- Process technology: flow diagrams visualized as real equipment, process units
-- Materials and products: chemicals, polymers, catalysts, finished products
-- Data/monitoring: control panels, SCADA screens, process monitoring (if story is about digitalization)
+SUBJECT SELECTION (choose only what is directly relevant to the story):
+- Industrial process equipment (reactors, bioreactors, distillation columns, heat exchangers, piping networks)
+- Laboratory or pilot-scale setups (analytical instruments, fermentation systems, electrochemical cells)
+- Manufacturing or energy facilities (chemical plants, carbon capture units, refineries)
+- Process monitoring and control (control rooms, instrumentation, SCADA displays)
 
-WHAT TO AVOID:
-- Fantasy or sci-fi elements
-- Artistic interpretations or abstract concepts
-- Glowing/magical effects
-- Futuristic imaginary technology
-- Cartoonish or illustrated styles
-- Anything that would look silly to a practicing engineer
+PEOPLE:
+- Include people ONLY if necessary for scale or operation
+- No more than 1 or 2 individuals
+- PPE and behavior must be realistic and appropriate
 
-STYLE REQUIREMENTS:
-{image_style}
+AVOID:
+- Sci-fi or futuristic elements
+- Artistic or abstract interpretations
+- Overly clean, symmetrical, or staged scenes
+- Glowing effects, dramatic lighting, or cinematic styling
+- Cartoons, illustrations, or conceptual diagrams
 
-PHOTOGRAPHY SPECS:
-- Professional industrial photography style
-- Clean, well-lit scenes (industrial facility lighting or natural daylight)
+STYLE & PHOTOGRAPHY:
+- Documentary or industrial journalistic style
+- Natural or realistic facility lighting
+- Neutral, accurate color balance
 - Sharp focus, high resolution
-- Neutral, realistic colors
-- Documentary/journalistic aesthetic
+- Ordinary, believable industrial environment
 
-OUTPUT: Write ONLY the image prompt. No explanations. Maximum 100 words.
-Format: "[Specific industrial subject], [realistic setting], professional industrial photograph, photorealistic, sharp focus, natural lighting\"""",
+OUTPUT INSTRUCTIONS:
+- Output ONLY the image prompt
+- Maximum 100 words
+- No explanations or commentary
+- Use the following format:
+
+"Photorealistic industrial photograph of [specific equipment or process], located in [realistic industrial or laboratory setting], showing [story-specific technical detail], documentary style, natural lighting, sharp focus\"""",
     )
 
     # Fallback image prompt template when LLM refinement fails
@@ -192,11 +198,16 @@ REQUIREMENTS:
   * quality_justification: Brief explanation of the score
   * hashtags: Array of 1-3 relevant hashtags (without # symbol, e.g., ["ChemicalEngineering", "Sustainability"])
 
+
 WRITING STYLE FOR SUMMARIES:
-- Write in first person (use "I", "my", "I've found", "I'm excited about", etc.)
-- Sound like a professional sharing industry insights with their network
-- Be conversational but authoritative
-- Example: "I've been following this development closely, and I think it represents a significant shift in how we approach..."
+- Write in first person (use "I", "what stands out to me", "from an engineering perspective", etc.)
+- Sound like a chemical/process engineer sharing professional insights
+- Be concise, technical, and reflective rather than promotional
+- Each summary MUST include at least one engineering or industrial perspective
+  (e.g. scalability, process efficiency, integration, cost, energy use, or limitations)
+- Avoid sounding like a news aggregator or influencer
+Example:
+"What stands out to me is the engineering challenge behind this — particularly how it could scale beyond lab conditions and integrate with existing process infrastructure."
 
 HASHTAG GUIDELINES:
 - Use 1-3 relevant, professional hashtags per story
@@ -229,7 +240,7 @@ IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real UR
     # Placeholders: {search_prompt}, {story_title}, {story_summary}, {story_sources}
     VERIFICATION_PROMPT: str = _get_str(
         "VERIFICATION_PROMPT",
-        """You are a strict editorial standards board for a professional social media publication.
+        """You are a strict editorial review board for a professional engineering-focused LinkedIn publication.
 
 ORIGINAL SELECTION CRITERIA:
 "{search_prompt}"
@@ -240,31 +251,71 @@ Summary: {story_summary}
 Sources: {story_sources}
 
 EVALUATION CRITERIA:
-1. RELEVANCE: Does this story genuinely match the original selection criteria?
-2. PROFESSIONALISM: Is the content written in a professional, objective tone?
+1. RELEVANCE: Does this story clearly and genuinely match the original selection criteria?
+2. PROFESSIONALISM: Is the tone suitable for a professional engineering audience on LinkedIn?
 3. DECENCY: Is the content appropriate for all professional audiences?
-4. ACCURACY: Does the summary appear factual and well-sourced?
-5. QUALITY: Is this content worth sharing on a professional social media account?
+4. CREDIBILITY: Does the summary appear factual, technically plausible, and supported by reputable sources?
+5. ENGINEERING VALUE: Does the post demonstrate technical insight, judgement, critical thinking or industrial relevance (e.g. scalability, process implications, limitations)?
+6. DISTINCTIVENESS: Would this post make the author appear thoughtful rather than automated or generic?
 
-If an image is provided, also evaluate:
-6. IMAGE APPROPRIATENESS: Is the image professional and suitable for the story?
-7. IMAGE RELEVANCE: Does the image relate to the story topic?
+IMAGE EVALUATION (if an image is provided):
+7. IMAGE PROFESSIONALISM: Is the image credible and appropriate for a serious engineering context?
+8. IMAGE RELEVANCE: Does the image clearly relate to the technical subject of the story?
+9. IMAGE CREDIBILITY: Does the image avoid looking staged, promotional, or like generic AI stock imagery?
 
 IMPORTANT IMAGE NOTES:
-- All images are AI-generated, so "AI generated" watermarks/tags are ACCEPTABLE and should NOT cause rejection
-- Focus on whether the image content is professional and relevant to the story
+- Images are AI-generated; AI watermarks or tags are acceptable
+- Evaluate credibility and relevance, not origin
 
 DECISION RULES:
-- APPROVE only if ALL criteria are satisfactorily met
-- REJECT if ANY criteria is not met
-- When in doubt, REJECT
+- APPROVE only if ALL criteria are clearly satisfied
+- REJECT if ANY criterion is weak or unmet
+- When uncertain, REJECT
 
 Respond with ONLY one of these exact words:
 APPROVED
 or
 REJECTED
 
-Then on a new line, provide a brief (one sentence) reason.""",
+Then on a new line, provide a single concise reason for the decision.""",
+    )
+
+    # Company mention enrichment prompt - identify companies mentioned in sources
+    # Placeholders: {story_title}, {story_summary}, {story_sources}
+    COMPANY_MENTION_PROMPT: str = _get_str(
+        "COMPANY_MENTION_PROMPT",
+        """You are an editorial assistant identifying company mentions for a professional engineering LinkedIn publication.
+
+STORY DETAILS:
+Title: {story_title}
+Summary: {story_summary}
+Sources: {story_sources}
+
+TASK:
+Identify up to TWO companies or organizations that:
+1. Are EXPLICITLY NAMED in the provided sources, OR
+2. Are clearly and directly involved in the work (e.g., named collaborators, technology licensors, research partners)
+
+STRICT RULES:
+- Do NOT infer or speculate about potential industry interest
+- Do NOT mention companies based on size, reputation, or market presence alone
+- Company names must appear VERBATIM in the provided sources
+- If source evidence is ambiguous or incomplete, respond: NO_COMPANY_MENTION
+
+OUTPUT FORMAT (STRICT):
+- If companies are identified: Output EXACTLY one well-formed sentence suitable for direct insertion at the end of a LinkedIn post. The sentence must read as neutral, analytical, and professional. No promotional language, calls to action, or speculation.
+- If no clear company evidence: Output EXACTLY: NO_COMPANY_MENTION
+
+SENTENCE EXAMPLES (for reference):
+- "This work builds on [Company A]'s published research in [technical area]."
+- "The technology integrates [Company A]'s established [specific solution]."
+- "[Company A] and [Company B] collaborated on this development."
+
+CRITICAL:
+- No lists, explanations, or multiple sentences
+- No hashtags or @mentions
+- No leading/trailing whitespace
+- Default to NO_COMPANY_MENTION if uncertain""",
     )
 
     # --- Search Settings ---
