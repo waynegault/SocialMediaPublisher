@@ -102,44 +102,11 @@ class LinkedInMentionSearcher:
         """Build the prompt for finding LinkedIn profiles."""
         sources_text = "\n".join(f"- {s}" for s in sources[:3]) if sources else "None"
 
-        return f"""Analyze this news story and find LinkedIn profiles for key entities.
-
-STORY TITLE: {title}
-
-STORY SUMMARY: {summary}
-
-SOURCES:
-{sources_text}
-
-TASK: Search for LinkedIn profiles/company pages for:
-1. The main company/companies mentioned in the story
-2. Key executives (CEO, CTO, Chief Engineer, etc.) of those companies
-3. Researchers or authors named in the story
-4. Any other notable individuals mentioned
-
-For each entity found, provide:
-- name: Full name or company name
-- linkedin_url: The LinkedIn profile/company page URL (must be real, verified URL)
-- type: "person" or "organization"
-- role: Their role in the story context (e.g., "company", "ceo", "researcher", "author")
-
-IMPORTANT: Only include entities where you can find a REAL LinkedIn profile/page.
-Do NOT guess or make up LinkedIn URLs.
-
-Return JSON format:
-{{
-  "mentions": [
-    {{
-      "name": "Company or Person Name",
-      "linkedin_url": "https://www.linkedin.com/company/xxx or /in/xxx",
-      "type": "organization",
-      "role": "company"
-    }}
-  ]
-}}
-
-If no LinkedIn profiles can be found, return: {{"mentions": []}}
-"""
+        return Config.LINKEDIN_MENTION_PROMPT.format(
+            title=title,
+            summary=summary,
+            sources_text=sources_text,
+        )
 
     def _parse_mentions_response(self, response_text: str) -> list[dict]:
         """Parse the JSON response from the LLM."""

@@ -267,6 +267,116 @@ REJECTED
 Then on a new line, provide a brief (one sentence) reason.""",
     )
 
+    # Search query distillation prompt - converts long search requests into keywords
+    # Used by local LLM to optimize DuckDuckGo queries
+    SEARCH_DISTILL_PROMPT: str = _get_str(
+        "SEARCH_DISTILL_PROMPT",
+        "You are a search query optimizer. Convert long requests into 3-5 keyword search terms.",
+    )
+
+    # Local LLM story processing prompt - processes DuckDuckGo results into stories
+    # Placeholders: {author_name}, {search_prompt}, {search_results}, {max_stories}, {summary_words}
+    LOCAL_LLM_SEARCH_PROMPT: str = _get_str(
+        "LOCAL_LLM_SEARCH_PROMPT",
+        """You are a news curator writing for {author_name}'s LinkedIn profile. I have found the following search results for the query: "{search_prompt}"
+
+SEARCH RESULTS:
+{search_results}
+
+TASK:
+1. Select up to {max_stories} of the most relevant and interesting stories.
+2. For each story, provide:
+   - title: A catchy headline
+   - summary: A {summary_words}-word summary written in FIRST PERSON as if {author_name} is sharing their perspective
+   - sources: A list containing the original link
+   - category: One of: Technology, Business, Science, AI, Other
+   - quality_score: A score from 1-10 based on relevance and significance
+   - quality_justification: Brief explanation of the score
+   - hashtags: Array of 1-3 relevant hashtags (without # symbol)
+
+WRITING STYLE FOR SUMMARIES:
+- Write in first person (use "I", "my", "I've found", "I'm excited about", etc.)
+- Sound like a professional sharing industry insights with their network
+- Be conversational but authoritative
+- Example: "I've been following this development closely, and I think it represents..."
+
+HASHTAG GUIDELINES:
+- Use 1-3 relevant, professional hashtags per story
+- CamelCase for multi-word hashtags (e.g., ChemicalEngineering, ProcessOptimization)
+
+Return the results as a JSON object with a "stories" key containing an array of story objects.
+Example:
+{{
+  "stories": [
+    {{
+      "title": "Example Story",
+      "summary": "I found this fascinating development... [first-person summary]",
+      "sources": ["https://example.com"],
+      "category": "Technology",
+      "quality_score": 8,
+      "quality_justification": "Highly relevant, reputable source",
+      "hashtags": ["ChemicalEngineering", "Innovation"]
+    }}
+  ]
+}}
+
+Return ONLY the JSON object. Write ALL summaries in first person.""",
+    )
+
+    # LinkedIn mention search prompt - finds LinkedIn profiles for story entities
+    # Placeholders: {title}, {summary}, {sources_text}
+    LINKEDIN_MENTION_PROMPT: str = _get_str(
+        "LINKEDIN_MENTION_PROMPT",
+        """Analyze this news story and find LinkedIn profiles for key entities.
+
+STORY TITLE: {title}
+
+STORY SUMMARY: {summary}
+
+SOURCES:
+{sources_text}
+
+TASK: Search for LinkedIn profiles/company pages for:
+1. The main company/companies mentioned in the story
+2. Key executives (CEO, CTO, Chief Engineer, etc.) of those companies
+3. Researchers or authors named in the story
+4. Any other notable individuals mentioned
+
+For each entity found, provide:
+- name: Full name or company name
+- linkedin_url: The LinkedIn profile/company page URL (must be real, verified URL)
+- type: "person" or "organization"
+- role: Their role in the story context (e.g., "company", "ceo", "researcher", "author")
+
+IMPORTANT: Only include entities where you can find a REAL LinkedIn profile/page.
+Do NOT guess or make up LinkedIn URLs.
+
+Return JSON format:
+{{
+  "mentions": [
+    {{
+      "name": "Company or Person Name",
+      "linkedin_url": "https://www.linkedin.com/company/xxx or /in/xxx",
+      "type": "organization",
+      "role": "company"
+    }}
+  ]
+}}
+
+If no LinkedIn profiles can be found, return: {{"mentions": []}}""",
+    )
+
+    # JSON repair prompt - attempts to fix malformed JSON from LLM responses
+    # Placeholder: {malformed_json}
+    JSON_REPAIR_PROMPT: str = _get_str(
+        "JSON_REPAIR_PROMPT",
+        """The following JSON is malformed. Please fix it and return ONLY the corrected JSON:
+
+{malformed_json}
+
+Return ONLY valid JSON, no explanation.""",
+    )
+
     # --- Search Settings ---
     SEARCH_PROMPT: str = _get_str(
         "SEARCH_PROMPT",
