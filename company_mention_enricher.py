@@ -7,6 +7,7 @@ it defaults to NO_COMPANY_MENTION.
 
 import json
 import logging
+import time
 
 from google import genai  # type: ignore
 from openai import OpenAI
@@ -20,6 +21,66 @@ logger = logging.getLogger(__name__)
 
 # Exact string that indicates no company mention should be added
 NO_COMPANY_MENTION = "NO_COMPANY_MENTION"
+
+
+def validate_linkedin_url(url: str) -> bool:
+    """
+    Validate that a LinkedIn URL returns a valid profile page.
+
+    Performs a HEAD request to check if the URL:
+    1. Is accessible (returns 200 OK)
+    2. Does not redirect to a login/error page
+
+    Args:
+        url: The LinkedIn profile URL to validate
+
+    Returns:
+        True if the URL appears to be a valid, accessible profile
+    """
+    if not url or "linkedin.com/in/" not in url:
+        return False
+
+    try:
+        # Use headers that mimic a browser to avoid blocks
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        }
+
+        response = requests.head(url, headers=headers, timeout=10, allow_redirects=True)
+
+        # Check if we got a successful response
+        if response.status_code == 200:
+            # Check if we weren't redirected to a login or error page
+            final_url = response.url if hasattr(response, "url") else url
+            if "/login" in final_url or "/authwall" in final_url:
+                logger.debug(f"LinkedIn URL redirected to login: {url}")
+                return False
+            return True
+
+        # 405 Method Not Allowed - try GET instead
+        if response.status_code == 405:
+            response = requests.get(
+                url, headers=headers, timeout=10, allow_redirects=True
+            )
+            if response.status_code == 200:
+                # Check we're still on a profile page
+                if "/in/" in response.url and "/login" not in response.url:
+                    return True
+
+        logger.debug(
+            f"LinkedIn URL validation failed with status {response.status_code}: {url}"
+        )
+        return False
+
+    except requests.exceptions.Timeout:
+        # Timeout might mean the URL exists but is slow - accept cautiously
+        logger.debug(f"LinkedIn URL timeout (accepting cautiously): {url}")
+        return True
+    except requests.exceptions.RequestException as e:
+        logger.debug(f"LinkedIn URL validation error ({type(e).__name__}): {url}")
+        return False
 
 
 class CompanyMentionEnricher:
@@ -449,24 +510,34 @@ class CompanyMentionEnricher:
                 logger.warning(f"Unexpected response format: {type(profiles)}")
                 return []
 
-            # Validate and filter results
+            # Validate and filter results - now includes URL validation
             valid_profiles = []
             for profile in profiles:
                 url = profile.get("linkedin_url", "")
                 if url and "linkedin.com/in/" in url:
-                    # Extract username from URL
-                    username = (
-                        url.split("linkedin.com/in/")[-1].rstrip("/").split("?")[0]
-                    )
-                    valid_profiles.append(
-                        {
-                            "name": profile.get("name", ""),
-                            "title": profile.get("title", ""),
-                            "affiliation": profile.get("affiliation", ""),
-                            "handle": f"@{username}" if username else None,
-                            "linkedin_url": url,
-                        }
-                    )
+                    # Validate the URL actually returns a valid profile
+                    if validate_linkedin_url(url):
+                        # Extract username from URL
+                        username = (
+                            url.split("linkedin.com/in/")[-1].rstrip("/").split("?")[0]
+                        )
+                        valid_profiles.append(
+                            {
+                                "name": profile.get("name", ""),
+                                "title": profile.get("title", ""),
+                                "affiliation": profile.get("affiliation", ""),
+                                "handle": f"@{username}" if username else None,
+                                "linkedin_url": url,
+                            }
+                        )
+                        logger.debug(f"LinkedIn URL validated: {url}")
+                    else:
+                        logger.info(
+                            f"  ⚠ LinkedIn URL validation failed, skipping: {url}"
+                        )
+
+                    # Small delay between validation requests to avoid rate limiting
+                    time.sleep(0.5)
 
             return valid_profiles
 

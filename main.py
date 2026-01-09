@@ -357,8 +357,8 @@ Social Media Publisher - Debug Menu
 
   Component Testing:
    15. Test Story Search
-   16. Test Image Generation
-   17. Test Company & Individual Enrichment
+   16. Test Company & Individual Enrichment
+   17. Test Image Generation
    18. Test Content Verification
    19. Test Scheduling
    20. Test LinkedIn Connection
@@ -428,9 +428,9 @@ Social Media Publisher - Debug Menu
         elif choice == "15":
             _test_search(engine)
         elif choice == "16":
-            _test_image_generation(engine)
-        elif choice == "17":
             _test_enrichment(engine)
+        elif choice == "17":
+            _test_image_generation(engine)
         elif choice == "18":
             _test_verification(engine)
         elif choice == "19":
@@ -1910,10 +1910,10 @@ def _test_api_keys(engine: ContentEngine) -> None:
     print("  Testing Hugging Face API...", end=" ", flush=True)
     if Config.HUGGINGFACE_API_TOKEN:
         try:
-            # Test with a simple whoami endpoint
+            # Test with the whoami-v2 endpoint (v1 is deprecated)
             headers = {"Authorization": f"Bearer {Config.HUGGINGFACE_API_TOKEN}"}
             response = requests.get(
-                "https://huggingface.co/api/whoami",
+                "https://huggingface.co/api/whoami-v2",
                 headers=headers,
                 timeout=10,
             )

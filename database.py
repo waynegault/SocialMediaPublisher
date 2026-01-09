@@ -17,39 +17,38 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Story:
-    """Represents a story in the database."""
+    """Represents a story in the database.
 
+    Fields are organized to follow the workflow sequence:
+    1. Identity - Core story identification
+    2. Search/Discovery - Data from initial story search
+    3. Enrichment - LinkedIn profile lookup results
+    4. Image Generation - Generated image data
+    5. Verification - Content quality verification
+    6. Scheduling/Publishing - Publication workflow
+    7. Analytics - Post-publication metrics
+    8. Legacy - Deprecated fields for backward compatibility
+    """
+
+    # --- 1. IDENTITY ---
     id: Optional[int] = None
     title: str = ""
     summary: str = ""
+
+    # --- 2. SEARCH/DISCOVERY (from story search) ---
     source_links: list[str] = field(default_factory=list)
     acquire_date: Optional[datetime] = None
     quality_score: int = 0
-    category: str = "Other"  # Technology, Business, Science, AI, Other
     quality_justification: str = ""  # Reasoning for the quality score
-    image_path: Optional[str] = None
-    verification_status: str = "pending"  # pending, approved, rejected
-    verification_reason: Optional[str] = None  # AI's reason for approval/rejection
-    publish_status: str = "unpublished"  # unpublished, scheduled, published
-    scheduled_time: Optional[datetime] = None
-    published_time: Optional[datetime] = None
-    linkedin_post_id: Optional[str] = None
-    linkedin_post_url: Optional[str] = None
-    # Hashtags for LinkedIn posts (max 3)
-    hashtags: list[str] = field(default_factory=list)
-    # LinkedIn mentions: list of {"name": "...", "urn": "urn:li:person/organization:...", "type": "person/organization"}
-    linkedin_mentions: list[dict] = field(default_factory=list)
-    # LinkedIn analytics (fetched from API after publication)
-    linkedin_impressions: int = 0
-    linkedin_clicks: int = 0
-    linkedin_likes: int = 0
-    linkedin_comments: int = 0
-    linkedin_shares: int = 0
-    linkedin_engagement: float = (
-        0.0  # Engagement rate (clicks+likes+comments+shares / impressions)
-    )
-    linkedin_analytics_fetched_at: Optional[datetime] = None
-    # --- Enrichment fields (cleaner structure) ---
+    category: str = "Other"  # Medicine, Hydrogen, Research, Technology, Business, Science, AI, Other
+    hashtags: list[str] = field(
+        default_factory=list
+    )  # Hashtags for LinkedIn posts (max 3)
+    # Relevant people extracted during story search - consolidated list for LinkedIn lookup
+    # [{"name": "Dr. Jane Smith", "company": "MIT", "position": "Lead Researcher", "linkedin_profile": ""}]
+    relevant_people: list[dict] = field(default_factory=list)
+
+    # --- 3. ENRICHMENT (LinkedIn profile lookup) ---
     enrichment_status: str = "pending"  # pending, enriched, skipped, error
     # Organizations mentioned in the story (just names)
     organizations: list[str] = field(default_factory=list)  # ["BASF", "MIT", "IChemE"]
@@ -65,12 +64,35 @@ class Story:
     linkedin_handles: list[dict] = field(
         default_factory=list
     )  # [{"name": "Dr. Jane Smith", "handle": "janesmith", "urn": "urn:li:person:123", "url": "https://linkedin.com/in/janesmith"}]
-    # Relevant people from story generation - consolidated list of people to find LinkedIn profiles for
-    # [{"name": "Dr. Jane Smith", "company": "MIT", "position": "Lead Researcher", "linkedin_profile": ""}]
-    # This includes: people mentioned in the story AND key leaders from mentioned orgs
-    # (CEO, President, Director of Engineering/Research/Operations/HR, Principal Investigator, etc.)
-    relevant_people: list[dict] = field(default_factory=list)
-    # Legacy fields (kept for backward compatibility, will be migrated)
+
+    # --- 4. IMAGE GENERATION ---
+    image_path: Optional[str] = None
+
+    # --- 5. VERIFICATION ---
+    verification_status: str = "pending"  # pending, approved, rejected
+    verification_reason: Optional[str] = None  # AI's reason for approval/rejection
+
+    # --- 6. SCHEDULING/PUBLISHING ---
+    scheduled_time: Optional[datetime] = None
+    publish_status: str = "unpublished"  # unpublished, scheduled, published
+    published_time: Optional[datetime] = None
+    linkedin_post_id: Optional[str] = None
+    linkedin_post_url: Optional[str] = None
+    # LinkedIn mentions: list of {"name": "...", "urn": "urn:li:person/organization:...", "type": "person/organization"}
+    linkedin_mentions: list[dict] = field(default_factory=list)
+
+    # --- 7. ANALYTICS (fetched from API after publication) ---
+    linkedin_impressions: int = 0
+    linkedin_clicks: int = 0
+    linkedin_likes: int = 0
+    linkedin_comments: int = 0
+    linkedin_shares: int = 0
+    linkedin_engagement: float = (
+        0.0  # Engagement rate (clicks+likes+comments+shares / impressions)
+    )
+    linkedin_analytics_fetched_at: Optional[datetime] = None
+
+    # --- 8. LEGACY FIELDS (deprecated, kept for backward compatibility) ---
     company_mention_enrichment: Optional[str] = None  # DEPRECATED - use organizations
     individuals: list[str] = field(
         default_factory=list
@@ -80,32 +102,45 @@ class Story:
     )  # DEPRECATED - use linkedin_handles
 
     def to_dict(self) -> dict:
-        """Convert story to dictionary."""
+        """Convert story to dictionary (organized by workflow sequence)."""
         return {
+            # 1. Identity
             "id": self.id,
             "title": self.title,
             "summary": self.summary,
+            # 2. Search/Discovery
             "source_links": self.source_links,
             "acquire_date": self.acquire_date.isoformat()
             if self.acquire_date
             else None,
             "quality_score": self.quality_score,
-            "category": self.category,
             "quality_justification": self.quality_justification,
+            "category": self.category,
+            "hashtags": self.hashtags,
+            "relevant_people": self.relevant_people,
+            # 3. Enrichment
+            "enrichment_status": self.enrichment_status,
+            "organizations": self.organizations,
+            "story_people": self.story_people,
+            "org_leaders": self.org_leaders,
+            "linkedin_handles": self.linkedin_handles,
+            # 4. Image Generation
             "image_path": self.image_path,
+            # 5. Verification
             "verification_status": self.verification_status,
             "verification_reason": self.verification_reason,
-            "publish_status": self.publish_status,
+            # 6. Scheduling/Publishing
             "scheduled_time": self.scheduled_time.isoformat()
             if self.scheduled_time
             else None,
+            "publish_status": self.publish_status,
             "published_time": self.published_time.isoformat()
             if self.published_time
             else None,
             "linkedin_post_id": self.linkedin_post_id,
             "linkedin_post_url": self.linkedin_post_url,
-            "hashtags": self.hashtags,
             "linkedin_mentions": self.linkedin_mentions,
+            # 7. Analytics
             "linkedin_impressions": self.linkedin_impressions,
             "linkedin_clicks": self.linkedin_clicks,
             "linkedin_likes": self.linkedin_likes,
@@ -115,13 +150,7 @@ class Story:
             "linkedin_analytics_fetched_at": self.linkedin_analytics_fetched_at.isoformat()
             if self.linkedin_analytics_fetched_at
             else None,
-            "enrichment_status": self.enrichment_status,
-            "organizations": self.organizations,
-            "story_people": self.story_people,
-            "org_leaders": self.org_leaders,
-            "linkedin_handles": self.linkedin_handles,
-            "relevant_people": self.relevant_people,
-            # Legacy fields (deprecated)
+            # 8. Legacy (deprecated)
             "company_mention_enrichment": self.company_mention_enrichment,
             "individuals": self.individuals,
             "linkedin_profiles": self.linkedin_profiles,
