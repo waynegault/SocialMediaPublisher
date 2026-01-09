@@ -359,6 +359,9 @@ NOT_FOUND"""
         self, company_name: str, search_query: str, validate: bool
     ) -> tuple[Optional[str], Optional[str]]:
         """Execute a search with a specific query."""
+        # Note: caller (search_company) guarantees self.client is not None
+        assert self.client is not None
+
         prompt = f"""Find the official LinkedIn page for: {company_name}
 
 Search for: {search_query}
