@@ -245,6 +245,12 @@ QUALITY SCORE RUBRIC:
 - 4-5: Tangential relevance or routine announcement
 - 1-3: Weak relevance, questionable source, or outdated
 
+GEOGRAPHIC PRIORITY (add +1 to score for stories from these regions):
+- English-speaking countries: USA, UK, Canada, Australia, New Zealand, Ireland
+- European countries: Germany, France, Netherlands, Switzerland, Sweden, Denmark, Norway, Finland, Belgium, Austria, Italy, Spain
+- Stories from these regions typically have better LinkedIn engagement for English-speaking professional audiences
+- Apply the +1 bonus AFTER calculating the base score (cap at 10)
+
 CRITICAL - INCLUDE NAMES IN SUMMARY:
 - ALWAYS mention specific COMPANY NAMES involved in the story (e.g., "BASF", "MIT", "ExxonMobil")
 - ALWAYS mention KEY INDIVIDUALS by full name when available (researchers, CEOs, lead engineers)

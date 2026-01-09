@@ -380,7 +380,7 @@ class StorySearcher:
     def _resolve_story_source_urls(self, stories_data: list[dict]) -> list[dict]:
         """
         Resolve redirect URLs in story sources to actual article URLs.
-        
+
         The LLM outputs vertexaisearch.cloud.google.com redirect URLs.
         These must be resolved to get the actual article URLs.
         Google Search query URLs are filtered out as they are not article sources.
@@ -406,7 +406,9 @@ class StorySearcher:
                     resolved = self._resolve_redirect_url(url)
                     if resolved and "vertexaisearch.cloud.google.com" not in resolved:
                         resolved_sources.append(resolved)
-                        logger.debug(f"Resolved URL: {url[:50]}... -> {resolved[:50]}...")
+                        logger.debug(
+                            f"Resolved URL: {url[:50]}... -> {resolved[:50]}..."
+                        )
                     else:
                         logger.warning(f"Failed to resolve redirect URL: {url[:60]}...")
                 else:
