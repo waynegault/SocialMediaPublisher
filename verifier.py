@@ -70,6 +70,19 @@ class ContentVerifier:
                         skipped += 1
                         continue
 
+                # Log LinkedIn profile status
+                linkedin_valid, linkedin_msg = self._validate_linkedin_profiles(story)
+                logger.info(f"  LinkedIn status: {linkedin_msg}")
+
+                # Reject stories without sufficient LinkedIn profile coverage
+                if not linkedin_valid:
+                    story.verification_status = "rejected"
+                    story.verification_reason = linkedin_msg
+                    rejected += 1
+                    logger.warning(f"  ✗ REJECTED: {linkedin_msg}")
+                    self.db.update_story(story)
+                    continue
+
                 is_approved, reason = self._verify_story(story)
 
                 if is_approved:
@@ -220,12 +233,78 @@ class ContentVerifier:
 
     def _build_verification_prompt(self, story: Story) -> str:
         """Build the verification prompt for a story."""
+        # Count relevant people and LinkedIn profiles found
+        relevant_people_count = (
+            len(story.relevant_people) if story.relevant_people else 0
+        )
+        linkedin_profiles_found = 0
+
+        # Count LinkedIn profiles in relevant_people
+        if story.relevant_people:
+            linkedin_profiles_found = sum(
+                1
+                for p in story.relevant_people
+                if p.get("linkedin_profile")
+                and str(p.get("linkedin_profile", "")).strip()
+            )
+
+        # Also count from linkedin_handles if available
+        if story.linkedin_handles:
+            linkedin_profiles_found = max(
+                linkedin_profiles_found, len(story.linkedin_handles)
+            )
+
         return Config.VERIFICATION_PROMPT.format(
             search_prompt=Config.SEARCH_PROMPT,
             story_title=story.title,
             story_summary=story.summary,
             story_sources=", ".join(story.source_links[:3]),
+            relevant_people_count=relevant_people_count,
+            linkedin_profiles_found=linkedin_profiles_found,
         )
+
+    def _validate_linkedin_profiles(self, story: Story) -> tuple[bool, str]:
+        """
+        Validate that LinkedIn profiles have been identified for the story.
+        Returns (is_valid, message).
+
+        Stories require:
+        - At least 1 relevant person identified
+        - At least 1 LinkedIn profile found (50% coverage minimum)
+        """
+        relevant_count = len(story.relevant_people) if story.relevant_people else 0
+        linkedin_count = 0
+
+        if story.relevant_people:
+            linkedin_count = sum(
+                1
+                for p in story.relevant_people
+                if p.get("linkedin_profile")
+                and str(p.get("linkedin_profile", "")).strip()
+            )
+
+        if story.linkedin_handles:
+            linkedin_count = max(linkedin_count, len(story.linkedin_handles))
+
+        # Validation rules for sufficient people and LinkedIn profile coverage
+        if relevant_count == 0:
+            return (
+                False,
+                "No relevant people identified - story needs associated individuals for engagement",
+            )
+        elif linkedin_count == 0:
+            return (
+                False,
+                f"{relevant_count} people identified but no LinkedIn profiles found - run enrichment first",
+            )
+        elif linkedin_count < (relevant_count * 0.5):
+            return (
+                False,
+                f"Insufficient LinkedIn coverage: {linkedin_count}/{relevant_count} profiles "
+                f"({int(linkedin_count / relevant_count * 100)}%) - need at least 50%",
+            )
+        else:
+            return (True, f"{linkedin_count}/{relevant_count} LinkedIn profiles found")
 
     def _parse_verification_response(self, response_text: str) -> tuple[bool, str]:
         """Parse the verification response to determine approval status.

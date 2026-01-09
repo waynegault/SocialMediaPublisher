@@ -36,6 +36,8 @@ For detailed architecture and component documentation, see the [Overview wiki](h
   @ mentions, and your signature block
 - **LinkedIn Analytics**: Track impressions, likes, comments, shares for posts
 - **Smart Hashtags**: AI-generated relevant hashtags (up to 3 per post)
+- **Relevant People Extraction**: Automatically identifies people mentioned in stories
+  AND key leaders from mentioned organizations (CEOs, Directors, Principal Investigators, etc.)
 - **Story Enrichment**: Extracts organizations, story people, and org leaders
 - **LinkedIn Profile Search**: Finds real LinkedIn profiles using Google Search grounding
 - **LinkedIn @ Mentions**: Automatic @ mentions using verified LinkedIn usernames
@@ -51,12 +53,16 @@ For detailed architecture and component documentation, see the [Overview wiki](h
 
 ## How It Works
 
-1. **Search Cycle**: Discovers new stories based on your prompt and date range
-2. **Image Generation**: Creates images for stories that meet quality threshold
-3. **Verification**: AI reviews each story+image for quality before publication
-4. **Scheduling**: Approved stories are scheduled within your publishing window
-5. **Publishing**: Stories are published to LinkedIn at their scheduled times
-6. **Cleanup**: Old unpublished stories are removed after the exclusion period
+1. **Search Cycle**: Discovers new stories based on your prompt and date range,
+   extracting hashtags and relevant people (including key org leaders) during generation
+2. **Image Generation**: Creates images for stories that meet quality threshold,
+   following strict 1/3 people vs 2/3 story composition guidelines
+3. **Verification**: AI reviews each story+image for quality before publication,
+   including validation of LinkedIn profile identification
+4. **Enrichment**: Finds LinkedIn profiles for relevant people identified during search
+5. **Scheduling**: Approved stories are scheduled within your publishing window
+6. **Publishing**: Stories are published to LinkedIn at their scheduled times
+7. **Cleanup**: Old unpublished stories are removed after the exclusion period
 
 ## Installation
 
@@ -131,6 +137,13 @@ context into an optimized prompt following these principles:
 - Add environment and setting details
 - Include lighting and atmosphere
 - End with camera/technical specifications
+
+**Image Composition (1/3 People vs 2/3 Story)**:
+
+- Technology/equipment from the story occupies 2/3 of the image, positioned center
+- Human element (engineer/technician) occupies strictly 1/3, positioned at far edge
+- People provide context and scale, but are never the main focus
+- This ensures the story subject matter dominates the visual narrative
 
 **Photography Modifiers Used**:
 
@@ -312,6 +325,8 @@ Stories are stored in SQLite with the following fields:
 - `organizations`: JSON array of organization names mentioned in story
 - `story_people`: JSON array of people mentioned in story (name, title, affiliation)
 - `org_leaders`: JSON array of key executives from organizations (name, title, org)
+- `relevant_people`: JSON array of people for LinkedIn lookup (name, company, position, linkedin_profile)
+  - Populated during story generation with people from the story AND key org leaders
 - `linkedin_handles`: JSON array of verified LinkedIn profiles with @ handles
 
 ## Workflow Details

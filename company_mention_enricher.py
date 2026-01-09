@@ -38,7 +38,14 @@ class CompanyMentionEnricher:
 
     def enrich_pending_stories(self) -> tuple[int, int]:
         """
-        Enrich all pending stories with organizations and people.
+        Enrich all pending stories with LinkedIn profiles for relevant_people.
+
+        The enrichment process now works as follows:
+        1. During story generation, relevant_people is populated with people mentioned
+           in the story AND key leaders from mentioned organizations
+        2. This method finds LinkedIn profiles for those people
+        3. If relevant_people is empty, fall back to AI extraction
+
         Returns tuple of (enriched_count, skipped_count).
         """
         stories = self.db.get_stories_needing_enrichment()
@@ -57,36 +64,103 @@ class CompanyMentionEnricher:
             try:
                 logger.info(f"[{i}/{total}] Enriching: {story.title}")
 
-                # Use new enrichment method
-                result = self._extract_orgs_and_people(story)
+                # Check if we have relevant_people from story generation
+                if story.relevant_people:
+                    logger.info(
+                        f"  Using {len(story.relevant_people)} people from story generation"
+                    )
 
-                if result:
-                    orgs = result.get("organizations", [])
-                    people = result.get("story_people", [])
+                    # Find LinkedIn profiles for relevant_people
+                    people_for_lookup = [
+                        {
+                            "name": p.get("name", ""),
+                            "title": p.get("position", ""),
+                            "affiliation": p.get("company", ""),
+                        }
+                        for p in story.relevant_people
+                        if p.get("name")
+                    ]
 
-                    story.organizations = orgs
-                    story.story_people = people
+                    if people_for_lookup:
+                        linkedin_handles = self._find_linkedin_profiles_batch(
+                            people_for_lookup
+                        )
+
+                        # Update relevant_people with found LinkedIn profiles
+                        if linkedin_handles:
+                            profiles_by_name = {
+                                h.get("name", "").lower(): h for h in linkedin_handles
+                            }
+                            updated_people = []
+                            for person in story.relevant_people:
+                                name_lower = person.get("name", "").lower()
+                                if name_lower in profiles_by_name:
+                                    profile = profiles_by_name[name_lower]
+                                    person["linkedin_profile"] = profile.get(
+                                        "linkedin_url", ""
+                                    )
+                                updated_people.append(person)
+                            story.relevant_people = updated_people
+
+                        story.linkedin_handles = linkedin_handles
+                        logger.info(
+                            f"  ✓ Found {len(linkedin_handles)} LinkedIn profiles"
+                        )
+                        for handle in linkedin_handles:
+                            logger.info(
+                                f"    → {handle.get('name', '')}: {handle.get('linkedin_url', '')}"
+                            )
+
+                    # Also populate organizations from relevant_people companies
+                    orgs = list(
+                        set(
+                            p.get("company", "")
+                            for p in story.relevant_people
+                            if p.get("company")
+                        )
+                    )
+                    if orgs:
+                        story.organizations = orgs
+
                     story.enrichment_status = "enriched"
+                    enriched += 1
 
-                    if orgs or people:
-                        logger.info(f"  ✓ Found {len(orgs)} orgs, {len(people)} people")
-                        if orgs:
-                            logger.info(
-                                f"    Organizations: {', '.join(orgs[:3])}{'...' if len(orgs) > 3 else ''}"
-                            )
-                        if people:
-                            names = [p.get("name", "") for p in people[:3]]
-                            logger.info(
-                                f"    People: {', '.join(names)}{'...' if len(people) > 3 else ''}"
-                            )
-                        enriched += 1
-                    else:
-                        logger.info("  ⏭ No organizations or people found")
-                        skipped += 1
                 else:
-                    story.enrichment_status = "enriched"
-                    logger.info("  ⏭ Could not extract data")
-                    skipped += 1
+                    # Fall back to AI extraction if no relevant_people
+                    logger.info(
+                        "  No relevant_people from story generation, using AI extraction..."
+                    )
+                    result = self._extract_orgs_and_people(story)
+
+                    if result:
+                        orgs = result.get("organizations", [])
+                        people = result.get("story_people", [])
+
+                        story.organizations = orgs
+                        story.story_people = people
+                        story.enrichment_status = "enriched"
+
+                        if orgs or people:
+                            logger.info(
+                                f"  ✓ Found {len(orgs)} orgs, {len(people)} people"
+                            )
+                            if orgs:
+                                logger.info(
+                                    f"    Organizations: {', '.join(orgs[:3])}{'...' if len(orgs) > 3 else ''}"
+                                )
+                            if people:
+                                names = [p.get("name", "") for p in people[:3]]
+                                logger.info(
+                                    f"    People: {', '.join(names)}{'...' if len(people) > 3 else ''}"
+                                )
+                            enriched += 1
+                        else:
+                            logger.info("  ⏭ No organizations or people found")
+                            skipped += 1
+                    else:
+                        story.enrichment_status = "enriched"
+                        logger.info("  ⏭ Could not extract data")
+                        skipped += 1
 
                 self.db.update_story(story)
 
