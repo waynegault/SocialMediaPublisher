@@ -1,6 +1,7 @@
 """LinkedIn publishing functionality."""
 
 import logging
+import re
 import requests
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,9 @@ from database import Database, Story
 from opportunity_messages import get_random_opportunity_message
 
 logger = logging.getLogger(__name__)
+
+# Pre-compiled regex for URN validation (must end with numeric ID)
+_URN_PATTERN = re.compile(r"^urn:li:(person|organization):\d+$")
 
 
 class LinkedInPublisher:
@@ -277,11 +281,8 @@ class LinkedInPublisher:
 
     def _is_valid_urn(self, urn: str) -> bool:
         """Check if URN has a numeric ID (required for @ mentions)."""
-        import re
-
-        # Valid URN must end with numeric ID
-        pattern = r"^urn:li:(person|organization):\d+$"
-        return bool(re.match(pattern, urn))
+        # Uses pre-compiled module-level pattern for efficiency
+        return bool(_URN_PATTERN.match(urn))
 
     def _build_image_post_payload(
         self, text: str, story: Story, image_asset: str
@@ -544,6 +545,7 @@ class LinkedInPublisher:
         try:
             # Determine numeric organization ID from URN if possible
             import re
+
             org_urn_value = str(Config.LINKEDIN_ORGANIZATION_URN)
             m = re.search(r"(\d+)$", org_urn_value)
             if m:
@@ -813,10 +815,159 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
+    def test_is_valid_urn_valid_person():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            assert publisher._is_valid_urn("urn:li:person:12345") is True
+        finally:
+            os.unlink(db_path)
+
+    def test_is_valid_urn_valid_organization():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            assert publisher._is_valid_urn("urn:li:organization:67890") is True
+        finally:
+            os.unlink(db_path)
+
+    def test_is_valid_urn_invalid_format():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            # Non-numeric ID
+            assert publisher._is_valid_urn("urn:li:person:abc") is False
+            # Wrong prefix
+            assert publisher._is_valid_urn("urn:li:company:12345") is False
+            # Missing parts
+            assert publisher._is_valid_urn("urn:li:person") is False
+            # Empty
+            assert publisher._is_valid_urn("") is False
+        finally:
+            os.unlink(db_path)
+
+    def test_get_post_url():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            url = publisher._get_post_url("urn:li:share:7415014901590642688")
+            assert "linkedin.com/feed/update" in url
+            assert "urn:li:share:7415014901590642688" in url
+        finally:
+            os.unlink(db_path)
+
+    def test_format_mentions_empty():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            result = publisher._format_mentions([])
+            assert result == ""
+        finally:
+            os.unlink(db_path)
+
+    def test_format_mentions_with_urn():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            mentions = [{"name": "Test Company", "urn": "urn:li:organization:12345"}]
+            result = publisher._format_mentions(mentions)
+            assert "Related:" in result
+            assert "@[Test Company]" in result
+            assert "urn:li:organization:12345" in result
+        finally:
+            os.unlink(db_path)
+
+    def test_format_mentions_with_url_fallback():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            mentions = [
+                {
+                    "name": "Test Company",
+                    "linkedin_url": "https://linkedin.com/company/test",
+                }
+            ]
+            result = publisher._format_mentions(mentions)
+            assert "Related:" in result
+            assert "Test Company" in result
+            assert "linkedin.com/company/test" in result
+        finally:
+            os.unlink(db_path)
+
+    def test_verify_post_exists_no_token():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            # Without a token, should return False
+            exists, data = publisher.verify_post_exists("")
+            assert exists is False
+            assert data is None
+        finally:
+            os.unlink(db_path)
+
+    def test_fetch_post_analytics_no_post_id():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            story = Story(
+                title="Test",
+                summary="Summary",
+                source_links=[],
+                quality_score=7,
+                linkedin_post_id=None,  # No post ID
+            )
+            result = publisher.fetch_post_analytics(story)
+            assert result is None
+        finally:
+            os.unlink(db_path)
+
+    def test_refresh_all_analytics_empty():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            # With no published stories, should return (0, 0)
+            success, failure = publisher.refresh_all_analytics()
+            assert success == 0
+            assert failure == 0
+        finally:
+            os.unlink(db_path)
+
     suite.add_test("Publisher init", test_publisher_init)
     suite.add_test("Get headers", test_get_headers)
     suite.add_test("Format post text", test_format_post_text)
     suite.add_test("Build image post payload", test_build_image_post_payload)
     suite.add_test("Build article post payload", test_build_article_post_payload)
+    suite.add_test("Valid URN - person", test_is_valid_urn_valid_person)
+    suite.add_test("Valid URN - organization", test_is_valid_urn_valid_organization)
+    suite.add_test("Invalid URN formats", test_is_valid_urn_invalid_format)
+    suite.add_test("Get post URL", test_get_post_url)
+    suite.add_test("Format mentions - empty", test_format_mentions_empty)
+    suite.add_test("Format mentions - with URN", test_format_mentions_with_urn)
+    suite.add_test(
+        "Format mentions - URL fallback", test_format_mentions_with_url_fallback
+    )
+    suite.add_test("Verify post exists - no token", test_verify_post_exists_no_token)
+    suite.add_test("Fetch analytics - no post ID", test_fetch_post_analytics_no_post_id)
+    suite.add_test("Refresh analytics - empty", test_refresh_all_analytics_empty)
 
     return suite

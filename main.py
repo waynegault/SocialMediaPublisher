@@ -359,15 +359,15 @@ Social Media Publisher - Debug Menu
    15. Test Story Search
    16. Test Image Generation
    17. Test Content Verification
-   18. Test Company Mention Enrichment
+   18. Test Company & Individual Enrichment
    19. Test Scheduling
    20. Test LinkedIn Connection
    21. Test LinkedIn Publish (due stories)
    22. Run Unit Tests
 
   Analytics:
-   22. View LinkedIn Analytics
-   23. Refresh All Analytics
+   23. View LinkedIn Analytics
+   24. Refresh All Analytics
 
    0. Exit
 ============================================================
@@ -785,8 +785,8 @@ def _test_verification(engine: ContentEngine) -> None:
 
 
 def _test_enrichment(engine: ContentEngine) -> None:
-    """Test the company mention enrichment component."""
-    print("\n--- Testing Company Mention Enrichment ---")
+    """Test the story enrichment component (organizations and people)."""
+    print("\n--- Story Enrichment (Organizations & People) ---")
 
     stories = engine.db.get_stories_needing_enrichment()
 
@@ -798,47 +798,185 @@ def _test_enrichment(engine: ContentEngine) -> None:
             print("  No stories in database. Search for stories first (Choice 15).")
         else:
             print(f"  Total stories: {stats.get('total_stories', 0)}")
-            print(f"\nRequired for enrichment:")
-            print(f"  ✓ verification_status = 'approved'")
-            print(f"  ✓ image_path IS NOT NULL (has an image)")
-            print(f"  ✓ enrichment_status = 'pending'")
-            print(f"\nStory Status Breakdown:")
+            print("\nRequired for enrichment:")
+            print("  ✓ verification_status = 'approved'")
+            print("  ✓ image_path IS NOT NULL (has an image)")
+            print("  ✓ enrichment_status = 'pending'")
+            print("\nStory Status Breakdown:")
             # Show status of all stories
             skipped_eligible = []
             with engine.db._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT id, title, verification_status, image_path, enrichment_status, company_mention_enrichment 
+                    SELECT id, title, verification_status, image_path, enrichment_status,
+                           organizations, story_people, org_leaders, linkedin_handles
                     FROM stories ORDER BY id
                 """)
                 for row in cursor.fetchall():
+                    import json
+
                     has_image = "✓" if row["image_path"] else "✗"
-                    mention = row["company_mention_enrichment"] or ""
-                    mention_display = f" | Mention: {mention}" if mention else ""
                     print(f"  [{row['id']}] {row['title'][:50]}...")
-                    print(f"      Verified: {row['verification_status']} | Image: {has_image} | Enrichment: {row['enrichment_status']}{mention_display}")
+                    print(
+                        f"      Verified: {row['verification_status']} | Image: {has_image} | Enrichment: {row['enrichment_status']}"
+                    )
+                    # Show enrichment details if enriched
+                    if row["enrichment_status"] == "enriched":
+                        # Show organizations
+                        orgs_json = row["organizations"]
+                        if orgs_json and orgs_json != "[]":
+                            try:
+                                orgs = json.loads(orgs_json)
+                                if orgs:
+                                    print(
+                                        f"      → Organizations: {', '.join(orgs[:3])}"
+                                        + (
+                                            f" (+{len(orgs) - 3} more)"
+                                            if len(orgs) > 3
+                                            else ""
+                                        )
+                                    )
+                            except json.JSONDecodeError:
+                                pass
+                        else:
+                            print("      → No organizations identified")
+
+                        # Show story people
+                        people_json = row["story_people"]
+                        if people_json and people_json != "[]":
+                            try:
+                                people = json.loads(people_json)
+                                if people:
+                                    names = [p.get("name", "") for p in people[:3]]
+                                    print(
+                                        f"      → Story people: {', '.join(names)}"
+                                        + (
+                                            f" (+{len(people) - 3} more)"
+                                            if len(people) > 3
+                                            else ""
+                                        )
+                                    )
+                            except json.JSONDecodeError:
+                                pass
+
+                        # Show org leaders
+                        leaders_json = row["org_leaders"]
+                        if leaders_json and leaders_json != "[]":
+                            try:
+                                leaders = json.loads(leaders_json)
+                                if leaders:
+                                    names = [
+                                        f"{ldr.get('name', '')} ({ldr.get('title', '')})"
+                                        for ldr in leaders[:2]
+                                    ]
+                                    print(
+                                        f"      → Org leaders: {', '.join(names)}"
+                                        + (
+                                            f" (+{len(leaders) - 2} more)"
+                                            if len(leaders) > 2
+                                            else ""
+                                        )
+                                    )
+                            except json.JSONDecodeError:
+                                pass
+
+                        # Show LinkedIn handles count
+                        handles_json = row["linkedin_handles"]
+                        if handles_json and handles_json != "[]":
+                            try:
+                                handles = json.loads(handles_json)
+                                if handles:
+                                    print(
+                                        f"      → LinkedIn handles: {len(handles)} found"
+                                    )
+                            except json.JSONDecodeError:
+                                pass
+
                     # Track stories that were skipped but could be re-enriched
-                    if (row['verification_status'] == 'approved' and 
-                        row['image_path'] and 
-                        row['enrichment_status'] == 'skipped'):
-                        skipped_eligible.append(row['id'])
-            
+                    if (
+                        row["verification_status"] == "approved"
+                        and row["image_path"]
+                        and row["enrichment_status"] == "skipped"
+                    ):
+                        skipped_eligible.append(row["id"])
+
             # Offer to reset skipped stories
             if skipped_eligible:
-                print(f"\n⚠ Found {len(skipped_eligible)} previously skipped stories that can now be enriched:")
+                print(
+                    f"\n⚠ Found {len(skipped_eligible)} previously skipped stories that can now be enriched:"
+                )
                 for story_id in skipped_eligible:
                     print(f"    Story {story_id}")
-                reset = input("\nReset these stories back to 'pending' for enrichment? (y/n): ").strip().lower()
+                reset = (
+                    input(
+                        "\nReset these stories back to 'pending' for enrichment? (y/n): "
+                    )
+                    .strip()
+                    .lower()
+                )
                 if reset == "y":
                     with engine.db._get_connection() as conn:
                         cursor = conn.cursor()
                         for story_id in skipped_eligible:
                             cursor.execute(
                                 "UPDATE stories SET enrichment_status = 'pending' WHERE id = ?",
-                                (story_id,)
+                                (story_id,),
                             )
-                    print(f"✓ Reset {len(skipped_eligible)} stories. Run enrichment again.")
+                    print(
+                        f"✓ Reset {len(skipped_eligible)} stories. Run enrichment again."
+                    )
                     return
+
+            # Check if there are enriched stories that need org leaders
+            stories_needing_leaders = engine.enricher._get_stories_needing_org_leaders()
+            if stories_needing_leaders:
+                print(
+                    f"\n📋 Found {len(stories_needing_leaders)} stories with organizations but no leaders:"
+                )
+                for story in stories_needing_leaders[:5]:
+                    print(f"    [{story.id}] {story.title[:50]}...")
+                    print(
+                        f"        Organizations: {', '.join(story.organizations[:3])}"
+                    )
+                if len(stories_needing_leaders) > 5:
+                    print(f"    ... and {len(stories_needing_leaders) - 5} more")
+
+                find_leaders = (
+                    input(
+                        "\nFind organization leaders (CEO, CTO, etc.) for these organizations? (y/n): "
+                    )
+                    .strip()
+                    .lower()
+                )
+                if find_leaders == "y":
+                    _find_org_leaders(engine)
+                    return
+
+            # Check if there are stories that need LinkedIn handles
+            stories_needing_handles = (
+                engine.enricher._get_stories_needing_linkedin_handles()
+            )
+            if stories_needing_handles:
+                print(
+                    f"\n📋 Found {len(stories_needing_handles)} stories with people but no LinkedIn handles:"
+                )
+                for story in stories_needing_handles[:5]:
+                    people_count = len(story.story_people) + len(story.org_leaders)
+                    print(
+                        f"    [{story.id}] {story.title[:50]}... ({people_count} people)"
+                    )
+                if len(stories_needing_handles) > 5:
+                    print(f"    ... and {len(stories_needing_handles) - 5} more")
+
+                find_handles = (
+                    input("\nFind LinkedIn handles for these people? (y/n): ")
+                    .strip()
+                    .lower()
+                )
+                if find_handles == "y":
+                    _find_linkedin_handles(engine)
+                    return
+
         return
 
     print(f"Stories pending enrichment: {len(stories)}")
@@ -848,7 +986,11 @@ def _test_enrichment(engine: ContentEngine) -> None:
     if len(stories) > 5:
         print(f"  ... and {len(stories) - 5} more")
 
-    confirm = input("\nEnrich these stories with company mentions? (y/n): ").strip().lower()
+    confirm = (
+        input("\nEnrich these stories (extract organizations & people)? (y/n): ")
+        .strip()
+        .lower()
+    )
     if confirm != "y":
         print("Cancelled.")
         return
@@ -864,28 +1006,189 @@ def _test_enrichment(engine: ContentEngine) -> None:
             with engine.db._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT id, title, company_mention_enrichment FROM stories WHERE enrichment_status = 'enriched' ORDER BY id DESC LIMIT ?",
+                    """SELECT id, title, organizations, story_people
+                       FROM stories WHERE enrichment_status = 'enriched'
+                       ORDER BY id DESC LIMIT ?""",
                     (enriched,),
                 )
                 for row in cursor.fetchall():
-                    mention = row["company_mention_enrichment"] or "NO_COMPANY_MENTION"
-                    if mention == "NO_COMPANY_MENTION":
-                        mention_display = "⚠ No company mention found"
-                    else:
-                        mention_display = f"✓ {mention}"
+                    import json
+
+                    orgs = (
+                        json.loads(row["organizations"]) if row["organizations"] else []
+                    )
+                    people = (
+                        json.loads(row["story_people"]) if row["story_people"] else []
+                    )
                     print(f"  [{row['id']}] {row['title'][:50]}...")
-                    print(f"       {mention_display}")
+                    if orgs:
+                        print(f"       Organizations: {', '.join(orgs[:3])}")
+                    if people:
+                        names = [p.get("name", "") for p in people[:3]]
+                        print(f"       People: {', '.join(names)}")
+                    if not orgs and not people:
+                        print("       ⚠ Nothing found")
 
         # Show enrichment stats
         stats = engine.enricher.get_enrichment_stats()
         print("\nEnrichment Statistics:")
         print(f"  Total enriched: {stats.get('total_enriched', 0)}")
-        print(f"  With mentions: {stats.get('with_mentions', 0)}")
-        print(f"  No mentions: {stats.get('no_mentions', 0)}")
+        print(f"  With organizations: {stats.get('with_orgs', 0)}")
+        print(f"  With people: {stats.get('with_people', 0)}")
+        print(f"  With LinkedIn handles: {stats.get('with_handles', 0)}")
+
+        # Offer to find org leaders
+        if enriched > 0 and stats.get("with_orgs", 0) > 0:
+            print("\n" + "-" * 40)
+            find_leaders = (
+                input(
+                    "Find organization leaders (CEO, CTO, etc.) for these organizations? (y/n): "
+                )
+                .strip()
+                .lower()
+            )
+            if find_leaders == "y":
+                _find_org_leaders(engine)
 
     except Exception as e:
         print(f"\nError: {e}")
         logger.exception("Enrichment test failed")
+
+
+def _find_org_leaders(engine: ContentEngine) -> None:
+    """Find key leaders for organizations in enriched stories."""
+    print("\n--- Finding Organization Leaders ---")
+
+    try:
+        enriched, skipped = engine.enricher.find_org_leaders()
+        print(f"\nResult: {enriched} stories with leaders found, {skipped} skipped")
+
+        if enriched > 0:
+            print("\nStories with organization leaders:")
+            with engine.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, title, organizations, org_leaders
+                    FROM stories
+                    WHERE org_leaders IS NOT NULL AND org_leaders != '[]'
+                    ORDER BY id DESC LIMIT 10
+                """)
+                for row in cursor.fetchall():
+                    import json
+
+                    orgs = (
+                        json.loads(row["organizations"]) if row["organizations"] else []
+                    )
+                    leaders = (
+                        json.loads(row["org_leaders"]) if row["org_leaders"] else []
+                    )
+                    print(f"\n  [{row['id']}] {row['title'][:50]}...")
+                    print(f"       Organizations: {', '.join(orgs[:3])}")
+                    print(f"       Leaders found: {len(leaders)}")
+                    for leader in leaders[:5]:
+                        name = leader.get("name", "Unknown")
+                        title = leader.get("title", "")
+                        org = leader.get("organization", "")
+                        print(f"         → {name} ({title}) @ {org}")
+
+        # Offer to find LinkedIn handles
+        stats = engine.enricher.get_enrichment_stats()
+        if stats.get("with_people", 0) > stats.get("with_handles", 0):
+            print("\n" + "-" * 40)
+            find_handles = (
+                input("Find LinkedIn handles for these people? (y/n): ").strip().lower()
+            )
+            if find_handles == "y":
+                _find_linkedin_handles(engine)
+
+    except Exception as e:
+        print(f"\nError finding leaders: {e}")
+        logger.exception("Leader enrichment failed")
+
+
+def _find_linkedin_handles(engine: ContentEngine) -> None:
+    """Find LinkedIn handles for all people in enriched stories."""
+    print("\n--- Finding LinkedIn Handles ---")
+
+    try:
+        enriched, skipped = engine.enricher.find_linkedin_handles()
+        print(f"\nResult: {enriched} stories with handles found, {skipped} skipped")
+
+        if enriched > 0:
+            print("\nStories with LinkedIn handles:")
+            with engine.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, title, linkedin_handles
+                    FROM stories
+                    WHERE linkedin_handles IS NOT NULL AND linkedin_handles != '[]'
+                    ORDER BY id DESC LIMIT 10
+                """)
+                for row in cursor.fetchall():
+                    import json
+
+                    handles = (
+                        json.loads(row["linkedin_handles"])
+                        if row["linkedin_handles"]
+                        else []
+                    )
+                    print(f"\n  [{row['id']}] {row['title'][:50]}...")
+                    print(f"       LinkedIn handles: {len(handles)} found")
+                    for handle in handles[:5]:
+                        name = handle.get("name", "Unknown")
+                        url = handle.get("linkedin_url", handle.get("url", ""))
+                        h = handle.get("handle", "")
+                        if h:
+                            print(f"         → {name}: {h} ({url[:50]}...)")
+                        elif url:
+                            print(f"         → {name}: {url[:60]}...")
+
+    except Exception as e:
+        print(f"\nError finding handles: {e}")
+        logger.exception("LinkedIn handle enrichment failed")
+
+
+def _enrich_individuals(engine: ContentEngine) -> None:
+    """Find key individuals and their LinkedIn profiles for enriched stories (legacy)."""
+    print("\n--- Finding Key Individuals ---")
+
+    try:
+        enriched, skipped = engine.enricher.enrich_individuals_for_stories()
+        print(f"\nResult: {enriched} stories with individuals found, {skipped} skipped")
+
+        if enriched > 0:
+            print("\nStories with identified individuals:")
+            with engine.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, title, individuals, linkedin_profiles
+                    FROM stories
+                    WHERE individuals IS NOT NULL AND individuals != '[]'
+                    ORDER BY id DESC LIMIT 10
+                """)
+                for row in cursor.fetchall():
+                    import json
+
+                    individuals = (
+                        json.loads(row["individuals"]) if row["individuals"] else []
+                    )
+                    profiles = (
+                        json.loads(row["linkedin_profiles"])
+                        if row["linkedin_profiles"]
+                        else []
+                    )
+                    print(f"\n  [{row['id']}] {row['title'][:50]}...")
+                    print(f"       Individuals: {', '.join(individuals)}")
+                    print(f"       LinkedIn profiles: {len(profiles)} found")
+                    for profile in profiles[:3]:
+                        name = profile.get("name", "Unknown")
+                        title = profile.get("title", "")
+                        url = profile.get("linkedin_url", "No URL")
+                        print(f"         → {name} ({title}): {url[:60]}...")
+
+    except Exception as e:
+        print(f"\nError finding individuals: {e}")
+        logger.exception("Individual enrichment failed")
 
 
 def _test_scheduling(engine: ContentEngine) -> None:
