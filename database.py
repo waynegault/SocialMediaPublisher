@@ -283,7 +283,7 @@ class Database:
 
         try:
             cursor.execute(f"ALTER TABLE stories ADD COLUMN {column_name} {column_def}")
-            logger.info(f"Added column '{column_name}' to stories table")
+            logger.debug(f"Added column '{column_name}' to stories table")
         except sqlite3.OperationalError as e:
             if "duplicate column name" in str(e).lower():
                 pass  # Column already exists
@@ -410,7 +410,7 @@ class Database:
                 ON stories(category)
             """)
 
-            logger.info("Database initialized successfully")
+            logger.debug("Database initialized successfully")
 
     # --- Story CRUD Operations ---
 

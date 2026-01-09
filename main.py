@@ -446,7 +446,10 @@ Social Media Publisher - Debug Menu
         else:
             print("Invalid choice. Please try again.")
 
-        input("\nPress Enter to continue...")
+        try:
+            input("\nPress Enter to continue...")
+        except EOFError:
+            pass  # Gracefully handle piped input
 
 
 def _test_search(engine: ContentEngine) -> None:

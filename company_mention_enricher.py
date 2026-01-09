@@ -1146,7 +1146,7 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
             enricher = CompanyMentionEnricher(db, None, None)  # type: ignore
             stats = enricher.get_enrichment_stats()
             assert "pending" in stats
-            assert "enriched" in stats
+            assert "total_enriched" in stats
         finally:
             os.unlink(db_path)
 
