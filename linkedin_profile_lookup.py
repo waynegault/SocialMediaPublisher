@@ -452,6 +452,127 @@ NOT_FOUND"""
             return url
         return None
 
+    def _extract_department_name(self, position: str) -> Optional[str]:
+        """Extract department name from a position title if present."""
+        if not position:
+            return None
+
+        position_lower = position.lower()
+
+        # Common patterns for department positions
+        department_patterns = [
+            r"(?:head|director|chair|dean|professor)\s+(?:of\s+)?(?:the\s+)?(?:department\s+(?:of|for)\s+)?(.+?)(?:\s+department)?$",
+            r"(?:department|dept\.?)\s+(?:of|for)\s+(.+?)(?:\s+(?:head|director|chair|dean))?$",
+            r"(.+?)\s+department\s+head",
+        ]
+
+        for pattern in department_patterns:
+            match = re.search(pattern, position_lower)
+            if match:
+                dept = match.group(1).strip()
+                # Clean up common suffixes
+                dept = re.sub(r"\s+at\s+.*$", "", dept)
+                # Remove trailing title words
+                dept = re.sub(r"\s+(?:head|director|chair|dean)$", "", dept)
+                if len(dept) > 3:  # Avoid very short matches
+                    return dept.title()
+
+        return None
+
+    def search_department(
+        self, department: str, parent_org: str, parent_slug: Optional[str] = None
+    ) -> tuple[Optional[str], Optional[str]]:
+        """
+        Search for a department-specific LinkedIn page.
+
+        Args:
+            department: Department name (e.g., "Biochemical Engineering")
+            parent_org: Parent organization name (e.g., "UCL")
+            parent_slug: Optional parent org slug to help narrow search
+
+        Returns:
+            Tuple of (linkedin_url, slug) if found, (None, None) otherwise
+        """
+        if not self.client:
+            return (None, None)
+
+        logger.info(
+            f"Searching for department LinkedIn page: {department} at {parent_org}"
+        )
+
+        # Try multiple search strategies
+        search_queries = [
+            f"{parent_org} {department} linkedin.com/school OR linkedin.com/company",
+            f'"{parent_org}" "{department}" site:linkedin.com',
+            f"{parent_org} department {department} linkedin",
+        ]
+        if parent_slug:
+            search_queries.insert(0, f"{parent_slug} {department} linkedin.com")
+
+        prompt = f"""Find the LinkedIn company/school page for this specific department, faculty, or school:
+
+Department/Faculty: {department}
+Parent Organization: {parent_org}
+{f"Parent LinkedIn slug: {parent_slug}" if parent_slug else ""}
+
+TASK: Search for a LinkedIn page that is specifically for this department, faculty, or school unit - NOT the main parent organization.
+
+SEARCH EXAMPLES:
+- "UCL Biochemical Engineering" might have linkedin.com/school/ucl-biochemical-engineering
+- "MIT Sloan" might have linkedin.com/school/mit-sloan
+- "Stanford Graduate School of Business" might have linkedin.com/school/stanford-gsb
+
+IMPORTANT:
+- Many university departments have their own LinkedIn pages
+- Look for pages with names like "{parent_org} {department}" or "{department} at {parent_org}"
+- The URL format is linkedin.com/company/xxx or linkedin.com/school/xxx
+- Do NOT return the main parent organization page (e.g., don't return UCL main page)
+- The page name should specifically reference the department or faculty
+
+RESPONSE:
+If you find a department-specific LinkedIn page, respond with ONLY the full URL, like:
+https://www.linkedin.com/school/ucl-biochemical-engineering
+
+If you cannot find a department-specific page (only the parent org exists), respond with exactly:
+NOT_FOUND"""
+
+        try:
+            response = self.client.models.generate_content(
+                model=Config.MODEL_TEXT,
+                contents=prompt,
+                config={
+                    "tools": [{"google_search": {}}],
+                    "max_output_tokens": 256,
+                },
+            )
+
+            if not response.text:
+                return (None, None)
+
+            result = response.text.strip()
+
+            if "NOT_FOUND" in result.upper():
+                return (None, None)
+
+            # Extract LinkedIn URL
+            linkedin_url = self._extract_company_url(result)
+            if not linkedin_url:
+                return (None, None)
+
+            # Validate the URL format
+            is_valid, slug = self.validate_linkedin_url(linkedin_url)
+            if is_valid:
+                logger.info(
+                    f"Found department page: {department} at {parent_org} -> {linkedin_url}"
+                )
+                return (linkedin_url, slug)
+
+            return (None, None)
+
+        except Exception as e:
+            logger.error(f"Error searching for department {department}: {e}")
+            return (None, None)
+
     def populate_company_profiles(
         self,
         relevant_people: list[dict],
@@ -460,9 +581,8 @@ NOT_FOUND"""
         """
         Look up LinkedIn company pages for the companies mentioned in relevant_people.
 
-        Instead of looking up individual profiles, we look up company pages which
-        are public and easier to find. The company URLs can be used for tagging
-        in LinkedIn posts.
+        For each person, first tries to find a department-specific LinkedIn page
+        based on their position. If not found, falls back to the parent organization.
 
         Args:
             relevant_people: List of person dicts with name, company, position, linkedin_profile
@@ -476,7 +596,7 @@ NOT_FOUND"""
             logger.warning("Cannot populate profiles - Gemini client not initialized")
             return (0, 0, {})
 
-        # Extract unique company names
+        # First, look up parent organizations
         companies = set()
         for person in relevant_people:
             company = person.get("company", "").strip()
@@ -489,40 +609,91 @@ NOT_FOUND"""
 
         companies_found = 0
         companies_not_found = 0
-        company_data: dict[str, tuple[str, Optional[str]]] = {}
+        company_data: dict[str, tuple[str, Optional[str], Optional[str]]] = {}
 
+        # Look up parent organizations first
         for i, company in enumerate(companies):
-            linkedin_url, org_urn = self.search_company(company)
+            linkedin_url, slug = self.search_company(company)
 
             if linkedin_url:
-                company_data[company] = (linkedin_url, org_urn)
+                # Look up the organization URN via LinkedIn API
+                urn = self.lookup_organization_urn(linkedin_url)
+                company_data[company] = (linkedin_url, slug, urn)
                 companies_found += 1
             else:
                 companies_not_found += 1
 
-            # Rate limiting - be respectful of API limits
+            # Rate limiting
             if i < len(companies) - 1:
                 time.sleep(delay_between_requests)
 
-        # Update the relevant_people entries with company LinkedIn URLs
-        # Store in linkedin_profile field as company page (better than nothing)
+        # Now try to find department-specific pages for each person
+        # Cache department lookups to avoid duplicate searches
+        department_cache: dict[
+            str, tuple[Optional[str], Optional[str], Optional[str]]
+        ] = {}
+
         for person in relevant_people:
             company = person.get("company", "").strip()
-            if company and company in company_data:
-                url, slug = company_data[company]
-                # Only update if no profile is set yet
+            position = person.get("position", "").strip()
+
+            if not company:
+                continue
+
+            # Try to extract department from position
+            department = self._extract_department_name(position)
+
+            if department:
+                cache_key = f"{department}@{company}"
+
+                if cache_key not in department_cache:
+                    # Get parent org slug if available
+                    parent_slug = None
+                    if company in company_data:
+                        parent_slug = company_data[company][1]
+
+                    # Search for department page
+                    logger.info(
+                        f"Looking for department page: {department} at {company}"
+                    )
+                    dept_url, dept_slug = self.search_department(
+                        department, company, parent_slug
+                    )
+
+                    if dept_url:
+                        # Look up URN for department
+                        dept_urn = self.lookup_organization_urn(dept_url)
+                        department_cache[cache_key] = (dept_url, dept_slug, dept_urn)
+                        time.sleep(delay_between_requests)
+                    else:
+                        department_cache[cache_key] = (None, None, None)
+                        time.sleep(
+                            delay_between_requests * 0.5
+                        )  # Shorter delay for not found
+
+                # Use department data if found
+                dept_data = department_cache[cache_key]
+                if dept_data[0]:  # Department page found
+                    person["linkedin_profile"] = dept_data[0]
+                    if dept_data[1]:
+                        person["linkedin_slug"] = dept_data[1]
+                    if dept_data[2]:
+                        person["linkedin_urn"] = dept_data[2]
+                    continue  # Skip to next person
+
+            # Fall back to parent organization
+            if company in company_data:
+                url, slug, urn = company_data[company]
                 if not person.get("linkedin_profile", "").strip():
                     person["linkedin_profile"] = url
-                # Store the slug in a new field if available
                 if slug:
                     person["linkedin_slug"] = slug
+                if urn:
+                    person["linkedin_urn"] = urn
 
-                    # Try to look up the organization URN via LinkedIn API
-                    urn = self.lookup_organization_urn(url)
-                    if urn:
-                        person["linkedin_urn"] = urn
-
-        return (companies_found, companies_not_found, company_data)
+        # Return company_data with just (url, slug) for backwards compatibility
+        return_data = {k: (v[0], v[1]) for k, v in company_data.items()}
+        return (companies_found, companies_not_found, return_data)
 
     def close(self) -> None:
         """Clean up HTTP client resources."""
