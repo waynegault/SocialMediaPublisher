@@ -65,6 +65,11 @@ class Story:
     linkedin_handles: list[dict] = field(
         default_factory=list
     )  # [{"name": "Dr. Jane Smith", "handle": "janesmith", "urn": "urn:li:person:123", "url": "https://linkedin.com/in/janesmith"}]
+    # Relevant people from story generation - consolidated list of people to find LinkedIn profiles for
+    # [{"name": "Dr. Jane Smith", "company": "MIT", "position": "Lead Researcher", "linkedin_profile": ""}]
+    # This includes: people mentioned in the story AND key leaders from mentioned orgs
+    # (CEO, President, Director of Engineering/Research/Operations/HR, Principal Investigator, etc.)
+    relevant_people: list[dict] = field(default_factory=list)
     # Legacy fields (kept for backward compatibility, will be migrated)
     company_mention_enrichment: Optional[str] = None  # DEPRECATED - use organizations
     individuals: list[str] = field(
@@ -115,6 +120,7 @@ class Story:
             "story_people": self.story_people,
             "org_leaders": self.org_leaders,
             "linkedin_handles": self.linkedin_handles,
+            "relevant_people": self.relevant_people,
             # Legacy fields (deprecated)
             "company_mention_enrichment": self.company_mention_enrichment,
             "individuals": self.individuals,
@@ -207,6 +213,9 @@ class Story:
             else [],
             linkedin_handles=json.loads(row["linkedin_handles"])
             if "linkedin_handles" in keys and row["linkedin_handles"]
+            else [],
+            relevant_people=json.loads(row["relevant_people"])
+            if "relevant_people" in keys and row["relevant_people"]
             else [],
             # Legacy fields
             company_mention_enrichment=row["company_mention_enrichment"]
@@ -387,6 +396,10 @@ class Database:
             self._migrate_add_column(
                 cursor, "linkedin_handles", "TEXT DEFAULT '[]'", existing_columns
             )
+            # Relevant people from story generation - consolidated list for LinkedIn lookup
+            self._migrate_add_column(
+                cursor, "relevant_people", "TEXT DEFAULT '[]'", existing_columns
+            )
 
             # System state table for tracking last check date, etc.
             cursor.execute("""
@@ -424,8 +437,8 @@ class Database:
                 (title, summary, source_links, acquire_date, quality_score,
                  category, quality_justification, image_path, verification_status,
                  publish_status, hashtags, linkedin_mentions, company_mention_enrichment,
-                 enrichment_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 enrichment_status, relevant_people)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     story.title,
@@ -442,6 +455,7 @@ class Database:
                     json.dumps(story.linkedin_mentions),
                     story.company_mention_enrichment,
                     story.enrichment_status,
+                    json.dumps(story.relevant_people),
                 ),
             )
             story_id = cursor.lastrowid or 0
@@ -550,6 +564,7 @@ class Database:
                     story_people = ?,
                     org_leaders = ?,
                     linkedin_handles = ?,
+                    relevant_people = ?,
                     company_mention_enrichment = ?,
                     individuals = ?,
                     linkedin_profiles = ?
@@ -584,6 +599,7 @@ class Database:
                     json.dumps(story.story_people),
                     json.dumps(story.org_leaders),
                     json.dumps(story.linkedin_handles),
+                    json.dumps(story.relevant_people),
                     story.company_mention_enrichment,
                     json.dumps(story.individuals),
                     json.dumps(story.linkedin_profiles),

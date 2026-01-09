@@ -1408,6 +1408,27 @@ class StorySearcher:
                 else:
                     hashtags = []
 
+                # Extract relevant_people (list of dicts with name, company, position, linkedin_profile)
+                relevant_people = data.get("relevant_people", [])
+                if isinstance(relevant_people, list):
+                    # Validate and normalize each person entry
+                    validated_people = []
+                    for person in relevant_people:
+                        if isinstance(person, dict) and person.get("name"):
+                            validated_people.append(
+                                {
+                                    "name": str(person.get("name", "")).strip(),
+                                    "company": str(person.get("company", "")).strip(),
+                                    "position": str(person.get("position", "")).strip(),
+                                    "linkedin_profile": str(
+                                        person.get("linkedin_profile", "")
+                                    ).strip(),
+                                }
+                            )
+                    relevant_people = validated_people
+                else:
+                    relevant_people = []
+
                 story = Story(
                     title=title,
                     summary=data.get("summary", ""),
@@ -1419,6 +1440,7 @@ class StorySearcher:
                     verification_status="pending",
                     publish_status="unpublished",
                     hashtags=hashtags,
+                    relevant_people=relevant_people,
                 )
 
                 self.db.add_story(story)

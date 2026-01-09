@@ -358,8 +358,8 @@ Social Media Publisher - Debug Menu
   Component Testing:
    15. Test Story Search
    16. Test Image Generation
-   17. Test Content Verification
-   18. Test Company & Individual Enrichment
+   17. Test Company & Individual Enrichment
+   18. Test Content Verification
    19. Test Scheduling
    20. Test LinkedIn Connection
    21. Test LinkedIn Publish (due stories)
@@ -368,6 +368,9 @@ Social Media Publisher - Debug Menu
   Analytics:
    23. View LinkedIn Analytics
    24. Refresh All Analytics
+
+  Danger Zone:
+   25. Reset (delete database and images)
 
    0. Exit
 ============================================================
@@ -427,9 +430,9 @@ Social Media Publisher - Debug Menu
         elif choice == "16":
             _test_image_generation(engine)
         elif choice == "17":
-            _test_verification(engine)
-        elif choice == "18":
             _test_enrichment(engine)
+        elif choice == "18":
+            _test_verification(engine)
         elif choice == "19":
             _test_scheduling(engine)
         elif choice == "20":
@@ -443,6 +446,9 @@ Social Media Publisher - Debug Menu
             _view_linkedin_analytics(engine)
         elif choice == "24":
             _refresh_linkedin_analytics(engine)
+        # Danger Zone
+        elif choice == "25":
+            _reset_all(engine)
         else:
             print("Invalid choice. Please try again.")
 
@@ -458,11 +464,6 @@ def _test_search(engine: ContentEngine) -> None:
     print(f"Search prompt: {Config.SEARCH_PROMPT[:80]}...")
     print(f"Lookback days: {Config.SEARCH_LOOKBACK_DAYS}")
     print(f"Use last checked date: {Config.USE_LAST_CHECKED_DATE}")
-
-    confirm = input("\nProceed with search? (y/n): ").strip().lower()
-    if confirm != "y":
-        print("Cancelled.")
-        return
 
     try:
         start_date = engine.searcher.get_search_start_date()
@@ -551,11 +552,6 @@ def _test_image_generation(engine: ContentEngine) -> None:
     est_sec = est_time % 60
     time_str = f"{est_min}m {est_sec}s" if est_min > 0 else f"{est_sec}s"
     print(f"\nEstimated time: ~{time_str} for {len(stories)} image(s)")
-
-    confirm = input("Generate images for these stories? (y/n): ").strip().lower()
-    if confirm != "y":
-        print("Cancelled.")
-        return
 
     try:
         print(f"\nGenerating {len(stories)} image(s)...")
@@ -758,11 +754,6 @@ def _test_verification(engine: ContentEngine) -> None:
         img_status = "✓" if story.image_path else f"✗ (score={story.quality_score})"
         print(f"  [{story.id}] {story.title}")
         print(f"       Image: {img_status}")
-
-    confirm = input("\nVerify these stories? (y/n): ").strip().lower()
-    if confirm != "y":
-        print("Cancelled.")
-        return
 
     try:
         approved, rejected = engine.verifier.verify_pending_content()
@@ -1771,6 +1762,60 @@ def _refresh_linkedin_analytics(engine: ContentEngine) -> None:
     _view_linkedin_analytics(engine)
 
 
+def _reset_all(engine: ContentEngine) -> None:
+    """Reset everything: delete database and all generated images."""
+    print("\n--- RESET ALL DATA ---")
+    print("\n⚠️  WARNING: This will permanently delete:")
+    print(f"    • Database: {Config.DB_NAME}")
+    print(f"    • All files in: {Config.IMAGE_DIR}/")
+    print("\n    This action cannot be undone!")
+
+    confirm = input("\nAre you sure you want to reset? Type 'yes' to confirm: ").strip()
+    if confirm.lower() != "yes":
+        print("Cancelled.")
+        return
+
+    # Double-check
+    confirm2 = input("This is your last chance. Type 'RESET' to proceed: ").strip()
+    if confirm2 != "RESET":
+        print("Cancelled.")
+        return
+
+    print("\nResetting...")
+
+    # Delete the database file
+    db_path = Path(Config.DB_NAME)
+    if db_path.exists():
+        try:
+            db_path.unlink()
+            print(f"  ✓ Deleted database: {Config.DB_NAME}")
+        except Exception as e:
+            print(f"  ✗ Failed to delete database: {e}")
+            return
+
+    # Delete all files in generated_images
+    image_dir = Path(Config.IMAGE_DIR)
+    if image_dir.exists():
+        deleted_count = 0
+        for file in image_dir.iterdir():
+            if file.is_file():
+                try:
+                    file.unlink()
+                    deleted_count += 1
+                except Exception as e:
+                    print(f"  ✗ Failed to delete {file.name}: {e}")
+        print(f"  ✓ Deleted {deleted_count} images from {Config.IMAGE_DIR}/")
+
+    # Recreate the database
+    from database import Database
+
+    new_db = Database(Config.DB_NAME)
+    engine.db = new_db
+    print(f"  ✓ Created fresh database: {Config.DB_NAME}")
+
+    print("\n✓ Reset complete!")
+
+
 def _show_all_prompts() -> None:
     """Display all configured prompts in full."""
     print("\n" + "=" * 80)
@@ -1829,7 +1874,6 @@ def _show_all_prompts() -> None:
     print("\n" + "=" * 80)
     print("To customize these prompts, add them to your .env file.")
     print("=" * 80)
-    input("\nPress Enter to continue...")
 
 
 def _test_api_keys(engine: ContentEngine) -> None:
