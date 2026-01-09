@@ -833,6 +833,7 @@ def _lookup_linkedin_profiles_for_relevant_people(
     total_companies_not_found = 0
     stories_updated = 0
     all_company_data: dict[str, tuple[str, str | None]] = {}
+    all_companies_not_found: set[str] = set()
 
     try:
         for story in stories:
@@ -845,7 +846,11 @@ def _lookup_linkedin_profiles_for_relevant_people(
             companies = set()
             for person in story.relevant_people:
                 company = person.get("company", "").strip()
-                if company and company not in all_company_data:
+                if (
+                    company
+                    and company not in all_company_data
+                    and company not in all_companies_not_found
+                ):
                     companies.add(company)
 
             if not companies:
@@ -858,6 +863,16 @@ def _lookup_linkedin_profiles_for_relevant_people(
                 story.relevant_people,
                 delay_between_requests=1.5,
             )
+
+            # Track companies that weren't found
+            for person in story.relevant_people:
+                company = person.get("company", "").strip()
+                if (
+                    company
+                    and company not in company_data
+                    and company not in all_company_data
+                ):
+                    all_companies_not_found.add(company)
 
             # Merge into our master list
             all_company_data.update(company_data)
@@ -885,6 +900,11 @@ def _lookup_linkedin_profiles_for_relevant_people(
     print(f"Stories updated: {stories_updated}")
     print(f"Companies found: {total_companies_found}")
     print(f"Companies not found: {total_companies_not_found}")
+
+    if all_companies_not_found:
+        print("\nCompanies NOT Found:")
+        for company in sorted(all_companies_not_found):
+            print(f"  ✗ {company}")
 
     if all_company_data:
         print("\nCompany LinkedIn Pages Found:")
