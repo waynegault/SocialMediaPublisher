@@ -484,33 +484,49 @@ NOT_FOUND"""
     ) -> list[str]:
         """Generate likely LinkedIn slug patterns for a department."""
         candidates = []
-        
+
         # Normalize names
         dept_lower = department.lower().strip()
         org_lower = parent_org.lower().strip()
-        
-        # Clean department name for slug
+
+        # Clean department name for slug (with hyphens)
         dept_slug = re.sub(r"[^a-z0-9\s]", "", dept_lower)
         dept_slug = re.sub(r"\s+", "-", dept_slug.strip())
-        
-        # Clean org name for slug
+
+        # Clean org name for slug (with hyphens)
         org_slug = re.sub(r"[^a-z0-9\s]", "", org_lower)
         org_slug = re.sub(r"\s+", "-", org_slug.strip())
+
+        # No-hyphen versions (e.g., "uclaengineering" instead of "ucla-engineering")
+        dept_nohyphen = dept_slug.replace("-", "")
+        org_nohyphen = org_slug.replace("-", "")
+
+        # Common patterns - try no-hyphen versions first (more likely for schools)
+        # Pattern: orgdept (e.g., uclaengineering)
+        candidates.append(f"{org_nohyphen}{dept_nohyphen}")
         
-        # Common patterns: org-department, department-org, org-dept-short
-        if parent_slug:
-            candidates.append(f"{parent_slug}-{dept_slug}")
-            # Also try with just the org slug prefix
-            candidates.append(f"{org_slug}-{dept_slug}")
-        
+        # Pattern: org-dept (e.g., ucla-engineering)
         candidates.append(f"{org_slug}-{dept_slug}")
+
+        # If parent_slug provided, try with it
+        if parent_slug:
+            parent_nohyphen = parent_slug.replace("-", "")
+            candidates.append(f"{parent_nohyphen}{dept_nohyphen}")
+            candidates.append(f"{parent_slug}-{dept_slug}")
+
+        # Additional patterns
         candidates.append(f"{dept_slug}-{org_slug}")
-        
-        # Try without hyphens in department name
-        dept_no_space = dept_slug.replace("-", "")
-        candidates.append(f"{org_slug}-{dept_no_space}")
-        
-        return candidates
+        candidates.append(f"{org_slug}-{dept_nohyphen}")
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_candidates = []
+        for c in candidates:
+            if c not in seen:
+                seen.add(c)
+                unique_candidates.append(c)
+
+        return unique_candidates
 
     def search_department(
         self, department: str, parent_org: str, parent_slug: Optional[str] = None
@@ -536,7 +552,7 @@ NOT_FOUND"""
         slug_candidates = self._generate_department_slug_candidates(
             department, parent_org, parent_slug
         )
-        
+
         for candidate_slug in slug_candidates:
             result = self.lookup_organization_by_vanity_name(candidate_slug)
             if result:
