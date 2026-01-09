@@ -479,11 +479,46 @@ NOT_FOUND"""
 
         return None
 
+    def _generate_department_slug_candidates(
+        self, department: str, parent_org: str, parent_slug: Optional[str] = None
+    ) -> list[str]:
+        """Generate likely LinkedIn slug patterns for a department."""
+        candidates = []
+        
+        # Normalize names
+        dept_lower = department.lower().strip()
+        org_lower = parent_org.lower().strip()
+        
+        # Clean department name for slug
+        dept_slug = re.sub(r"[^a-z0-9\s]", "", dept_lower)
+        dept_slug = re.sub(r"\s+", "-", dept_slug.strip())
+        
+        # Clean org name for slug
+        org_slug = re.sub(r"[^a-z0-9\s]", "", org_lower)
+        org_slug = re.sub(r"\s+", "-", org_slug.strip())
+        
+        # Common patterns: org-department, department-org, org-dept-short
+        if parent_slug:
+            candidates.append(f"{parent_slug}-{dept_slug}")
+            # Also try with just the org slug prefix
+            candidates.append(f"{org_slug}-{dept_slug}")
+        
+        candidates.append(f"{org_slug}-{dept_slug}")
+        candidates.append(f"{dept_slug}-{org_slug}")
+        
+        # Try without hyphens in department name
+        dept_no_space = dept_slug.replace("-", "")
+        candidates.append(f"{org_slug}-{dept_no_space}")
+        
+        return candidates
+
     def search_department(
         self, department: str, parent_org: str, parent_slug: Optional[str] = None
     ) -> tuple[Optional[str], Optional[str]]:
         """
         Search for a department-specific LinkedIn page.
+
+        First tries common URL patterns via LinkedIn API, then falls back to Gemini search.
 
         Args:
             department: Department name (e.g., "Biochemical Engineering")
@@ -493,21 +528,29 @@ NOT_FOUND"""
         Returns:
             Tuple of (linkedin_url, slug) if found, (None, None) otherwise
         """
-        if not self.client:
-            return (None, None)
-
         logger.info(
             f"Searching for department LinkedIn page: {department} at {parent_org}"
         )
 
-        # Try multiple search strategies
-        search_queries = [
-            f"{parent_org} {department} linkedin.com/school OR linkedin.com/company",
-            f'"{parent_org}" "{department}" site:linkedin.com',
-            f"{parent_org} department {department} linkedin",
-        ]
-        if parent_slug:
-            search_queries.insert(0, f"{parent_slug} {department} linkedin.com")
+        # Strategy 1: Try common URL patterns directly via LinkedIn API
+        slug_candidates = self._generate_department_slug_candidates(
+            department, parent_org, parent_slug
+        )
+        
+        for candidate_slug in slug_candidates:
+            result = self.lookup_organization_by_vanity_name(candidate_slug)
+            if result:
+                urn, org_id = result
+                if urn:
+                    url = f"https://www.linkedin.com/company/{candidate_slug}"
+                    logger.info(
+                        f"Found department page via API: {department} at {parent_org} -> {url}"
+                    )
+                    return (url, candidate_slug)
+
+        # Strategy 2: Fall back to Gemini search
+        if not self.client:
+            return (None, None)
 
         prompt = f"""Find the LinkedIn company/school page for this specific department, faculty, or school:
 
@@ -563,7 +606,7 @@ NOT_FOUND"""
             is_valid, slug = self.validate_linkedin_url(linkedin_url)
             if is_valid:
                 logger.info(
-                    f"Found department page: {department} at {parent_org} -> {linkedin_url}"
+                    f"Found department page via search: {department} at {parent_org} -> {linkedin_url}"
                 )
                 return (linkedin_url, slug)
 
