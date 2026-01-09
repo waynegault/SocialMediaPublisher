@@ -51,3 +51,4 @@ output/
 # Database backups (primary db is tracked, backups are not)
 *.db.backup
 /content_engine.db.backup
+/.linkedin_session

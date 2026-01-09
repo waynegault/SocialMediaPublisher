@@ -14,5 +14,8 @@ ddgs>=1.0.0
 # Image processing
 Pillow>=10.0.0
 
+# Browser automation for LinkedIn profile lookup
+playwright>=1.40.0
+
 # Hugging Face for free image generation (FLUX.1-schnell)
 huggingface_hub>=0.20.0
