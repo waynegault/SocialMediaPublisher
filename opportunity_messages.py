@@ -105,3 +105,95 @@ def get_random_message_with_custom() -> str:
     """Get a random message including any custom messages."""
     all_msgs = OPPORTUNITY_MESSAGES + _custom_messages
     return random.choice(all_msgs)
+
+
+def clear_custom_messages() -> None:
+    """Clear all custom messages (useful for testing)."""
+    global _custom_messages
+    _custom_messages = []
+
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+    """Create unit tests for opportunity_messages module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("Opportunity Messages Tests")
+
+    def test_get_random_opportunity_message():
+        msg = get_random_opportunity_message()
+        assert msg is not None
+        assert isinstance(msg, str)
+        assert len(msg) > 0
+        assert msg in OPPORTUNITY_MESSAGES
+
+    def test_get_opportunity_message_by_index_valid():
+        msg = get_opportunity_message_by_index(0)
+        assert msg == OPPORTUNITY_MESSAGES[0]
+        msg = get_opportunity_message_by_index(49)
+        assert msg == OPPORTUNITY_MESSAGES[49]
+
+    def test_get_opportunity_message_by_index_wraps():
+        # Index wraps around via modulo
+        msg = get_opportunity_message_by_index(50)
+        assert msg == OPPORTUNITY_MESSAGES[0]
+        msg = get_opportunity_message_by_index(51)
+        assert msg == OPPORTUNITY_MESSAGES[1]
+
+    def test_get_all_messages():
+        msgs = get_all_messages()
+        assert isinstance(msgs, list)
+        assert len(msgs) == 50
+        # Verify it's a copy
+        msgs.append("test")
+        assert len(get_all_messages()) == 50
+
+    def test_get_message_count():
+        count = get_message_count()
+        assert count == 50
+
+    def test_add_custom_message():
+        clear_custom_messages()  # Reset first
+        add_custom_message("Custom test message")
+        # Custom message should appear in random with custom
+        all_with_custom = OPPORTUNITY_MESSAGES + _custom_messages
+        assert "Custom test message" in all_with_custom
+        clear_custom_messages()  # Cleanup
+
+    def test_get_random_message_with_custom():
+        clear_custom_messages()  # Reset first
+        add_custom_message("Unique custom message XYZ123")
+        # Get many random messages to verify custom can appear
+        found_custom = False
+        for _ in range(200):  # Should find it within 200 tries
+            msg = get_random_message_with_custom()
+            if "Unique custom message XYZ123" in msg:
+                found_custom = True
+                break
+        assert found_custom, "Custom message should appear in random selection"
+        clear_custom_messages()  # Cleanup
+
+    def test_all_messages_have_ps_prefix():
+        for msg in OPPORTUNITY_MESSAGES:
+            assert msg.startswith("P.S."), (
+                f"Message should start with 'P.S.': {msg[:30]}"
+            )
+
+    suite.add_test(
+        "Get random opportunity message", test_get_random_opportunity_message
+    )
+    suite.add_test(
+        "Get message by index - valid", test_get_opportunity_message_by_index_valid
+    )
+    suite.add_test(
+        "Get message by index - wraps", test_get_opportunity_message_by_index_wraps
+    )
+    suite.add_test("Get all messages", test_get_all_messages)
+    suite.add_test("Get message count", test_get_message_count)
+    suite.add_test("Add custom message", test_add_custom_message)
+    suite.add_test("Get random with custom", test_get_random_message_with_custom)
+    suite.add_test("All messages have P.S. prefix", test_all_messages_have_ps_prefix)
+
+    return suite

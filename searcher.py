@@ -5,9 +5,8 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 from urllib.parse import urlparse
-from functools import wraps
 from ddgs import DDGS
 import requests
 
@@ -16,10 +15,12 @@ from openai import OpenAI
 
 from config import Config
 from database import Database, Story
+from error_handling import with_enhanced_recovery
 
 logger = logging.getLogger(__name__)
 
 
+# Alias for backwards compatibility - use error_handling.with_enhanced_recovery instead
 def retry_with_backoff(
     max_retries: int | None = None,
     base_delay: float | None = None,
@@ -28,37 +29,18 @@ def retry_with_backoff(
     """
     Decorator for retry with exponential backoff.
     Uses Config values if not specified.
+
+    Note: This is an alias for error_handling.with_enhanced_recovery for
+    backwards compatibility. New code should use with_enhanced_recovery directly.
     """
     _max_retries = max_retries if max_retries is not None else Config.API_RETRY_COUNT
     _base_delay = base_delay if base_delay is not None else Config.API_RETRY_DELAY
 
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            last_exception: Exception | None = None
-            for attempt in range(_max_retries + 1):
-                try:
-                    return func(*args, **kwargs)
-                except retryable_exceptions as e:
-                    last_exception = e
-                    if attempt < _max_retries:
-                        delay = _base_delay * (2**attempt)
-                        logger.warning(
-                            f"Attempt {attempt + 1} failed: {e}. "
-                            f"Retrying in {delay:.1f}s..."
-                        )
-                        time.sleep(delay)
-                    else:
-                        logger.error(f"All {_max_retries + 1} attempts failed.")
-                        raise
-            # This should never be reached, but satisfies type checker
-            if last_exception:
-                raise last_exception
-            raise RuntimeError("Retry logic error")
-
-        return wrapper
-
-    return decorator
+    return with_enhanced_recovery(
+        max_attempts=_max_retries + 1,
+        base_delay=_base_delay,
+        retryable_exceptions=retryable_exceptions,
+    )
 
 
 def calculate_similarity(text1: str, text2: str) -> float:
@@ -386,6 +368,8 @@ class StorySearcher:
         self._preview_stories: list[dict] = []
         # Cache for raw search results (for retry without re-fetching)
         self._cached_search_results: list[dict] = []
+        # Cache for resolved redirect URLs to avoid duplicate HTTP requests
+        self._redirect_url_cache: dict[str, str] = {}
 
     def _report_progress(self, message: str) -> None:
         """Report progress via callback if available."""
@@ -491,8 +475,12 @@ class StorySearcher:
         Tries multiple sources:
         1. grounding_chunks (preferred - has individual source URLs)
         2. search_entry_point.rendered_content (fallback - HTML with search links)
+
+        All redirect URLs are resolved to their final destinations.
+        Failed resolutions are excluded from the results.
         """
         sources: list[dict] = []
+        failed_resolutions = 0
         try:
             if not response.candidates:
                 return sources
@@ -516,7 +504,14 @@ class StorySearcher:
                         if uri and uri.startswith("http"):
                             # Resolve Vertex AI Search redirect URLs
                             final_uri = self._resolve_redirect_url(uri)
-                            sources.append({"uri": final_uri, "title": title})
+                            # Only add if resolution succeeded (non-empty, non-redirect)
+                            if (
+                                final_uri
+                                and "vertexaisearch.cloud.google.com" not in final_uri
+                            ):
+                                sources.append({"uri": final_uri, "title": title})
+                            elif not final_uri:
+                                failed_resolutions += 1
 
             # Fallback: extract from search_entry_point HTML
             if not sources and hasattr(metadata, "search_entry_point"):
@@ -532,46 +527,172 @@ class StorySearcher:
                     for url in url_matches:
                         if url.startswith("http"):
                             final_uri = self._resolve_redirect_url(url)
-                            sources.append({"uri": final_uri, "title": ""})
+                            if (
+                                final_uri
+                                and "vertexaisearch.cloud.google.com" not in final_uri
+                            ):
+                                sources.append({"uri": final_uri, "title": ""})
+                            elif not final_uri:
+                                failed_resolutions += 1
+
+            if failed_resolutions > 0:
+                logger.warning(
+                    f"Failed to resolve {failed_resolutions} redirect URL(s)"
+                )
 
         except Exception as e:
             logger.debug(f"Could not extract grounding URLs: {e}")
         return sources
 
-    def _resolve_redirect_url(self, url: str) -> str:
-        """Resolve redirect URLs (like Vertex AI Search) to final destination."""
-        # If it's a vertexaisearch redirect, try to follow it
-        if "vertexaisearch.cloud.google.com" in url:
-            try:
-                # First, get the initial redirect without following
-                # This is faster and avoids timeouts on slow destination sites
-                response = requests.get(
-                    url, timeout=10, allow_redirects=False, stream=True
-                )
-                response.close()
+    def _resolve_redirect_url(self, url: str, max_retries: int = 3) -> str:
+        """
+        Resolve redirect URLs (like Vertex AI Search) to final destination.
 
-                # Check for redirect (3xx status)
+        Uses multiple strategies with retries to ensure we get the real URL.
+        Returns empty string if resolution completely fails (caller should handle).
+        Results are cached to avoid duplicate HTTP requests.
+        """
+        # If not a redirect URL, return as-is
+        if "vertexaisearch.cloud.google.com" not in url:
+            return url
+
+        # Check cache first
+        if url in self._redirect_url_cache:
+            cached = self._redirect_url_cache[url]
+            logger.debug(
+                f"Using cached redirect resolution: {url[:40]}... -> {cached[:40] if cached else '(failed)'}..."
+            )
+            return cached
+
+        # Try multiple times with different strategies
+        resolved_url = ""
+        for attempt in range(max_retries):
+            try:
+                # Strategy 1: Simple HEAD request with redirects
+                if attempt == 0:
+                    response = requests.head(
+                        url,
+                        timeout=15,
+                        allow_redirects=True,
+                        headers={
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                        },
+                    )
+                    if (
+                        response.url
+                        and "vertexaisearch.cloud.google.com" not in response.url
+                    ):
+                        logger.debug(
+                            f"Resolved via HEAD: {url[:50]}... -> {response.url[:50]}..."
+                        )
+                        resolved_url = response.url
+                        break
+
+                # Strategy 2: GET request without following redirects (get Location header)
+                elif attempt == 1:
+                    response = requests.get(
+                        url,
+                        timeout=15,
+                        allow_redirects=False,
+                        stream=True,
+                        headers={
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                        },
+                    )
+                    response.close()
+                    if response.status_code in (301, 302, 303, 307, 308):
+                        location = response.headers.get("Location")
+                        if location and location.startswith("http"):
+                            # If location is also a redirect, follow it
+                            if "vertexaisearch.cloud.google.com" not in location:
+                                logger.debug(
+                                    f"Resolved via Location header: {url[:50]}... -> {location[:50]}..."
+                                )
+                                resolved_url = location
+                                break
+                            # Try to follow the chain
+                            final = self._follow_redirect_chain(location)
+                            if final:
+                                resolved_url = final
+                                break
+
+                # Strategy 3: Full GET with redirects followed
+                else:
+                    response = requests.get(
+                        url,
+                        timeout=20,
+                        allow_redirects=True,
+                        stream=True,
+                        headers={
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        },
+                    )
+                    response.close()
+                    if (
+                        response.url
+                        and "vertexaisearch.cloud.google.com" not in response.url
+                    ):
+                        logger.debug(
+                            f"Resolved via full GET: {url[:50]}... -> {response.url[:50]}..."
+                        )
+                        resolved_url = response.url
+                        break
+
+            except requests.exceptions.Timeout:
+                logger.debug(
+                    f"Timeout resolving redirect (attempt {attempt + 1}): {url[:50]}..."
+                )
+                continue
+            except requests.exceptions.RequestException as e:
+                logger.debug(f"Error resolving redirect (attempt {attempt + 1}): {e}")
+                continue
+
+        # Cache the result (even failures, to avoid retrying)
+        self._redirect_url_cache[url] = resolved_url
+
+        if not resolved_url:
+            logger.warning(
+                f"Failed to resolve redirect URL after {max_retries} attempts: {url[:60]}..."
+            )
+
+        return resolved_url
+
+    def _follow_redirect_chain(self, url: str, max_hops: int = 5) -> str:
+        """Follow a chain of redirects to get final URL."""
+        current_url = url
+        for _ in range(max_hops):
+            try:
+                response = requests.head(
+                    current_url,
+                    timeout=10,
+                    allow_redirects=False,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    },
+                )
                 if response.status_code in (301, 302, 303, 307, 308):
                     location = response.headers.get("Location")
-                    if location and location.startswith("http"):
-                        logger.debug(
-                            f"Resolved redirect: {url[:60]}... -> {location[:60]}..."
-                        )
-                        return location
+                    if location:
+                        if location.startswith("/"):
+                            # Relative URL - construct absolute
+                            from urllib.parse import urlparse
 
-                # If not a redirect, try following all redirects
-                response = requests.get(
-                    url, timeout=10, allow_redirects=True, stream=True
-                )
-                response.close()
-                if response.url and response.url != url:
-                    logger.debug(
-                        f"Resolved redirect: {url[:60]}... -> {response.url[:60]}..."
-                    )
-                    return response.url
-            except Exception as e:
-                logger.debug(f"Failed to resolve redirect {url[:50]}: {e}")
-        return url
+                            parsed = urlparse(current_url)
+                            location = f"{parsed.scheme}://{parsed.netloc}{location}"
+                        current_url = location
+                    else:
+                        break
+                else:
+                    # Not a redirect - we've reached the destination
+                    break
+            except Exception:
+                break
+
+        # Check if we escaped the redirect domain
+        if "vertexaisearch.cloud.google.com" not in current_url:
+            return current_url
+        return ""
 
     def _replace_sources_with_grounding(
         self, stories_data: list[dict], grounding_sources: list[dict]
@@ -698,6 +819,72 @@ class StorySearcher:
             )
 
         return stories_data
+
+    def _search_for_source_url(self, title: str, summary: str = "") -> Optional[str]:
+        """
+        Search for a source URL for a story that has no grounded sources.
+
+        Uses a simple web search via Gemini to find a relevant article URL.
+        Returns the first valid non-redirect URL found, or None if search fails.
+        """
+        if not self.client:
+            return None
+
+        try:
+            logger.debug(f"Searching for source URL for: {title[:50]}...")
+
+            # Use Gemini with grounding to find the article
+            from google.genai.types import Tool, GoogleSearch
+
+            response = self.client.models.generate_content(
+                model=Config.MODEL_TEXT,
+                contents=f"Find the original news article URL for this story. Return ONLY the URL, nothing else.\n\nStory: {title}\n\nSummary: {summary[:200] if summary else 'N/A'}",
+                config={
+                    "temperature": 0.1,
+                    "max_output_tokens": 200,
+                    "tools": [Tool(google_search=GoogleSearch())],
+                },
+            )
+
+            # First try to get URL from grounding metadata
+            if response.candidates:
+                candidate = response.candidates[0]
+                if (
+                    hasattr(candidate, "grounding_metadata")
+                    and candidate.grounding_metadata
+                ):
+                    metadata = candidate.grounding_metadata
+                    if (
+                        hasattr(metadata, "grounding_chunks")
+                        and metadata.grounding_chunks
+                    ):
+                        for chunk in metadata.grounding_chunks:
+                            if hasattr(chunk, "web") and hasattr(chunk.web, "uri"):
+                                uri = chunk.web.uri  # type: ignore[union-attr]
+                                if uri and uri.startswith("http"):
+                                    resolved = self._resolve_redirect_url(uri)
+                                    if (
+                                        resolved
+                                        and "vertexaisearch.cloud.google.com"
+                                        not in resolved
+                                    ):
+                                        return resolved
+
+            # Fallback: try to extract URL from response text
+            if response.text:
+                urls = re.findall(r'https?://[^\s<>"\']+', response.text)
+                for url in urls:
+                    # Clean up URL (remove trailing punctuation)
+                    url = re.sub(r"[.,;:!?\)\]]+$", "", url)
+                    if url.startswith("http") and "vertexaisearch" not in url:
+                        if validate_url(url):
+                            return url
+
+            return None
+
+        except Exception as e:
+            logger.debug(f"Failed to search for source URL: {e}")
+            return None
 
     def _get_search_query(self, search_prompt: str) -> str:
         """Convert a conversational prompt into a concise search query using Local LLM."""
@@ -1117,8 +1304,9 @@ class StorySearcher:
         """Save stories to database, avoiding duplicates. Returns count of new stories."""
         new_count = 0
 
-        # Get existing titles for semantic deduplication
-        existing_titles = self.db.get_all_story_titles()
+        # Get recent titles for semantic deduplication (more memory-efficient for large DBs)
+        # Duplicates are most likely among recent stories, so 90 days is a reasonable window
+        existing_titles = self.db.get_recent_story_titles(days=90)
         similarity_threshold = Config.DEDUP_SIMILARITY_THRESHOLD
 
         for i, data in enumerate(stories_data):
@@ -1146,10 +1334,20 @@ class StorySearcher:
                         f"Filtered {original_count - len(sources)} redirect URLs from sources"
                     )
 
-                # Skip stories with no sources before any further processing
+                # If no sources, try to find one using web search
                 if not sources:
-                    logger.warning(f"Skipping story with no sources: {title}")
-                    continue
+                    logger.info(
+                        f"No sources for '{title[:40]}...' - searching for source URL..."
+                    )
+                    found_url = self._search_for_source_url(
+                        title, data.get("summary", "")
+                    )
+                    if found_url:
+                        sources = [found_url]
+                        logger.info(f"Found source URL via search: {found_url[:60]}...")
+                    else:
+                        logger.warning(f"Skipping story with no sources: {title}")
+                        continue
 
                 # Validate URLs if enabled
                 if Config.VALIDATE_SOURCE_URLS:
@@ -1294,6 +1492,8 @@ class StorySearcher:
                 )
             else:
                 # Use Gemini
+                # NOTE: We intentionally do NOT use response_mime_type: application/json
+                # because it prevents grounding_chunks from being populated with source URLs.
                 prompt = self._build_search_prompt(
                     search_prompt, since_date, summary_words
                 )
@@ -1302,13 +1502,22 @@ class StorySearcher:
                     contents=prompt,
                     config={
                         "tools": [{"google_search": {}}],
-                        "response_mime_type": "application/json",
                         "max_output_tokens": Config.LLM_MAX_OUTPUT_TOKENS,
                     },
                 )
                 if not response.text:
                     return []
                 stories_data = self._parse_response(response.text)
+
+                # Extract real URLs from grounding metadata (same as main search)
+                grounding_sources = self._extract_grounding_urls(response)
+                if grounding_sources:
+                    logger.info(
+                        f"Extracted {len(grounding_sources)} real URLs from grounding metadata"
+                    )
+                    stories_data = self._replace_sources_with_grounding(
+                        stories_data, grounding_sources
+                    )
 
             self._preview_stories = stories_data
             return stories_data
@@ -1699,6 +1908,92 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
+    # New tests for URL matching functions
+    def test_extract_url_keywords():
+        keywords = extract_url_keywords(
+            "https://news.example.com/2024/researchers-unlock-catalyst-behavior"
+        )
+        assert "researchers" in keywords
+        assert "unlock" in keywords
+        assert "catalyst" in keywords
+        assert "behavior" in keywords
+        # Numbers and common fragments should be excluded
+        assert "2024" not in keywords
+        assert "news" not in keywords
+
+    def test_extract_url_keywords_empty():
+        keywords = extract_url_keywords("")
+        assert keywords == set()
+
+    def test_calculate_url_story_match_score_high():
+        score = calculate_url_story_match_score(
+            story_title="Researchers Unlock Catalyst Behavior",
+            story_summary="Scientists discovered new catalyst mechanisms",
+            url="https://example.com/researchers-unlock-catalyst-behavior",
+            source_title="Catalyst Research Breakthrough",
+        )
+        assert score > URL_MATCH_THRESHOLD
+        assert score <= 1.0
+
+    def test_calculate_url_story_match_score_low():
+        score = calculate_url_story_match_score(
+            story_title="AI in Healthcare Revolution",
+            story_summary="Machine learning transforms medical diagnostics",
+            url="https://example.com/sports-basketball-championship",
+            source_title="NBA Finals",
+        )
+        assert score < URL_MATCH_THRESHOLD
+
+    def test_calculate_url_story_match_score_empty():
+        score = calculate_url_story_match_score(
+            story_title="", story_summary="", url="", source_title=""
+        )
+        assert score == 0.0
+
+    def test_retry_decorator_success():
+        call_count = 0
+
+        @retry_with_backoff(max_retries=3, base_delay=0.01)
+        def succeeds_first_try():
+            nonlocal call_count
+            call_count += 1
+            return "success"
+
+        result = succeeds_first_try()
+        assert result == "success"
+        assert call_count == 1
+
+    def test_retry_decorator_eventual_success():
+        call_count = 0
+
+        @retry_with_backoff(
+            max_retries=3, base_delay=0.01, retryable_exceptions=(ValueError,)
+        )
+        def fails_then_succeeds():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ValueError("Temporary failure")
+            return "success"
+
+        result = fails_then_succeeds()
+        assert result == "success"
+        assert call_count == 3
+
+    def test_redirect_url_cache():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            searcher = StorySearcher(db, None, None)  # type: ignore
+            # Non-redirect URLs should pass through unchanged
+            result = searcher._resolve_redirect_url("https://example.com/article")
+            assert result == "https://example.com/article"
+            # Cache should be empty for non-redirect URLs (they bypass cache)
+            assert "https://example.com/article" not in searcher._redirect_url_cache
+        finally:
+            os.unlink(db_path)
+
     suite.add_test(
         "Calculate similarity - identical", test_calculate_similarity_identical
     )
@@ -1721,5 +2016,22 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     suite.add_test("Get search feedback - zero", test_get_search_feedback_zero)
     suite.add_test("Get search feedback - few", test_get_search_feedback_few)
     suite.add_test("Manual distill", test_manual_distill)
+    # New tests
+    suite.add_test("Extract URL keywords", test_extract_url_keywords)
+    suite.add_test("Extract URL keywords - empty", test_extract_url_keywords_empty)
+    suite.add_test(
+        "URL-story match score - high", test_calculate_url_story_match_score_high
+    )
+    suite.add_test(
+        "URL-story match score - low", test_calculate_url_story_match_score_low
+    )
+    suite.add_test(
+        "URL-story match score - empty", test_calculate_url_story_match_score_empty
+    )
+    suite.add_test("Retry decorator - success", test_retry_decorator_success)
+    suite.add_test(
+        "Retry decorator - eventual success", test_retry_decorator_eventual_success
+    )
+    suite.add_test("Redirect URL cache", test_redirect_url_cache)
 
     return suite

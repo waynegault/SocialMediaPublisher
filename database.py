@@ -49,9 +49,30 @@ class Story:
         0.0  # Engagement rate (clicks+likes+comments+shares / impressions)
     )
     linkedin_analytics_fetched_at: Optional[datetime] = None
-    # Company mention enrichment fields
-    company_mention_enrichment: Optional[str] = None  # Company name or None
+    # --- Enrichment fields (cleaner structure) ---
     enrichment_status: str = "pending"  # pending, enriched, skipped, error
+    # Organizations mentioned in the story (just names)
+    organizations: list[str] = field(default_factory=list)  # ["BASF", "MIT", "IChemE"]
+    # People mentioned directly in the story
+    story_people: list[dict] = field(
+        default_factory=list
+    )  # [{"name": "Dr. Jane Smith", "title": "Lead Researcher", "affiliation": "MIT"}]
+    # Key leaders from the organizations (CEO, CTO, etc.)
+    org_leaders: list[dict] = field(
+        default_factory=list
+    )  # [{"name": "John Doe", "title": "CEO", "organization": "BASF"}]
+    # LinkedIn handles for @ mentions (consolidated from all people)
+    linkedin_handles: list[dict] = field(
+        default_factory=list
+    )  # [{"name": "Dr. Jane Smith", "handle": "janesmith", "urn": "urn:li:person:123", "url": "https://linkedin.com/in/janesmith"}]
+    # Legacy fields (kept for backward compatibility, will be migrated)
+    company_mention_enrichment: Optional[str] = None  # DEPRECATED - use organizations
+    individuals: list[str] = field(
+        default_factory=list
+    )  # DEPRECATED - use story_people
+    linkedin_profiles: list[dict] = field(
+        default_factory=list
+    )  # DEPRECATED - use linkedin_handles
 
     def to_dict(self) -> dict:
         """Convert story to dictionary."""
@@ -89,8 +110,15 @@ class Story:
             "linkedin_analytics_fetched_at": self.linkedin_analytics_fetched_at.isoformat()
             if self.linkedin_analytics_fetched_at
             else None,
-            "company_mention_enrichment": self.company_mention_enrichment,
             "enrichment_status": self.enrichment_status,
+            "organizations": self.organizations,
+            "story_people": self.story_people,
+            "org_leaders": self.org_leaders,
+            "linkedin_handles": self.linkedin_handles,
+            # Legacy fields (deprecated)
+            "company_mention_enrichment": self.company_mention_enrichment,
+            "individuals": self.individuals,
+            "linkedin_profiles": self.linkedin_profiles,
         }
 
     @classmethod
@@ -164,12 +192,32 @@ class Story:
             )
             if "linkedin_analytics_fetched_at" in keys
             else None,
-            company_mention_enrichment=row["company_mention_enrichment"]
-            if "company_mention_enrichment" in keys
-            else None,
             enrichment_status=row["enrichment_status"]
             if "enrichment_status" in keys
             else "pending",
+            # New fields
+            organizations=json.loads(row["organizations"])
+            if "organizations" in keys and row["organizations"]
+            else [],
+            story_people=json.loads(row["story_people"])
+            if "story_people" in keys and row["story_people"]
+            else [],
+            org_leaders=json.loads(row["org_leaders"])
+            if "org_leaders" in keys and row["org_leaders"]
+            else [],
+            linkedin_handles=json.loads(row["linkedin_handles"])
+            if "linkedin_handles" in keys and row["linkedin_handles"]
+            else [],
+            # Legacy fields
+            company_mention_enrichment=row["company_mention_enrichment"]
+            if "company_mention_enrichment" in keys
+            else None,
+            individuals=json.loads(row["individuals"])
+            if "individuals" in keys and row["individuals"]
+            else [],
+            linkedin_profiles=json.loads(row["linkedin_profiles"])
+            if "linkedin_profiles" in keys and row["linkedin_profiles"]
+            else [],
         )
 
 
@@ -205,10 +253,34 @@ class Database:
         finally:
             conn.close()
 
+    def _get_existing_columns(
+        self, cursor: sqlite3.Cursor, table_name: str
+    ) -> set[str]:
+        """Get the set of existing column names for a table."""
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        return {row[1] for row in cursor.fetchall()}
+
     def _migrate_add_column(
-        self, cursor: sqlite3.Cursor, column_name: str, column_def: str
+        self,
+        cursor: sqlite3.Cursor,
+        column_name: str,
+        column_def: str,
+        existing_columns: set[str] | None = None,
     ) -> None:
-        """Add a column to the stories table if it doesn't exist."""
+        """Add a column to the stories table if it doesn't exist.
+
+        Args:
+            cursor: Database cursor
+            column_name: Name of the column to add
+            column_def: Column definition (e.g., 'TEXT DEFAULT NULL')
+            existing_columns: Optional pre-fetched set of existing column names
+                             (avoids repeated PRAGMA calls)
+        """
+        # If existing_columns provided, do a quick check first
+        if existing_columns is not None:
+            if column_name in existing_columns:
+                return  # Column already exists, skip
+
         try:
             cursor.execute(f"ALTER TABLE stories ADD COLUMN {column_name} {column_def}")
             logger.info(f"Added column '{column_name}' to stories table")
@@ -244,29 +316,76 @@ class Database:
                 )
             """)
 
+            # Get existing columns once for all migration checks
+            existing_columns = self._get_existing_columns(cursor, "stories")
+
             # Migrate existing databases: add new columns if they don't exist
-            self._migrate_add_column(cursor, "category", "TEXT DEFAULT 'Other'")
-            self._migrate_add_column(cursor, "quality_justification", "TEXT DEFAULT ''")
-            self._migrate_add_column(cursor, "verification_reason", "TEXT")
-            self._migrate_add_column(cursor, "linkedin_post_url", "TEXT")
-            self._migrate_add_column(cursor, "hashtags", "TEXT DEFAULT '[]'")
-            self._migrate_add_column(cursor, "linkedin_mentions", "TEXT DEFAULT '[]'")
+            self._migrate_add_column(
+                cursor, "category", "TEXT DEFAULT 'Other'", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "quality_justification", "TEXT DEFAULT ''", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "verification_reason", "TEXT", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "linkedin_post_url", "TEXT", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "hashtags", "TEXT DEFAULT '[]'", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "linkedin_mentions", "TEXT DEFAULT '[]'", existing_columns
+            )
             # LinkedIn analytics columns
             self._migrate_add_column(
-                cursor, "linkedin_impressions", "INTEGER DEFAULT 0"
+                cursor, "linkedin_impressions", "INTEGER DEFAULT 0", existing_columns
             )
-            self._migrate_add_column(cursor, "linkedin_clicks", "INTEGER DEFAULT 0")
-            self._migrate_add_column(cursor, "linkedin_likes", "INTEGER DEFAULT 0")
-            self._migrate_add_column(cursor, "linkedin_comments", "INTEGER DEFAULT 0")
-            self._migrate_add_column(cursor, "linkedin_shares", "INTEGER DEFAULT 0")
-            self._migrate_add_column(cursor, "linkedin_engagement", "REAL DEFAULT 0.0")
             self._migrate_add_column(
-                cursor, "linkedin_analytics_fetched_at", "TIMESTAMP"
+                cursor, "linkedin_clicks", "INTEGER DEFAULT 0", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "linkedin_likes", "INTEGER DEFAULT 0", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "linkedin_comments", "INTEGER DEFAULT 0", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "linkedin_shares", "INTEGER DEFAULT 0", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "linkedin_engagement", "REAL DEFAULT 0.0", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "linkedin_analytics_fetched_at", "TIMESTAMP", existing_columns
             )
             # Company mention enrichment columns
-            self._migrate_add_column(cursor, "company_mention_enrichment", "TEXT")
             self._migrate_add_column(
-                cursor, "enrichment_status", "TEXT DEFAULT 'pending'"
+                cursor, "company_mention_enrichment", "TEXT", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "enrichment_status", "TEXT DEFAULT 'pending'", existing_columns
+            )
+            # Individual people and their LinkedIn profiles (legacy)
+            self._migrate_add_column(
+                cursor, "individuals", "TEXT DEFAULT '[]'", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "linkedin_profiles", "TEXT DEFAULT '[]'", existing_columns
+            )
+            # New enrichment fields (cleaner structure)
+            self._migrate_add_column(
+                cursor, "organizations", "TEXT DEFAULT '[]'", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "story_people", "TEXT DEFAULT '[]'", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "org_leaders", "TEXT DEFAULT '[]'", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "linkedin_handles", "TEXT DEFAULT '[]'", existing_columns
             )
 
             # System state table for tracking last check date, etc.
@@ -345,11 +464,52 @@ class Database:
             row = cursor.fetchone()
             return Story.from_row(row) if row else None
 
-    def get_all_story_titles(self) -> list[tuple[int, str]]:
-        """Get all story IDs and titles for semantic deduplication."""
+    def get_all_story_titles(self, limit: int | None = None) -> list[tuple[int, str]]:
+        """Get story IDs and titles for semantic deduplication.
+
+        Args:
+            limit: Optional maximum number of stories to return (most recent first).
+                   Use this for large databases to limit memory usage.
+                   Default is None (all stories, for backwards compatibility).
+
+        Returns:
+            List of (id, title) tuples ordered by acquire_date descending (most recent first).
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, title FROM stories")
+            if limit is not None:
+                cursor.execute(
+                    "SELECT id, title FROM stories ORDER BY acquire_date DESC LIMIT ?",
+                    (limit,),
+                )
+            else:
+                cursor.execute(
+                    "SELECT id, title FROM stories ORDER BY acquire_date DESC"
+                )
+            return [(row["id"], row["title"]) for row in cursor.fetchall()]
+
+    def get_recent_story_titles(self, days: int = 90) -> list[tuple[int, str]]:
+        """Get story IDs and titles from the last N days for deduplication.
+
+        This is more memory-efficient than get_all_story_titles for large databases
+        since duplicates are most likely to be found among recent stories.
+
+        Args:
+            days: Number of days to look back (default: 90)
+
+        Returns:
+            List of (id, title) tuples from the last N days.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, title FROM stories
+                WHERE acquire_date >= datetime('now', '-' || ? || ' days')
+                ORDER BY acquire_date DESC
+                """,
+                (days,),
+            )
             return [(row["id"], row["title"]) for row in cursor.fetchall()]
 
     def update_story(self, story: Story) -> bool:
@@ -385,8 +545,14 @@ class Database:
                     linkedin_shares = ?,
                     linkedin_engagement = ?,
                     linkedin_analytics_fetched_at = ?,
+                    enrichment_status = ?,
+                    organizations = ?,
+                    story_people = ?,
+                    org_leaders = ?,
+                    linkedin_handles = ?,
                     company_mention_enrichment = ?,
-                    enrichment_status = ?
+                    individuals = ?,
+                    linkedin_profiles = ?
                 WHERE id = ?
                 """,
                 (
@@ -413,8 +579,14 @@ class Database:
                     story.linkedin_shares,
                     story.linkedin_engagement,
                     story.linkedin_analytics_fetched_at,
-                    story.company_mention_enrichment,
                     story.enrichment_status,
+                    json.dumps(story.organizations),
+                    json.dumps(story.story_people),
+                    json.dumps(story.org_leaders),
+                    json.dumps(story.linkedin_handles),
+                    story.company_mention_enrichment,
+                    json.dumps(story.individuals),
+                    json.dumps(story.linkedin_profiles),
                     story.id,
                 ),
             )

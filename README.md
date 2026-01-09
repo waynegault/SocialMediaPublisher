@@ -36,7 +36,9 @@ For detailed architecture and component documentation, see the [Overview wiki](h
   @ mentions, and your signature block
 - **LinkedIn Analytics**: Track impressions, likes, comments, shares for posts
 - **Smart Hashtags**: AI-generated relevant hashtags (up to 3 per post)
-- **LinkedIn Mentions**: Automatic @ mentions for companies/people in stories
+- **Story Enrichment**: Extracts organizations, story people, and org leaders
+- **LinkedIn Profile Search**: Finds real LinkedIn profiles using Google Search grounding
+- **LinkedIn @ Mentions**: Automatic @ mentions using verified LinkedIn usernames
 - **Opportunity Messages**: Optional professional postscript about job openings
 - **Automatic Cleanup**: Removes old unused stories after a configurable
   exclusion period
@@ -280,8 +282,8 @@ SocialMediaPublisher/
 ├── unit_tests.py            # Unit test suite
 ├── linkedin_test.py         # LinkedIn connection test utility
 ├── linkedin_diagnostics.py  # LinkedIn token diagnostics
-├── linkedin_dryrun_publish.py # Dry-run publish preview
-├── publish_story.py         # Manual story publish utility
+├── company_mention_enricher.py # Story enrichment and LinkedIn profiles
+├── opportunity_messages.py  # Professional postscripts for posts
 ├── requirements.txt         # Python dependencies
 ├── .env.example             # Example environment configuration
 ├── generated_images/        # AI-generated story images
@@ -306,6 +308,11 @@ Stories are stored in SQLite with the following fields:
 - `scheduled_time`: When to publish
 - `published_time`: When actually published
 - `linkedin_post_id`: LinkedIn's post identifier
+- `enrichment_status`: pending/enriched/skipped
+- `organizations`: JSON array of organization names mentioned in story
+- `story_people`: JSON array of people mentioned in story (name, title, affiliation)
+- `org_leaders`: JSON array of key executives from organizations (name, title, org)
+- `linkedin_handles`: JSON array of verified LinkedIn profiles with @ handles
 
 ## Workflow Details
 
@@ -647,6 +654,24 @@ From the interactive menu:
 ---
 
 ## Appendix A: Chronology of Changes
+
+### Version 2.9 (January 9, 2026)
+
+- **Complete enrichment system redesign**:
+  - New structured data: `organizations`, `story_people`, `org_leaders`, `linkedin_handles`
+  - Replaced messy sentence-based enrichment with clean JSON structures
+  - 3-step enrichment workflow: orgs+people → org leaders → LinkedIn handles
+- **LinkedIn profile search with Google Search grounding**:
+  - Uses Gemini with Google Search to find real LinkedIn profile URLs
+  - Extracts actual LinkedIn usernames for @ mentions (e.g., @emma-walmsley-097b47149)
+  - Batch processing for efficiency
+- **Image composition rebalanced**:
+  - Technology/story now occupies ~2/3 of image frame
+  - Human element reduced to ~1/3 as secondary context
+  - Updated IMAGE_REFINEMENT_PROMPT and IMAGE_FALLBACK_PROMPT
+- **Removed obsolete scripts folder**:
+  - Deleted backfill_linkedin_mentions.py (legacy migration script)
+  - Deleted resolve_linkedin_urns.py (legacy URN resolver)
 
 ### Version 2.8 (January 8, 2026)
 

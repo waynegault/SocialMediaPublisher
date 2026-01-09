@@ -11,35 +11,46 @@ import sys
 def _check_venv():
     """Check if running in the correct virtual environment."""
     proj_root = Path(__file__).parent
-    venv_dir = proj_root / ".venv"
+    current_exe = Path(sys.executable).resolve()
 
-    if not venv_dir.exists():
-        # No .venv directory, skip check
+    # Check for both common venv directory names
+    venv_candidates = [(".venv", proj_root / ".venv"), ("venv", proj_root / "venv")]
+    existing_venvs = [(name, path) for name, path in venv_candidates if path.exists()]
+
+    if not existing_venvs:
+        # No venv directory found, skip check
         return
 
-    # Check if current interpreter is in the .venv
-    current_exe = Path(sys.executable).resolve()
+    # Check if current interpreter is in ANY of the existing venvs
+    for venv_name, venv_dir in existing_venvs:
+        venv_scripts = venv_dir / ("Scripts" if os.name == "nt" else "bin")
+        if str(current_exe).startswith(str(venv_scripts.resolve())):
+            # Running in this venv - all good
+            return
+
+    # Not running in any of the existing venvs - show error
+    # Use the first existing venv for the error message
+    venv_name, venv_dir = existing_venvs[0]
     venv_scripts = venv_dir / ("Scripts" if os.name == "nt" else "bin")
 
-    if not str(current_exe).startswith(str(venv_scripts.resolve())):
-        print("=" * 60)
-        print("ERROR: Not running in the .venv virtual environment!")
-        print("=" * 60)
-        print(f"\nCurrent Python: {current_exe}")
-        print(f"Expected venv:  {venv_scripts}")
-        print("\nTo fix, either:")
-        print("  1. Activate the venv first:")
-        if os.name == "nt":  # pragma: no cover
-            print("     .venv\\Scripts\\activate")
-        else:  # pragma: no cover
-            print("     source .venv/bin/activate")
-        print("  2. Or run directly with venv Python:")
-        if os.name == "nt":  # pragma: no cover
-            print("     .venv\\Scripts\\python main.py")
-        else:  # pragma: no cover
-            print("     .venv/bin/python main.py")
-        print()
-        sys.exit(1)
+    print("=" * 60)
+    print(f"ERROR: Not running in the {venv_name} virtual environment!")
+    print("=" * 60)
+    print(f"\nCurrent Python: {current_exe}")
+    print(f"Expected venv:  {venv_scripts}")
+    print("\nTo fix, either:")
+    print("  1. Activate the venv first:")
+    if os.name == "nt":  # pragma: no cover
+        print(f"     {venv_name}\\Scripts\\activate")
+    else:  # pragma: no cover
+        print(f"     source {venv_name}/bin/activate")
+    print("  2. Or run directly with venv Python:")
+    if os.name == "nt":  # pragma: no cover
+        print(f"     {venv_name}\\Scripts\\python main.py")
+    else:  # pragma: no cover
+        print(f"     {venv_name}/bin/python main.py")
+    print()
+    sys.exit(1)
 
 
 _check_venv()
@@ -106,14 +117,16 @@ class Config:
     HF_PREFER_IF_CONFIGURED: bool = _get_bool("HF_PREFER_IF_CONFIGURED", True)
 
     # --- Image Style Settings ---
-    # Style directive for image generation prompts - eye-catching professional photography
+    # Style directive for image generation prompts - technical industrial photography
     IMAGE_STYLE: str = _get_str(
         "IMAGE_STYLE",
-        "eye-catching professional industrial photography, dramatic lighting, bold composition, "
-        "striking visual impact, glamorous attractive professional woman as focal point, "
-        "model-quality beauty with flawless skin, styled hair, subtle makeup even in industrial setting, "
-        "cinematic quality, vivid colors, dynamic angle, high contrast, sharp focus, "
-        "attention-grabbing, magazine cover quality, photorealistic, fashion-forward workwear",
+        "industrial engineering photography, technical documentation style, "
+        "female engineer or scientist performing hands-on technical work, "
+        "sharp focus on equipment and processes with worker in context, "
+        "authentic PPE and workwear - hard hats, safety glasses, lab coats, coveralls, "
+        "real industrial or laboratory environment with visible technical detail, "
+        "natural workplace lighting supplemented by equipment glow, "
+        "photorealistic, editorial quality for engineering trade publication",
     )
     # Aspect ratio for generated images (options: 1:1, 16:9, 9:16, 4:3, 3:4)
     IMAGE_ASPECT_RATIO: str = _get_str("IMAGE_ASPECT_RATIO", "16:9")
@@ -123,70 +136,70 @@ class Config:
     # Placeholders: {story_title}, {story_summary}, {image_style}
     IMAGE_REFINEMENT_PROMPT: str = _get_str(
         "IMAGE_REFINEMENT_PROMPT",
-        """You are creating an EYE-CATCHING image for a professional chemical engineering publication.
+        """You are creating an image for a professional chemical engineering publication.
 
-STORY CONTEXT:
+STORY TO ILLUSTRATE:
 - Title: {story_title}
 - Summary: {story_summary}
 
-YOUR TASK: Create an image prompt for a VISUALLY STRIKING, ATTENTION-GRABBING photograph.
+STEP 1 - EXTRACT THE KEY TECHNICAL ELEMENTS:
+Read the story carefully and identify:
+- The specific technology, process, or innovation mentioned
+- The type of equipment or facility involved (reactor, distillation column, lab, refinery, etc.)
+- The industry sector (petrochemical, pharmaceutical, renewable energy, etc.)
+- Any specific materials, chemicals, or products discussed
 
-MANDATORY: Feature a GLAMOROUS, ATTRACTIVE professional woman (engineer, scientist, or executive) as the focal point. She should be stunningly beautiful with model-quality features while maintaining professional credibility.
+STEP 2 - CREATE A SCENE THAT DIRECTLY DEPICTS THE STORY:
+Your image MUST show the actual subject matter from the headline. Examples:
+- Story about "new catalyst for hydrogen production" → Show hydrogen production equipment with catalyst handling
+- Story about "CO2 capture technology" → Show carbon capture systems, absorption columns, or flue gas treatment
+- Story about "battery recycling process" → Show battery materials, hydrometallurgical equipment, or sorting facilities
+- Story about "biofuel breakthrough" → Show fermentation vessels, biomass handling, or biorefinery equipment
 
-CRITICAL REQUIREMENTS - THE IMAGE MUST BE:
-1. ATTENTION-GRABBING - stops scrolling, makes viewers look twice
-2. DRAMATIC - bold lighting, strong composition, visual impact
-3. PROFESSIONAL yet GLAMOROUS - like a high-fashion editorial in an industrial setting
-4. PHOTOREALISTIC - like a high-end magazine photograph
-5. FEATURE A BEAUTIFUL, CONFIDENT WOMAN - as the commanding focal point
+STEP 3 - ADD A HUMAN ELEMENT (SECONDARY FOCUS - ~1/3 of image):
+- Include a female engineer or technician as a secondary element
+- She should be positioned to the side or background, not center frame
+- Her activity relates to the technology but doesn't dominate the scene
+- Authentic PPE appropriate for the specific work environment
+- The human element provides scale and context, not the main subject
 
-THE WOMAN MUST HAVE:
-- Model-quality beauty: flawless skin, symmetrical features, striking eyes
-- Styled hair that looks perfect even in industrial settings
-- Subtle but polished makeup
-- Confident, commanding presence with elegant posture
-- Fashion-forward interpretation of workwear (fitted coveralls, stylish hard hat, designer safety glasses)
+TECHNICAL ACCURACY IS CRITICAL:
+- Name the specific type of equipment in your prompt (not just "industrial equipment")
+- Reference the actual process or technology from the story
+- Match the setting to what the story describes
+- Include relevant instrumentation, gauges, control systems
 
-TECHNIQUES FOR VISUAL IMPACT:
-- Dramatic lighting: golden hour, rim lighting, high contrast, spotlight effects
-- Bold composition: rule of thirds, leading lines, dramatic angles (low angle = power)
-- Scale contrast: glamorous woman against massive industrial equipment
-- Color pop: vibrant safety gear, colorful reactions, striking backgrounds
-- Confident poses: hands on hips, examining equipment, directing team
-- Dynamic action: walking purposefully, pointing at data, engaged in work
+COMPOSITION - CRITICAL BALANCE:
+- The technology/equipment from the story is the PRIMARY FOCUS (~2/3 of the image)
+- Technology should be prominently displayed, detailed, and recognizable
+- Engineer is SECONDARY (~1/3), positioned to one side, providing human context
+- The story's subject matter dominates the frame
+- Visible technical details that identify the specific process
+- Industrial/laboratory environment matching the story context
 
-SUBJECT IDEAS - GLAMOROUS WOMAN AS FOCAL POINT:
-- Stunning engineer before massive reactor, hair catching rim light
-- Beautiful scientist in lab coat with colorful chemical reactions
-- Glamorous executive in control room with glowing screens illuminating her face
-- Attractive process engineer on elevated platform, wind in her hair
-- Elegant team leader commanding attention at industrial site
+AVOID:
+- Generic industrial backgrounds that could apply to any story
+- Vague descriptions like "technical equipment" or "machinery"
+- The engineer as the main focus - she is supporting context only
+- People occupying more than 1/3 of the visual space
+- Any technology or setting not mentioned in the story
 
-WHAT TO AVOID:
-- Plain or average-looking subjects
-- Boring, static compositions
-- Flat lighting
-- Woman as background element (she must be the STAR)
-- Fantasy or sci-fi elements
-- Cartoonish styles
+STYLE: {image_style}
 
-STYLE REQUIREMENTS:
-{image_style}
-
-OUTPUT: Write ONLY the image prompt. No explanations. Maximum 100 words.
-Focus on: dramatic lighting, bold composition, beautiful glamorous woman as focal point, visual impact.""",
+OUTPUT: Write ONLY the image prompt. Maximum 80 words.
+The prompt MUST specifically describe the technology/process from the story headline - not generic industrial imagery.""",
     )
 
     # Fallback image prompt template when LLM refinement fails
     # Placeholders: {story_title}
     IMAGE_FALLBACK_PROMPT: str = _get_str(
         "IMAGE_FALLBACK_PROMPT",
-        "Eye-catching professional photograph: {story_title}. "
-        "Glamorous attractive female engineer with model-quality beauty as focal point, "
-        "flawless skin, styled hair, subtle makeup, fashion-forward workwear, "
-        "dramatic rim lighting, bold composition, low angle power shot, "
-        "industrial facility background, vivid colors, high contrast, "
-        "magazine cover quality, photorealistic, attention-grabbing, cinematic",
+        "Technical photograph illustrating: {story_title}. "
+        "The specific technology or process from the headline dominates 2/3 of the frame. "
+        "Female engineer in appropriate PPE positioned to one side, occupying about 1/3 of the image. "
+        "Technology is the primary focus, engineer provides secondary human context. "
+        "Authentic industrial or laboratory setting matching the story subject. "
+        "Natural workplace lighting, photorealistic, engineering publication quality",
     )
 
     # Search instruction prompt - the system prompt for story search
@@ -206,6 +219,12 @@ REQUIREMENTS:
   * quality_justification: Brief explanation of the score
   * hashtags: Array of 1-3 relevant hashtags (without # symbol, e.g., ["ChemicalEngineering", "Sustainability"])
 
+CRITICAL - INCLUDE NAMES:
+- ALWAYS mention specific COMPANY NAMES involved in the story (e.g., "BASF", "MIT", "ExxonMobil")
+- ALWAYS mention KEY INDIVIDUALS by full name when available (researchers, CEOs, lead engineers)
+- Include their role/title (e.g., "Dr. Jane Smith, lead researcher at MIT")
+- If the story is about academic research, name the university AND the lead researcher(s)
+- If the story is about a company development, name the company AND any executives mentioned
 
 WRITING STYLE FOR SUMMARIES:
 - Write in first person (use "I", "what stands out to me", "from an engineering perspective", etc.)
@@ -215,7 +234,7 @@ WRITING STYLE FOR SUMMARIES:
   (e.g. scalability, process efficiency, integration, cost, energy use, or limitations)
 - Avoid sounding like a news aggregator or influencer
 Example:
-"What stands out to me is the engineering challenge behind this — particularly how it could scale beyond lab conditions and integrate with existing process infrastructure."
+"What stands out to me about BASF's new catalyst technology, led by Dr. Klaus Mueller, is the engineering challenge behind this — particularly how it could scale beyond lab conditions and integrate with existing process infrastructure."
 
 HASHTAG GUIDELINES:
 - Use 1-3 relevant, professional hashtags per story
@@ -232,7 +251,7 @@ RESPOND WITH ONLY THIS JSON FORMAT:
     {{
       "title": "Story Title",
       "sources": ["https://real-url-from-search.com/article"],
-      "summary": "I found this fascinating development in... [first-person summary]",
+      "summary": "I found Dr. Jane Smith's work at MIT fascinating... [first-person summary mentioning names]",
       "category": "Technology",
       "quality_score": 8,
       "quality_justification": "Highly relevant topic, reputable source, timely",
@@ -241,7 +260,7 @@ RESPOND WITH ONLY THIS JSON FORMAT:
   ]
 }}
 
-IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real URLs. Write ALL summaries in first person.""",
+IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real URLs. Write ALL summaries in first person. ALWAYS include company names and individual names.""",
     )
 
     # Verification prompt - used to verify story suitability for publication
@@ -315,11 +334,18 @@ TASK:
    - quality_justification: Brief explanation of the score
    - hashtags: Array of 1-3 relevant hashtags (without # symbol)
 
+CRITICAL - INCLUDE NAMES:
+- ALWAYS mention specific COMPANY NAMES involved (e.g., "BASF", "MIT", "ExxonMobil")
+- ALWAYS mention KEY INDIVIDUALS by full name (researchers, CEOs, lead engineers)
+- Include their role/title (e.g., "Dr. Jane Smith, lead researcher at MIT")
+- If academic research, name the university AND lead researcher(s)
+- If company development, name the company AND any executives mentioned
+
 WRITING STYLE FOR SUMMARIES:
 - Write in first person (use "I", "my", "I've found", "I'm excited about", etc.)
 - Sound like a professional sharing industry insights with their network
 - Be conversational but authoritative
-- Example: "I've been following this development closely, and I think it represents..."
+- Example: "I've been following Dr. Sarah Chen's work at Shell on this, and I think it represents..."
 
 HASHTAG GUIDELINES:
 - Use 1-3 relevant, professional hashtags per story
@@ -331,7 +357,7 @@ Example:
   "stories": [
     {{
       "title": "Example Story",
-      "summary": "I found this fascinating development... [first-person summary]",
+      "summary": "I found Dr. John Doe's work at Dow Chemical fascinating... [first-person summary with names]",
       "sources": ["https://example.com"],
       "category": "Technology",
       "quality_score": 8,
@@ -341,7 +367,7 @@ Example:
   ]
 }}
 
-Return ONLY the JSON object. Write ALL summaries in first person.""",
+Return ONLY the JSON object. Write ALL summaries in first person. ALWAYS include company names and individual names.""",
     )
 
     # LinkedIn mention search prompt - finds LinkedIn profiles for story entities
@@ -387,11 +413,11 @@ Return JSON format:
 If no LinkedIn profiles can be found, return: {{"mentions": []}}""",
     )
 
-    # Company mention enrichment prompt - identifies companies for professional mentions
+    # Story enrichment prompt - extracts organizations and people from stories
     # Placeholders: {story_title}, {story_summary}, {story_sources}
-    COMPANY_MENTION_PROMPT: str = _get_str(
-        "COMPANY_MENTION_PROMPT",
-        """Analyze this news story and identify if a specific company is EXPLICITLY NAMED as the primary subject.
+    STORY_ENRICHMENT_PROMPT: str = _get_str(
+        "STORY_ENRICHMENT_PROMPT",
+        """Analyze this news story and extract all organizations and people mentioned.
 
 STORY TITLE: {story_title}
 
@@ -399,22 +425,175 @@ STORY SUMMARY: {story_summary}
 
 SOURCES: {story_sources}
 
-TASK: Determine if a specific, real company is explicitly named and central to this story.
+TASK: Extract all organizations and people explicitly mentioned in this story.
+
+WHAT COUNTS AS AN ORGANIZATION:
+- Companies (e.g., BASF, Shell, ExxonMobil, Ecovyst, SABIC)
+- Universities (e.g., MIT, UCLA, Chalmers University, Imperial College)
+- Research institutions (e.g., Max Planck Institute, CSIRO)
+- Professional bodies (e.g., IChemE, AIChE, RSC)
+- Government agencies (e.g., EPA, DOE, NASA)
+- Industry associations
+
+WHAT COUNTS AS A PERSON:
+- Researchers or scientists named in the story
+- Executives or company leaders mentioned
+- Professors or academics
+- Anyone receiving an award or honor
+- Spokespersons quoted in the story
 
 RULES:
-1. Only identify companies that are EXPLICITLY NAMED in the story (not inferred)
-2. The company must be the PRIMARY subject of the story, not just mentioned
-3. Do NOT guess or infer company names from context
-4. Do NOT include industry associations, government bodies, or research institutions
-5. If multiple companies are mentioned, choose the most prominent one
-6. If no specific company is clearly the primary subject, respond with: NO_COMPANY_MENTION
+1. Only include organizations and people EXPLICITLY NAMED in the story
+2. Do NOT guess or infer names
+3. Include affiliation/title where stated
+4. List ALL organizations mentioned, not just the primary one
 
-If a company qualifies, respond with a single professional sentence like:
-"This development from [Company Name] demonstrates their commitment to [area]."
+Return a JSON object:
+{{
+  "organizations": ["Organization Name 1", "Organization Name 2"],
+  "story_people": [
+    {{"name": "Dr. Jane Smith", "title": "Lead Researcher", "affiliation": "MIT"}},
+    {{"name": "John Doe", "title": "CEO", "affiliation": "BASF"}}
+  ]
+}}
 
-If no company qualifies, respond with exactly: NO_COMPANY_MENTION
+If nothing found, return: {{"organizations": [], "story_people": []}}
+
+Return ONLY valid JSON, no explanation.""",
+    )
+
+    # LinkedIn profile search prompt - finds actual LinkedIn profile URLs
+    # Placeholders: {people_list}
+    LINKEDIN_PROFILE_SEARCH_PROMPT: str = _get_str(
+        "LINKEDIN_PROFILE_SEARCH_PROMPT",
+        """Search for the LinkedIn profile URLs of the following people.
+
+PEOPLE TO FIND:
+{people_list}
+
+For each person, search for their actual LinkedIn profile URL (format: linkedin.com/in/username).
+
+RULES:
+1. Only return REAL, VERIFIED LinkedIn profile URLs that you find through search
+2. The profile must match the person's name AND their affiliation/role
+3. Do NOT guess or make up LinkedIn usernames
+4. If you cannot find a verified profile for someone, exclude them from the results
+
+Return a JSON array:
+[
+  {{"name": "Person Name", "linkedin_url": "https://www.linkedin.com/in/actualusername", "title": "Their Title", "affiliation": "Their Organization"}}
+]
+
+If no profiles can be verified, return: []
+
+Return ONLY the JSON array, no explanation.""",
+    )
+
+    # Organization leaders prompt - finds key executives for organizations
+    # Placeholders: {organization_name}
+    ORG_LEADERS_PROMPT: str = _get_str(
+        "ORG_LEADERS_PROMPT",
+        """For the organization "{organization_name}", identify their key leadership.
+
+Find the following roles if they exist:
+1. CEO / Chief Executive Officer / Managing Director
+2. President
+3. CTO / Chief Technology Officer / Chief Engineer
+4. CHRO / Chief Human Resources Officer / Head of HR
+
+RULES:
+1. Only include REAL, CURRENT leaders you are confident about
+2. Include their exact title
+3. If unsure, leave that role empty
+
+Return a JSON object:
+{{
+  "leaders": [
+    {{"name": "Full Name", "title": "Exact Title", "organization": "{organization_name}"}}
+  ]
+}}
+
+If no leaders can be identified with confidence, return: {{"leaders": []}}
+
+Return ONLY valid JSON, no explanation.""",
+    )
+
+    # DEPRECATED - kept for backward compatibility
+    # Organization mention enrichment prompt - identifies organizations for professional mentions
+    # Placeholders: {story_title}, {story_summary}, {story_sources}
+    COMPANY_MENTION_PROMPT: str = _get_str(
+        "COMPANY_MENTION_PROMPT",
+        """Analyze this news story and identify if a specific organization is EXPLICITLY NAMED as the primary subject.
+
+STORY TITLE: {story_title}
+
+STORY SUMMARY: {story_summary}
+
+SOURCES: {story_sources}
+
+TASK: Determine if a specific, real organization is explicitly named and central to this story.
+
+WHAT COUNTS AS AN ORGANIZATION:
+- Companies (e.g., BASF, Shell, ExxonMobil)
+- Universities (e.g., MIT, UCLA, Stanford, Oklahoma State University)
+- Research institutions (e.g., Max Planck Institute, CSIRO)
+- Professional bodies (e.g., IChemE, AIChE, RSC)
+- Government agencies (e.g., EPA, DOE, NASA)
+- Industry associations
+
+RULES:
+1. Only identify organizations that are EXPLICITLY NAMED in the story (not inferred)
+2. The organization must be the PRIMARY subject of the story, not just mentioned
+3. Do NOT guess or infer organization names from context
+4. If multiple organizations are mentioned, choose the most prominent one
+5. If no specific organization is clearly the primary subject, respond with: NO_COMPANY_MENTION
+
+If an organization qualifies, respond with a single professional sentence like:
+"This development from [Organization Name] demonstrates their commitment to [area]."
+
+If no organization qualifies, respond with exactly: NO_COMPANY_MENTION
 
 Respond with ONLY the sentence or NO_COMPANY_MENTION, nothing else.""",
+    )
+
+    # Individual extraction prompt - identifies key people from stories
+    # Placeholders: {story_title}, {story_summary}, {company_context}
+    INDIVIDUAL_EXTRACTION_PROMPT: str = _get_str(
+        "INDIVIDUAL_EXTRACTION_PROMPT",
+        """Analyze this news story to identify key individuals.
+
+STORY TITLE: {story_title}
+
+STORY SUMMARY: {story_summary}
+
+{company_context}
+
+TASK: Identify key individuals associated with this story.
+
+LOOK FOR:
+1. Anyone EXPLICITLY NAMED in the story (researchers, executives, spokespersons, scientists, engineers)
+2. Authors or lead researchers on the work described
+3. Company executives if a company is involved (CEO, CTO, President)
+4. University professors or lab directors if academic research
+5. Government officials if regulatory/policy related
+
+RULES:
+1. Only include people who are REAL and can be verified
+2. Prioritize people mentioned in the story itself
+3. Include their job title/affiliation if known
+4. Maximum 5 individuals
+
+Return a JSON object with an array of individuals:
+{{
+  "individuals": [
+    {{"name": "Full Name", "title": "Job Title or Affiliation", "source": "mentioned_in_story" or "known_expert"}},
+    ...
+  ]
+}}
+
+If no individuals can be identified, return: {{"individuals": []}}
+
+Return ONLY valid JSON, no explanation.""",
     )
 
     # JSON repair prompt - attempts to fix malformed JSON from LLM responses

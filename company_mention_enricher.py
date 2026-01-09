@@ -5,6 +5,7 @@ to posts as professional, analytical context. It is conservative by design - whe
 it defaults to NO_COMPANY_MENTION.
 """
 
+import json
 import logging
 
 from google import genai  # type: ignore
@@ -37,7 +38,7 @@ class CompanyMentionEnricher:
 
     def enrich_pending_stories(self) -> tuple[int, int]:
         """
-        Enrich all pending stories with company mentions.
+        Enrich all pending stories with organizations and people.
         Returns tuple of (enriched_count, skipped_count).
         """
         stories = self.db.get_stories_needing_enrichment()
@@ -47,7 +48,7 @@ class CompanyMentionEnricher:
             return (0, 0)
 
         total = len(stories)
-        logger.info(f"Enriching {total} stories with company mentions...")
+        logger.info(f"Enriching {total} stories...")
 
         enriched = 0
         skipped = 0
@@ -56,50 +57,36 @@ class CompanyMentionEnricher:
             try:
                 logger.info(f"[{i}/{total}] Enriching: {story.title}")
 
-                mention, status = self._enrich_story(story)
+                # Use new enrichment method
+                result = self._extract_orgs_and_people(story)
 
-                if status == "completed":
-                    story.company_mention_enrichment = (
-                        mention if mention != NO_COMPANY_MENTION else None
-                    )
-                    if mention and mention != NO_COMPANY_MENTION:
-                        story.enrichment_status = "enriched"
+                if result:
+                    orgs = result.get("organizations", [])
+                    people = result.get("story_people", [])
 
-                        # Extract company name from the standard reply format: "<Company> is the primary subject..."
-                        try:
-                            company_name = mention.split(" is ", 1)[0].strip().strip('"')
-                        except Exception:
-                            company_name = mention
+                    story.organizations = orgs
+                    story.story_people = people
+                    story.enrichment_status = "enriched"
 
-                        # Add to linkedin_mentions as a minimal fallback entry if not already present
-                        existing_mentions = story.linkedin_mentions or []
-                        names = {m.get("name") for m in existing_mentions if isinstance(m, dict)}
-                        if company_name and company_name not in names:
-                            mention_entry = {"name": company_name, "urn": None, "type": "organization"}
-
-                            # Attempt to resolve a LinkedIn URN if credentials are available
-                            urn = None
-                            try:
-                                urn = self._resolve_linkedin_urn(company_name)
-                            except Exception as e:
-                                logger.debug(f"URN resolution failed for {company_name}: {e}")
-
-                            if urn:
-                                mention_entry["urn"] = urn
-
-                            existing_mentions.append(mention_entry)
-                            story.linkedin_mentions = existing_mentions
-
-                        logger.info(f"  ✓ ENRICHED: {mention}")
+                    if orgs or people:
+                        logger.info(f"  ✓ Found {len(orgs)} orgs, {len(people)} people")
+                        if orgs:
+                            logger.info(
+                                f"    Organizations: {', '.join(orgs[:3])}{'...' if len(orgs) > 3 else ''}"
+                            )
+                        if people:
+                            names = [p.get("name", "") for p in people[:3]]
+                            logger.info(
+                                f"    People: {', '.join(names)}{'...' if len(people) > 3 else ''}"
+                            )
                         enriched += 1
                     else:
-                        story.enrichment_status = "enriched"
-                        logger.info("  ⏭ SKIPPED: No companies found")
+                        logger.info("  ⏭ No organizations or people found")
                         skipped += 1
                 else:
                     story.enrichment_status = "enriched"
+                    logger.info("  ⏭ Could not extract data")
                     skipped += 1
-                    logger.info(f"  ⏳ SKIPPED: {mention}")
 
                 self.db.update_story(story)
 
@@ -115,6 +102,554 @@ class CompanyMentionEnricher:
 
         logger.info(f"Enrichment complete: {enriched} enriched, {skipped} skipped")
         return (enriched, skipped)
+
+    def _extract_orgs_and_people(self, story: Story) -> dict | None:
+        """Extract organizations and people from a story using AI."""
+        sources_str = (
+            ", ".join(story.source_links[:5])
+            if story.source_links
+            else "No sources provided"
+        )
+        prompt = Config.STORY_ENRICHMENT_PROMPT.format(
+            story_title=story.title,
+            story_summary=story.summary,
+            story_sources=sources_str,
+        )
+
+        try:
+            response_text = self._get_ai_response(prompt)
+            if not response_text:
+                return None
+
+            # Clean up response - sometimes AI adds markdown code blocks
+            response_text = response_text.strip()
+            if response_text.startswith("```"):
+                response_text = re.sub(r"^```\w*\n?", "", response_text)
+                response_text = re.sub(r"\n?```$", "", response_text)
+
+            data = json.loads(response_text)
+            return {
+                "organizations": data.get("organizations", []),
+                "story_people": data.get("story_people", []),
+            }
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse enrichment JSON: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error extracting orgs/people: {e}")
+            return None
+
+    def find_org_leaders(self) -> tuple[int, int]:
+        """
+        Find key leaders for organizations in enriched stories.
+        Returns tuple of (enriched_count, skipped_count).
+        """
+        # Get stories that have organizations but no org_leaders yet
+        stories = self._get_stories_needing_org_leaders()
+
+        if not stories:
+            logger.info("No stories need organization leader enrichment")
+            return (0, 0)
+
+        total = len(stories)
+        logger.info(f"Finding organization leaders for {total} stories...")
+
+        enriched = 0
+        skipped = 0
+
+        for i, story in enumerate(stories, 1):
+            try:
+                logger.info(f"[{i}/{total}] Finding leaders for: {story.title}")
+
+                all_leaders = []
+                for org in story.organizations:
+                    leaders = self._get_org_leaders(org)
+                    if leaders:
+                        all_leaders.extend(leaders)
+                        logger.info(f"  ✓ {org}: {len(leaders)} leaders found")
+                    else:
+                        logger.info(f"  ⏭ {org}: No leaders found")
+
+                story.org_leaders = all_leaders
+                self.db.update_story(story)
+
+                if all_leaders:
+                    enriched += 1
+                else:
+                    skipped += 1
+
+            except KeyboardInterrupt:
+                logger.warning(f"\nLeader enrichment interrupted at story {i}/{total}")
+                break
+            except Exception as e:
+                logger.error(f"  ! Error: {e}")
+                skipped += 1
+                continue
+
+        logger.info(
+            f"Leader enrichment complete: {enriched} enriched, {skipped} skipped"
+        )
+        return (enriched, skipped)
+
+    def _get_org_leaders(self, organization_name: str) -> list[dict]:
+        """Get key leaders for an organization using AI."""
+        prompt = Config.ORG_LEADERS_PROMPT.format(organization_name=organization_name)
+
+        try:
+            response_text = self._get_ai_response(prompt)
+            if not response_text:
+                return []
+
+            # Clean up response
+            response_text = response_text.strip()
+            if response_text.startswith("```"):
+                response_text = re.sub(r"^```\w*\n?", "", response_text)
+                response_text = re.sub(r"\n?```$", "", response_text)
+
+            data = json.loads(response_text)
+            return data.get("leaders", [])
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse leaders JSON: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting org leaders: {e}")
+            return []
+
+    def _get_stories_needing_org_leaders(self) -> list[Story]:
+        """Get stories with organizations but no org_leaders yet."""
+        stories = []
+        with self.db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM stories
+                WHERE enrichment_status = 'enriched'
+                AND organizations IS NOT NULL
+                AND organizations != '[]'
+                AND (org_leaders IS NULL OR org_leaders = '[]')
+                ORDER BY id DESC
+            """)
+            for row in cursor.fetchall():
+                stories.append(Story.from_row(row))
+        return stories
+
+    def find_linkedin_handles(self) -> tuple[int, int]:
+        """
+        Find LinkedIn handles for all people (story_people + org_leaders).
+        Returns tuple of (enriched_count, skipped_count).
+        """
+        # Get stories that have people but no linkedin_handles yet
+        stories = self._get_stories_needing_linkedin_handles()
+
+        if not stories:
+            logger.info("No stories need LinkedIn handle enrichment")
+            return (0, 0)
+
+        total = len(stories)
+        logger.info(f"Finding LinkedIn handles for {total} stories...")
+
+        enriched = 0
+        skipped = 0
+
+        for i, story in enumerate(stories, 1):
+            try:
+                logger.info(
+                    f"[{i}/{total}] Finding LinkedIn handles for: {story.title}"
+                )
+
+                # Combine all people
+                all_people = []
+                for person in story.story_people:
+                    all_people.append(
+                        {
+                            "name": person.get("name", ""),
+                            "title": person.get("title", ""),
+                            "affiliation": person.get("affiliation", ""),
+                        }
+                    )
+                for leader in story.org_leaders:
+                    all_people.append(
+                        {
+                            "name": leader.get("name", ""),
+                            "title": leader.get("title", ""),
+                            "affiliation": leader.get("organization", ""),
+                        }
+                    )
+
+                # Use batch search with Google Search grounding
+                linkedin_handles = self._find_linkedin_profiles_batch(all_people)
+                for handle in linkedin_handles:
+                    name = handle.get("name", "Unknown")
+                    url = handle.get("linkedin_url", "")
+                    if url:
+                        logger.info(f"    → {name}: {url}")
+
+                story.linkedin_handles = linkedin_handles
+                self.db.update_story(story)
+
+                if linkedin_handles:
+                    logger.info(f"  ✓ Found {len(linkedin_handles)} LinkedIn handles")
+                    enriched += 1
+                else:
+                    logger.info("  ⏭ No LinkedIn handles found")
+                    skipped += 1
+
+            except KeyboardInterrupt:
+                logger.warning(
+                    f"\nLinkedIn enrichment interrupted at story {i}/{total}"
+                )
+                break
+            except Exception as e:
+                logger.error(f"  ! Error: {e}")
+                skipped += 1
+                continue
+
+        logger.info(
+            f"LinkedIn enrichment complete: {enriched} enriched, {skipped} skipped"
+        )
+        return (enriched, skipped)
+
+    def _find_linkedin_profiles_batch(self, people: list[dict]) -> list[dict]:
+        """
+        Search for LinkedIn profiles for a batch of people using Gemini with Google Search.
+
+        Uses Google Search grounding to find real LinkedIn profile URLs.
+        Returns list of profiles with verified URLs.
+        """
+        if not people:
+            return []
+
+        # Build the people list for the prompt
+        people_lines = []
+        for i, person in enumerate(people, 1):
+            name = person.get("name", "")
+            if not name:
+                continue
+            title = person.get("title", "")
+            affiliation = person.get("affiliation", "")
+            if title and affiliation:
+                people_lines.append(f"{i}. {name} - {title} at {affiliation}")
+            elif affiliation:
+                people_lines.append(f"{i}. {name} - {affiliation}")
+            elif title:
+                people_lines.append(f"{i}. {name} - {title}")
+            else:
+                people_lines.append(f"{i}. {name}")
+
+        if not people_lines:
+            return []
+
+        people_list_text = "\n".join(people_lines)
+        prompt = Config.LINKEDIN_PROFILE_SEARCH_PROMPT.format(
+            people_list=people_list_text
+        )
+
+        try:
+            # Use Gemini with Google Search grounding to find real profiles
+            response = self.client.models.generate_content(
+                model=Config.MODEL_TEXT,
+                contents=prompt,
+                config={
+                    "tools": [{"google_search": {}}],
+                    "max_output_tokens": 2000,
+                },
+            )
+
+            if not response.text:
+                logger.warning("Empty response from LinkedIn profile search")
+                return []
+
+            # Parse the JSON response
+            text = response.text.strip()
+
+            # Extract JSON from response (handle markdown code blocks)
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+
+            profiles = json.loads(text)
+
+            if not isinstance(profiles, list):
+                logger.warning(f"Unexpected response format: {type(profiles)}")
+                return []
+
+            # Validate and filter results
+            valid_profiles = []
+            for profile in profiles:
+                url = profile.get("linkedin_url", "")
+                if url and "linkedin.com/in/" in url:
+                    # Extract username from URL
+                    username = (
+                        url.split("linkedin.com/in/")[-1].rstrip("/").split("?")[0]
+                    )
+                    valid_profiles.append(
+                        {
+                            "name": profile.get("name", ""),
+                            "title": profile.get("title", ""),
+                            "affiliation": profile.get("affiliation", ""),
+                            "handle": f"@{username}" if username else None,
+                            "linkedin_url": url,
+                        }
+                    )
+
+            return valid_profiles
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse LinkedIn profile response: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Error finding LinkedIn profiles: {e}")
+            return []
+
+    def _get_stories_needing_linkedin_handles(self) -> list[Story]:
+        """Get stories with people but no linkedin_handles yet."""
+        stories = []
+        with self.db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM stories
+                WHERE enrichment_status = 'enriched'
+                AND (
+                    (story_people IS NOT NULL AND story_people != '[]')
+                    OR (org_leaders IS NOT NULL AND org_leaders != '[]')
+                )
+                AND (linkedin_handles IS NULL OR linkedin_handles = '[]')
+                ORDER BY id DESC
+            """)
+            for row in cursor.fetchall():
+                stories.append(Story.from_row(row))
+        return stories
+
+    # =========================================================================
+    # LEGACY METHODS (kept for backward compatibility)
+    # =========================================================================
+
+    def enrich_individuals_for_stories(self) -> tuple[int, int]:
+        """
+        Find key individuals for stories that have been enriched with company mentions.
+        Returns tuple of (enriched_count, skipped_count).
+        """
+        # Get stories that have company mentions but no individuals yet
+        stories = self._get_stories_needing_individual_enrichment()
+
+        if not stories:
+            logger.info("No stories need individual enrichment")
+            return (0, 0)
+
+        total = len(stories)
+        logger.info(f"Finding key individuals for {total} stories...")
+
+        enriched = 0
+        skipped = 0
+
+        for i, story in enumerate(stories, 1):
+            try:
+                logger.info(f"[{i}/{total}] Finding individuals for: {story.title}")
+
+                # Extract company name from enrichment (may be None)
+                company_name = self._extract_company_name(
+                    story.company_mention_enrichment
+                )
+
+                # Find key individuals (works with or without company name)
+                individuals = self._find_key_individuals(story, company_name)
+                if not individuals:
+                    logger.info("  ⏭ No individuals identified")
+                    skipped += 1
+                    continue
+
+                story.individuals = [
+                    ind.get("name", "") for ind in individuals if ind.get("name")
+                ]
+                logger.info(
+                    f"  ✓ Found {len(story.individuals)} individuals: {', '.join(story.individuals)}"
+                )
+
+                # Find LinkedIn profiles for each individual
+                linkedin_profiles = []
+                for ind in individuals:
+                    name = ind.get("name", "")
+                    title = ind.get("title", "")
+                    if name:
+                        profile = self._find_linkedin_profile(name, company_name, title)
+                        if profile:
+                            linkedin_profiles.append(profile)
+                            logger.info(
+                                f"    → LinkedIn: {name} - {profile.get('linkedin_url', 'URN only')}"
+                            )
+
+                story.linkedin_profiles = linkedin_profiles
+                self.db.update_story(story)
+                enriched += 1
+
+            except KeyboardInterrupt:
+                logger.warning(
+                    f"\nIndividual enrichment interrupted at story {i}/{total}"
+                )
+                break
+            except Exception as e:
+                logger.error(f"  ! Error: {e}")
+                skipped += 1
+                continue
+
+        logger.info(
+            f"Individual enrichment complete: {enriched} enriched, {skipped} skipped"
+        )
+        return (enriched, skipped)
+
+    def _get_stories_needing_individual_enrichment(self) -> list[Story]:
+        """Get enriched stories that don't have individuals yet."""
+        stories = []
+        with self.db._get_connection() as conn:
+            cursor = conn.cursor()
+            # Get all enriched stories (approved + has image) that don't have individuals yet
+            cursor.execute("""
+                SELECT * FROM stories
+                WHERE enrichment_status = 'enriched'
+                AND verification_status = 'approved'
+                AND image_path IS NOT NULL
+                AND (individuals IS NULL OR individuals = '[]')
+                ORDER BY id DESC
+            """)
+            for row in cursor.fetchall():
+                stories.append(Story.from_row(row))
+        return stories
+
+    def _extract_company_name(self, mention: str | None) -> str | None:
+        """Extract company name from the enrichment mention string."""
+        if not mention:
+            return None
+        # Try to extract from standard format: "Company Name is the primary subject..."
+        # or "This development from Company Name demonstrates..."
+        try:
+            if " is the primary" in mention or " is " in mention:
+                return mention.split(" is ", 1)[0].strip().strip('"').strip("'")
+            if "from " in mention:
+                after_from = mention.split("from ", 1)[1]
+                # Get text until next space or punctuation
+                company = re.match(r"([A-Za-z0-9\s&\-\.]+)", after_from)
+                if company:
+                    return company.group(1).strip()
+        except Exception:
+            pass
+        # Fallback: return the whole mention if it's short enough
+        if len(mention) < 50:
+            return mention
+        return None
+
+    def _find_key_individuals(
+        self, story: Story, company_name: str | None = None
+    ) -> list[dict]:
+        """Use AI to find key individuals associated with the story (and optionally company)."""
+        # Build company context for prompt
+        if company_name:
+            company_context = f"COMPANY: {company_name}\n\nFocus on individuals related to this company."
+        else:
+            company_context = "NOTE: No specific company identified. Look for individuals mentioned in the story itself."
+
+        prompt = Config.INDIVIDUAL_EXTRACTION_PROMPT.format(
+            story_title=story.title,
+            story_summary=story.summary,
+            company_context=company_context,
+        )
+
+        try:
+            response_text = self._get_ai_response(prompt)
+            if not response_text:
+                return []
+
+            # Parse JSON response
+            # Clean up response - sometimes AI adds markdown code blocks
+            response_text = response_text.strip()
+            if response_text.startswith("```"):
+                response_text = re.sub(r"^```\w*\n?", "", response_text)
+                response_text = re.sub(r"\n?```$", "", response_text)
+
+            data = json.loads(response_text)
+            individuals = data.get("individuals", [])
+
+            # Validate and clean up
+            valid_individuals = []
+            for ind in individuals:
+                if isinstance(ind, dict) and ind.get("name"):
+                    valid_individuals.append(
+                        {
+                            "name": ind.get("name", "").strip(),
+                            "title": ind.get("title", "").strip(),
+                            "source": ind.get("source", "unknown"),
+                        }
+                    )
+            return valid_individuals[:5]  # Max 5 individuals
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse individuals JSON: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Error finding individuals: {e}")
+            return []
+
+    def _get_ai_response(self, prompt: str) -> str | None:
+        """Get response from AI (local or Gemini)."""
+        if self.local_client:
+            try:
+                response = self.local_client.chat.completions.create(
+                    model=Config.LM_STUDIO_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                content = response.choices[0].message.content
+                if content:
+                    return content.strip()
+            except Exception as e:
+                logger.warning(f"Local AI failed: {e}. Falling back to Gemini.")
+
+        # Fallback to Gemini
+        response = self.client.models.generate_content(
+            model=Config.MODEL_TEXT, contents=prompt
+        )
+        return response.text.strip() if response.text else None
+
+    def _find_linkedin_profile(
+        self, name: str, company: str | None = None, title: str = ""
+    ) -> dict | None:
+        """Search for a person's LinkedIn profile."""
+        if not Config.LINKEDIN_ACCESS_TOKEN:
+            logger.debug("No LinkedIn token - skipping profile search")
+            return None
+
+        headers = {
+            "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
+            "X-Restli-Protocol-Version": "2.0.0",
+        }
+
+        # Try LinkedIn People Search API
+        # Note: This requires specific LinkedIn API permissions (r_liteprofile, etc.)
+        try:
+            # Search by name and optionally company
+            search_query = f"{name} {company}" if company else name
+
+            # LinkedIn's People Search requires Marketing API or specific permissions
+            # As a fallback, we construct a likely LinkedIn URL
+            # Real implementation would use LinkedIn's People Search API
+
+            # Construct a search URL that the user can use
+            import urllib.parse
+
+            encoded_query = urllib.parse.quote(search_query)
+            search_url = f"https://www.linkedin.com/search/results/people/?keywords={encoded_query}"
+
+            return {
+                "name": name,
+                "title": title,
+                "company": company or "",
+                "linkedin_url": search_url,
+                "urn": None,  # Would be populated if we had People Search API access
+            }
+
+        except Exception as e:
+            logger.debug(f"LinkedIn profile search failed for {name}: {e}")
+            return None
 
     def _enrich_story(self, story: Story) -> tuple[str, str]:
         """
@@ -190,6 +725,23 @@ class CompanyMentionEnricher:
         """
         mention = mention.strip()
 
+        # If AI returned multiple lines, take the first non-empty line that looks like a sentence
+        if "\n" in mention:
+            lines = [line.strip() for line in mention.split("\n") if line.strip()]
+            # Find the first line that looks like a valid sentence (ends with punctuation)
+            for line in lines:
+                if line.endswith((".", "!", "?")) and not line.startswith(
+                    ("NO_COMPANY", "If", "Note:", "Respond")
+                ):
+                    mention = line
+                    break
+            else:
+                # No valid sentence found in any line
+                logger.warning(
+                    f"Invalid mention (no valid sentence in multi-line response): {mention[:50]}"
+                )
+                return NO_COMPANY_MENTION
+
         # If it's the no-mention marker, return it as-is
         if mention == NO_COMPANY_MENTION:
             return NO_COMPANY_MENTION
@@ -199,7 +751,7 @@ class CompanyMentionEnricher:
         # 1. Not be empty
         # 2. End with a period (or be very short and professional)
         # 3. Not contain newlines (single sentence rule)
-        # 4. Be reasonable length (max 250 chars)
+        # 4. Be reasonable length (max 350 chars for longer org names)
 
         if not mention:
             return NO_COMPANY_MENTION
@@ -208,7 +760,7 @@ class CompanyMentionEnricher:
             logger.warning(f"Invalid mention (contains newlines): {mention[:50]}")
             return NO_COMPANY_MENTION
 
-        if len(mention) > 250:
+        if len(mention) > 350:
             logger.warning(f"Invalid mention (too long): {mention[:50]}")
             return NO_COMPANY_MENTION
 
@@ -219,15 +771,39 @@ class CompanyMentionEnricher:
             logger.warning(f"Invalid mention (no ending punctuation): {mention}")
             return NO_COMPANY_MENTION
 
-        # Check for multiple sentences (more than one . ! or ?)
-        # Count sentence-ending punctuation
-        sentence_count = mention.count(".") + mention.count("!") + mention.count("?")
+        # Check for multiple sentences - but allow abbreviations like Inc., Ltd., Corp., etc.
+        # Remove common abbreviations before counting periods
+        temp_mention = mention
+        for abbrev in [
+            "Inc.",
+            "Ltd.",
+            "Corp.",
+            "Co.",
+            "LLC.",
+            "L.L.C.",
+            "P.L.C.",
+            "S.A.",
+            "N.V.",
+            "GmbH.",
+            "AG.",
+            "Dr.",
+            "Prof.",
+            "Mr.",
+            "Ms.",
+            "Mrs.",
+        ]:
+            temp_mention = temp_mention.replace(abbrev, "ABBREV")
+
+        sentence_count = (
+            temp_mention.count(".") + temp_mention.count("!") + temp_mention.count("?")
+        )
         if sentence_count > 1:
             logger.warning(f"Invalid mention (multiple sentences): {mention[:50]}")
             return NO_COMPANY_MENTION
 
         # Check for list indicators (these shouldn't be in a single sentence)
-        if any(indicator in mention for indicator in ["1.", "2.", "-", "•", "* "]):
+        # But allow hyphens in company names
+        if any(indicator in mention for indicator in ["1.", "2.", "•", "* "]):
             logger.warning(f"Invalid mention (contains list): {mention[:50]}")
             return NO_COMPANY_MENTION
 
@@ -310,7 +886,9 @@ class CompanyMentionEnricher:
             vanity = "".join(org_elem.get("vanityName", "") or "").lower()
 
             # Exact match or substring match
-            if localized and (name == localized or name in localized or localized in name):
+            if localized and (
+                name == localized or name in localized or localized in name
+            ):
                 return True
             if vanity and (name == vanity or name in vanity or vanity in name):
                 return True
@@ -335,10 +913,59 @@ class CompanyMentionEnricher:
 
     def get_enrichment_stats(self) -> dict:
         """Get enrichment statistics."""
-        stats = self.db.get_statistics()
+        with self.db._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Count total enriched stories
+            cursor.execute(
+                "SELECT COUNT(*) FROM stories WHERE enrichment_status = 'enriched'"
+            )
+            total_enriched = cursor.fetchone()[0]
+
+            # Count stories with organizations
+            cursor.execute(
+                """SELECT COUNT(*) FROM stories
+                   WHERE enrichment_status = 'enriched'
+                   AND organizations IS NOT NULL
+                   AND organizations != '[]'"""
+            )
+            with_orgs = cursor.fetchone()[0]
+
+            # Count stories with people (story_people or org_leaders)
+            cursor.execute(
+                """SELECT COUNT(*) FROM stories
+                   WHERE enrichment_status = 'enriched'
+                   AND (
+                       (story_people IS NOT NULL AND story_people != '[]')
+                       OR (org_leaders IS NOT NULL AND org_leaders != '[]')
+                   )"""
+            )
+            with_people = cursor.fetchone()[0]
+
+            # Count stories with LinkedIn handles
+            cursor.execute(
+                """SELECT COUNT(*) FROM stories
+                   WHERE enrichment_status = 'enriched'
+                   AND linkedin_handles IS NOT NULL
+                   AND linkedin_handles != '[]'"""
+            )
+            with_handles = cursor.fetchone()[0]
+
+            # Count pending
+            cursor.execute(
+                "SELECT COUNT(*) FROM stories WHERE enrichment_status = 'pending'"
+            )
+            pending = cursor.fetchone()[0]
+
         return {
-            "pending": stats.get("pending_enrichment", 0),
-            "enriched": stats.get("enriched_count", 0),
+            "pending": pending,
+            "total_enriched": total_enriched,
+            "with_orgs": with_orgs,
+            "with_people": with_people,
+            "with_handles": with_handles,
+            # Legacy fields for backward compatibility
+            "with_mentions": with_orgs,
+            "no_mentions": total_enriched - with_orgs,
         }
 
     def force_set_mention(self, story_id: int, mention: str | None) -> bool:
@@ -380,7 +1007,11 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         try:
             db = Database(db_path)
             enricher = CompanyMentionEnricher(db, None, None)  # type: ignore
-            elem = {"localizedName": "SOLVE Chemistry", "vanityName": "solve-chemistry", "id": 123}
+            elem = {
+                "localizedName": "SOLVE Chemistry",
+                "vanityName": "solve-chemistry",
+                "id": 123,
+            }
             assert enricher._confirm_organization("SOLVE Chemistry", elem)
         finally:
             os.unlink(db_path)
@@ -391,13 +1022,19 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         try:
             db = Database(db_path)
             enricher = CompanyMentionEnricher(db, None, None)  # type: ignore
-            elem = {"localizedName": "Greentown Labs", "vanityName": "greentownlabs", "id": 456}
+            elem = {
+                "localizedName": "Greentown Labs",
+                "vanityName": "greentownlabs",
+                "id": 456,
+            }
             assert enricher._confirm_organization("Greentown Labs", elem)
         finally:
             os.unlink(db_path)
 
     suite.add_test("Confirm org - exact match", test_confirm_organization_exact_match)
-    suite.add_test("Confirm org - token overlap", test_confirm_organization_token_overlap)
+    suite.add_test(
+        "Confirm org - token overlap", test_confirm_organization_token_overlap
+    )
 
     def test_validate_mention_valid_sentence():
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:

@@ -22,6 +22,7 @@ TEST_MODULES = [
     ("linkedin_publisher", "LinkedIn Publisher"),
     ("searcher", "Searcher"),
     ("company_mention_enricher", "Company Mention Enricher"),
+    ("opportunity_messages", "Opportunity Messages"),
 ]
 
 

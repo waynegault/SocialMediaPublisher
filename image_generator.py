@@ -155,11 +155,11 @@ class ImageGenerator:
                 model=Config.MODEL_IMAGE,
                 prompt=prompt,
                 config=types.GenerateImagesConfig(
-                    number_of_images=1,
+                    number_of_images=1,  # pyright: ignore[reportCallIssue]
                     # API requires "block_low_and_above"
-                    safety_filter_level=types.SafetyFilterLevel.BLOCK_LOW_AND_ABOVE,
-                    person_generation=types.PersonGeneration.ALLOW_ADULT,
-                    aspect_ratio=Config.IMAGE_ASPECT_RATIO,
+                    safety_filter_level=types.SafetyFilterLevel.BLOCK_LOW_AND_ABOVE,  # pyright: ignore[reportCallIssue]
+                    person_generation=types.PersonGeneration.ALLOW_ADULT,  # pyright: ignore[reportCallIssue]
+                    aspect_ratio=Config.IMAGE_ASPECT_RATIO,  # pyright: ignore[reportCallIssue]
                 ),
             )
 
@@ -204,7 +204,7 @@ class ImageGenerator:
 
             if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
                 logger.error(
-                    f"Image generation failed: API quota exceeded (429 RESOURCE_EXHAUSTED)"
+                    "Image generation failed: API quota exceeded (429 RESOURCE_EXHAUSTED)"
                 )
                 raise RuntimeError(
                     "API quota exceeded during image generation. Please try again later."
@@ -433,10 +433,91 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
+    def test_generate_huggingface_image_no_token():
+        """Test HuggingFace image generation gracefully fails without token."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore
+            story = Story(
+                id=999,
+                title="Test Story",
+                summary="Test summary",
+                quality_score=8,
+            )
+            # This should handle the case gracefully (return None or raise)
+            # We're testing that it doesn't crash unexpectedly
+            try:
+                result = gen._generate_huggingface_image(story, "test prompt")
+                # If it returns, it should be None (no token) or a path
+                assert result is None or isinstance(result, str)
+            except Exception as e:
+                # Expected if HuggingFace is not available
+                assert (
+                    "API" in str(e)
+                    or "token" in str(e).lower()
+                    or "connection" in str(e).lower()
+                )
+        finally:
+            os.unlink(db_path)
+
+    def test_generate_local_image_no_client():
+        """Test local image generation gracefully fails without client."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore - no local_client
+            story = Story(
+                id=998,
+                title="Test Story",
+                summary="Test summary",
+                quality_score=8,
+            )
+            result = gen._generate_local_image(story, "test prompt")
+            # Should return None when no local client is available
+            assert result is None
+        finally:
+            os.unlink(db_path)
+
+    def test_cleanup_orphaned_images():
+        """Test orphaned image cleanup."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore
+            # Should not crash even with no orphaned images
+            cleaned = gen.cleanup_orphaned_images()
+            assert isinstance(cleaned, int)
+            assert cleaned >= 0
+        finally:
+            os.unlink(db_path)
+
+    def test_get_stories_with_images_count():
+        """Test stories with images count."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore
+            count = gen.get_stories_with_images_count()
+            assert isinstance(count, int)
+            assert count >= 0
+        finally:
+            os.unlink(db_path)
+
     suite.add_test("Add AI watermark", test_add_ai_watermark)
     suite.add_test("Add AI watermark small image", test_add_ai_watermark_small_image)
     suite.add_test("Image generator init", test_image_generator_init)
     suite.add_test("Build image prompt fallback", test_build_image_prompt_fallback)
     suite.add_test("Ensure image directory", test_ensure_image_directory)
+    suite.add_test(
+        "HuggingFace image - no token", test_generate_huggingface_image_no_token
+    )
+    suite.add_test("Local image - no client", test_generate_local_image_no_client)
+    suite.add_test("Cleanup orphaned images", test_cleanup_orphaned_images)
+    suite.add_test("Get stories with images count", test_get_stories_with_images_count)
 
     return suite
