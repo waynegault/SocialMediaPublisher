@@ -212,84 +212,6 @@ def extract_url_keywords(url: str) -> set[str]:
         return set()
 
 
-def calculate_url_story_match_score(
-    story_title: str, story_summary: str, url: str, source_title: str = ""
-) -> float:
-    """
-    Calculate how well a URL matches a story based on multiple signals.
-    Returns a score between 0.0 (no match) and 1.0 (strong match).
-    """
-    scores: list[float] = []
-
-    story_text = f"{story_title} {story_summary}".lower()
-    story_words = set(re.sub(r"[^\w\s]", "", story_text).split())
-
-    # Remove stopwords from story
-    stopwords = {
-        "the",
-        "a",
-        "an",
-        "and",
-        "or",
-        "but",
-        "in",
-        "on",
-        "at",
-        "to",
-        "for",
-        "of",
-        "with",
-        "by",
-        "from",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "this",
-        "that",
-        "it",
-        "its",
-        "as",
-        "new",
-        "how",
-        "could",
-        "can",
-        "will",
-    }
-    story_words -= stopwords
-
-    # Signal 1: URL keywords match story words
-    url_keywords = extract_url_keywords(url)
-    if url_keywords and story_words:
-        url_overlap = len(url_keywords & story_words) / len(url_keywords)
-        scores.append(url_overlap * 0.5)  # Weight: 50%
-
-    # Signal 2: Source title similarity (if available)
-    if source_title:
-        title_sim = calculate_similarity(story_title, source_title)
-        scores.append(title_sim * 0.3)  # Weight: 30%
-
-    # Signal 3: Domain relevance (bonus for reputable sources)
-    try:
-        domain = urlparse(url).netloc.lower()
-        # Check if domain keywords appear in story
-        domain_words = set(re.sub(r"[^\w]", " ", domain).split())
-        domain_words -= {"www", "com", "org", "net", "edu", "co", "uk", "io"}
-        if domain_words and story_words:
-            domain_overlap = len(domain_words & story_words) / len(domain_words)
-            scores.append(domain_overlap * 0.2)  # Weight: 20%
-    except Exception:
-        pass
-
-    return sum(scores) if scores else 0.0
-
-
-# Minimum score required to confidently match a URL to a story
-URL_MATCH_THRESHOLD = 0.15
-
-
 def extract_article_date(story_data: dict) -> datetime | None:
     """
     Extract article date from story data.
@@ -699,15 +621,14 @@ class StorySearcher:
     ) -> list[dict]:
         """
         Replace LLM-generated sources with real grounding URLs.
-        Uses semantic matching to associate URLs with stories.
 
-        Matching strategy:
-        1. Calculate match score for each URL-story pair using:
-           - URL path keywords vs story content
-           - Source title similarity (if available)
-           - Domain relevance
-        2. Only assign URLs that meet the minimum threshold
-        3. Log unmatched URLs for review (no blind positional assignment)
+        SIMPLE & RELIABLE APPROACH:
+        All grounding URLs were used by Gemini to generate the entire response.
+        Therefore, ALL grounding URLs are valid sources for ALL stories.
+        We assign all grounding URLs to each story - no AI matching needed.
+
+        This gives 100% confidence that source_links contain only real URLs
+        that were actually used in generating the stories.
         """
         if not grounding_sources:
             return stories_data
@@ -715,107 +636,41 @@ class StorySearcher:
         if not stories_data:
             return stories_data
 
-        # Track which URLs have been assigned
-        assigned_urls: set[str] = set()
-        unmatched_urls: list[str] = []
-
-        for story in stories_data:
-            story_title = story.get("title", "")
-            story_summary = story.get("summary", "")
-            matched_urls: list[tuple[str, float]] = []  # (url, score)
-
-            # Calculate match score for each grounding source
-            for source in grounding_sources:
-                url = source.get("uri", "")
-                source_title = source.get("title", "")
-
-                if not url:
-                    continue
-
-                score = calculate_url_story_match_score(
-                    story_title, story_summary, url, source_title
-                )
-
-                if score >= URL_MATCH_THRESHOLD:
-                    matched_urls.append((url, score))
-                    logger.debug(
-                        f"URL match score {score:.2f} for "
-                        f"'{story_title[:30]}' <-> '{url[:50]}'"
-                    )
-
-            # Sort by score (best matches first) and take top URLs
-            matched_urls.sort(key=lambda x: x[1], reverse=True)
-
-            if matched_urls:
-                # Take URLs that meet threshold, remove duplicates
-                seen: set[str] = set()
-                unique_urls = []
-                for url, score in matched_urls:
-                    if url not in seen:
-                        seen.add(url)
-                        unique_urls.append(url)
-                        assigned_urls.add(url)
-
-                story["sources"] = unique_urls
-                logger.info(
-                    f"Matched {len(unique_urls)} URL(s) to story: "
-                    f"'{story_title[:40]}...'"
-                )
-            else:
-                # No confident matches above threshold
-                # Try to find best available unassigned URL as fallback
-                best_fallback: tuple[str, float] | None = None
-                for source in grounding_sources:
-                    url = source.get("uri", "")
-                    source_title = source.get("title", "")
-                    if not url or url in assigned_urls:
-                        continue
-                    # Skip redirect URLs
-                    if "vertexaisearch.cloud.google.com" in url:
-                        continue
-                    score = calculate_url_story_match_score(
-                        story_title, story_summary, url, source_title
-                    )
-                    if best_fallback is None or score > best_fallback[1]:
-                        best_fallback = (url, score)
-
-                if best_fallback:
-                    # Use best available URL even if below threshold
-                    story["sources"] = [best_fallback[0]]
-                    assigned_urls.add(best_fallback[0])
-                    logger.warning(
-                        f"Using fallback URL for '{story_title[:40]}' "
-                        f"(score: {best_fallback[1]:.2f}, below threshold)"
-                    )
-                else:
-                    # No grounding URLs available - filter redirect URLs from LLM sources
-                    existing_sources = story.get("sources", [])
-                    filtered_sources = [
-                        url
-                        for url in existing_sources
-                        if "vertexaisearch.cloud.google.com" not in url
-                    ]
-                    if len(filtered_sources) < len(existing_sources):
-                        logger.info(
-                            f"Removed {len(existing_sources) - len(filtered_sources)} "
-                            f"redirect URL(s) from story sources"
-                        )
-                    story["sources"] = filtered_sources
-                    if not filtered_sources:
-                        logger.warning(
-                            f"No source URL available for story: '{story_title[:50]}'"
-                        )
-
-        # Log unmatched URLs for review
+        # Extract all valid grounding URLs (already resolved, no redirects)
+        all_grounding_urls = []
         for source in grounding_sources:
             url = source.get("uri", "")
-            if url and url not in assigned_urls:
-                unmatched_urls.append(url)
+            if url and url.startswith("http"):
+                # Double-check no redirect URLs slipped through
+                if "vertexaisearch.cloud.google.com" not in url:
+                    all_grounding_urls.append(url)
 
-        if unmatched_urls:
-            logger.warning(
-                f"{len(unmatched_urls)} grounding URL(s) not matched to any story: "
-                f"{unmatched_urls[:3]}{'...' if len(unmatched_urls) > 3 else ''}"
+        if not all_grounding_urls:
+            logger.warning("No valid grounding URLs after filtering")
+            return stories_data
+
+        # Remove duplicates while preserving order
+        seen: set[str] = set()
+        unique_grounding_urls = []
+        for url in all_grounding_urls:
+            if url not in seen:
+                seen.add(url)
+                unique_grounding_urls.append(url)
+
+        logger.info(
+            f"Assigning {len(unique_grounding_urls)} grounding URL(s) to "
+            f"{len(stories_data)} stories"
+        )
+
+        # Assign ALL grounding URLs to EACH story
+        # These are the actual URLs Gemini used to generate the response
+        for story in stories_data:
+            story_title = story.get("title", "")
+            # Replace any LLM-hallucinated sources with real grounding URLs
+            story["sources"] = unique_grounding_urls.copy()
+            logger.debug(
+                f"Assigned {len(unique_grounding_urls)} source URL(s) to: "
+                f"'{story_title[:50]}...'"
             )
 
         return stories_data
@@ -1665,63 +1520,53 @@ class StorySearcher:
         self, stories_data: list[dict], search_results: list[dict]
     ) -> list[dict]:
         """
-        Validate that story URLs match the original search results.
-        If LLM hallucinated or mismatched URLs, attempt to fix them.
+        Replace LLM-generated URLs with actual search result URLs.
+
+        SIMPLE & RELIABLE APPROACH:
+        All search result URLs were used to generate the stories.
+        Therefore, ALL search result URLs are valid sources for ALL stories.
+        We assign all search result URLs to each story - no AI matching needed.
+
+        This gives 100% confidence that source_links contain only real URLs
+        that were actually used in generating the stories.
         """
         if not stories_data or not search_results:
             return stories_data
 
-        # Build set of valid URLs from search results
-        valid_urls = {r.get("link", "") for r in search_results if r.get("link")}
+        # Extract all valid URLs from search results
+        all_search_urls = []
+        for result in search_results:
+            url = result.get("link", "")
+            if url and url.startswith("http"):
+                all_search_urls.append(url)
 
+        if not all_search_urls:
+            logger.warning("No valid URLs found in search results")
+            return stories_data
+
+        # Remove duplicates while preserving order
+        seen: set[str] = set()
+        unique_search_urls = []
+        for url in all_search_urls:
+            if url not in seen:
+                seen.add(url)
+                unique_search_urls.append(url)
+
+        logger.info(
+            f"Assigning {len(unique_search_urls)} search result URL(s) to "
+            f"{len(stories_data)} stories"
+        )
+
+        # Assign ALL search result URLs to EACH story
+        # These are the actual URLs used to generate the response
         for story in stories_data:
             story_title = story.get("title", "")
-            story_summary = story.get("summary", "")
-            sources = story.get("sources") or story.get("source_links") or []
-
-            # Check each source URL
-            validated_sources: list[str] = []
-            invalid_sources: list[str] = []
-
-            for url in sources:
-                if url in valid_urls:
-                    validated_sources.append(url)
-                else:
-                    invalid_sources.append(url)
-
-            if invalid_sources:
-                logger.warning(
-                    f"Story '{story_title[:40]}' has {len(invalid_sources)} "
-                    f"invalid URL(s) not from search results: {invalid_sources[:2]}"
-                )
-
-                # Try to find correct URLs using semantic matching
-                for search_result in search_results:
-                    result_url = search_result.get("link", "")
-                    result_title = search_result.get("title", "")
-
-                    if not result_url or result_url in validated_sources:
-                        continue
-
-                    # Calculate match score
-                    score = calculate_url_story_match_score(
-                        story_title, story_summary, result_url, result_title
-                    )
-
-                    if score >= URL_MATCH_THRESHOLD:
-                        validated_sources.append(result_url)
-                        logger.info(
-                            f"  -> Fixed: Matched URL '{result_url[:50]}' "
-                            f"(score: {score:.2f})"
-                        )
-                        break  # One URL per story is usually enough
-
-            story["sources"] = validated_sources
-
-            if not validated_sources:
-                logger.warning(
-                    f"Story '{story_title[:40]}' has no valid sources after validation"
-                )
+            # Replace any LLM-hallucinated sources with real search result URLs
+            story["sources"] = unique_search_urls.copy()
+            logger.debug(
+                f"Assigned {len(unique_search_urls)} source URL(s) to: "
+                f"'{story_title[:50]}...'"
+            )
 
         return stories_data
 
@@ -1947,31 +1792,6 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         keywords = extract_url_keywords("")
         assert keywords == set()
 
-    def test_calculate_url_story_match_score_high():
-        score = calculate_url_story_match_score(
-            story_title="Researchers Unlock Catalyst Behavior",
-            story_summary="Scientists discovered new catalyst mechanisms",
-            url="https://example.com/researchers-unlock-catalyst-behavior",
-            source_title="Catalyst Research Breakthrough",
-        )
-        assert score > URL_MATCH_THRESHOLD
-        assert score <= 1.0
-
-    def test_calculate_url_story_match_score_low():
-        score = calculate_url_story_match_score(
-            story_title="AI in Healthcare Revolution",
-            story_summary="Machine learning transforms medical diagnostics",
-            url="https://example.com/sports-basketball-championship",
-            source_title="NBA Finals",
-        )
-        assert score < URL_MATCH_THRESHOLD
-
-    def test_calculate_url_story_match_score_empty():
-        score = calculate_url_story_match_score(
-            story_title="", story_summary="", url="", source_title=""
-        )
-        assert score == 0.0
-
     def test_retry_decorator_success():
         call_count = 0
 
@@ -2041,15 +1861,6 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     # New tests
     suite.add_test("Extract URL keywords", test_extract_url_keywords)
     suite.add_test("Extract URL keywords - empty", test_extract_url_keywords_empty)
-    suite.add_test(
-        "URL-story match score - high", test_calculate_url_story_match_score_high
-    )
-    suite.add_test(
-        "URL-story match score - low", test_calculate_url_story_match_score_low
-    )
-    suite.add_test(
-        "URL-story match score - empty", test_calculate_url_story_match_score_empty
-    )
     suite.add_test("Retry decorator - success", test_retry_decorator_success)
     suite.add_test(
         "Retry decorator - eventual success", test_retry_decorator_eventual_success
