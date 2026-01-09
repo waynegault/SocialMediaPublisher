@@ -1,5 +1,6 @@
-"""LinkedIn company page lookup using Gemini with Google Search grounding."""
+"""LinkedIn company and person profile lookup using Gemini with Google Search grounding and Playwright."""
 
+import base64
 import logging
 import re
 import time
@@ -281,6 +282,8 @@ NOT_FOUND"""
             self._get_simplified_search(company_name),
             # Strategy 3: Acronym if applicable
             self._get_acronym_search(company_name),
+            # Strategy 4: Try with common suffixes added (Inc, LLC, etc.)
+            self._get_suffix_search(company_name),
         ]
 
         # Remove None strategies
@@ -299,6 +302,14 @@ NOT_FOUND"""
             # Small delay between retries
             if i < len(search_strategies) - 1:
                 time.sleep(0.5)
+
+        # Fallback: Try Playwright/Bing search (most reliable)
+        logger.info(f"Trying Playwright/Bing search for: {company_name}")
+        url = self._search_company_playwright(company_name)
+        if url:
+            is_valid, slug = self.validate_linkedin_url(url)
+            if is_valid:
+                return (url, slug)
 
         logger.info(f"No LinkedIn company page found for: {company_name}")
         return (None, None)
@@ -336,6 +347,38 @@ NOT_FOUND"""
         if simplified != company_name:
             return f'"{simplified}" linkedin company OR school'
         return None
+
+    def _get_suffix_search(self, company_name: str) -> Optional[str]:
+        """Generate search queries by adding common company suffixes.
+
+        Many companies have LinkedIn pages with suffixes like Inc, LLC, etc.
+        that don't appear in how they're commonly referred to.
+        """
+        company_lower = company_name.lower()
+
+        # Check if name already has a suffix
+        existing_suffixes = [
+            "inc",
+            "llc",
+            "ltd",
+            "corp",
+            "corporation",
+            "limited",
+            "gmbh",
+            "plc",
+        ]
+        has_suffix = any(
+            company_lower.endswith(f" {s}") or company_lower.endswith(f", {s}")
+            for s in existing_suffixes
+        )
+
+        if has_suffix:
+            return None
+
+        # Try adding common suffixes - Inc is most common
+        return (
+            f'"{company_name} Inc" OR "{company_name}, Inc" site:linkedin.com/company'
+        )
 
     def _get_acronym_search(self, company_name: str) -> Optional[str]:
         """Generate an acronym-based search if company name is multi-word."""
@@ -471,7 +514,10 @@ NOT_FOUND"""
         self, name: str, company: str, position: Optional[str] = None
     ) -> Optional[str]:
         """
-        Search for an individual person's LinkedIn profile using Gemini with Google Search.
+        Search for an individual person's LinkedIn profile.
+
+        Uses Playwright with Bing search as the primary method (most reliable),
+        with a two-pass strategy: first requiring org match, then without.
 
         Args:
             name: Person's name (e.g., "Suzanne Farid")
@@ -481,13 +527,40 @@ NOT_FOUND"""
         Returns:
             LinkedIn profile URL if found, None otherwise
         """
-        if not self.client:
-            return None
-
         if not name or not company:
             return None
 
         logger.info(f"Searching for person LinkedIn profile: {name} at {company}")
+
+        # Primary method: Playwright/Bing search with org matching
+        profile_url = self._search_person_playwright(
+            name, location=None, company=company, require_org_match=True
+        )
+
+        # Fallback: Retry without org matching if needed
+        if not profile_url:
+            logger.info(f"Retrying search for {name} without org matching...")
+            profile_url = self._search_person_playwright(
+                name, location=None, company=company, require_org_match=False
+            )
+
+        if profile_url:
+            logger.info(f"Found person profile: {name} -> {profile_url}")
+            return profile_url
+
+        # Fallback to Gemini search (rarely works but worth trying)
+        return self._search_person_gemini(name, company, position)
+
+    def _search_person_gemini(
+        self, name: str, company: str, position: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Fallback: Search for a person's LinkedIn profile using Gemini with Google Search.
+
+        Note: This method is less reliable than Playwright/Bing search.
+        """
+        if not self.client:
+            return None
 
         # Build search context
         position_context = f", {position}" if position else ""
@@ -543,6 +616,237 @@ NOT_FOUND"""
         except Exception as e:
             logger.error(f"Error searching for person {name}: {e}")
             return None
+
+    def _search_company_playwright(self, company_name: str) -> Optional[str]:
+        """
+        Search for LinkedIn company page using Playwright to render Bing search results.
+
+        This is a fallback method when Gemini search doesn't find the company.
+
+        Args:
+            company_name: Company name to search for
+
+        Returns:
+            LinkedIn company/school URL if found, None otherwise
+        """
+        try:
+            from playwright.sync_api import sync_playwright  # type: ignore
+        except ImportError:
+            logger.warning("Playwright not installed - pip install playwright")
+            return None
+
+        # Build search query
+        search_query = f"{company_name} LinkedIn company"
+        logger.debug(f"Playwright Bing company search: {search_query}")
+
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=False)
+                page = browser.new_page()
+
+                url = f"https://www.bing.com/search?q={search_query.replace(' ', '+')}"
+                page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                page.wait_for_timeout(3000)
+
+                # Prepare company name parts for matching
+                company_lower = company_name.lower()
+                company_words = [w for w in company_lower.split() if len(w) > 2]
+
+                result_items = page.query_selector_all(".b_algo")
+                for item in result_items:
+                    heading = item.query_selector("h2")
+                    if not heading:
+                        continue
+
+                    title = heading.inner_text().lower()
+                    link = heading.query_selector("a")
+                    if not link:
+                        continue
+
+                    href = link.get_attribute("href") or ""
+
+                    # Decode Bing redirect URL
+                    u_match = re.search(r"[&?]u=a1([^&]+)", href)
+                    if not u_match:
+                        continue
+
+                    try:
+                        encoded = u_match.group(1)
+                        padding = 4 - len(encoded) % 4
+                        if padding != 4:
+                            encoded += "=" * padding
+                        decoded_url = base64.urlsafe_b64decode(encoded).decode("utf-8")
+                    except Exception:
+                        continue
+
+                    # Check if it's a LinkedIn company or school page
+                    if (
+                        "linkedin.com/company/" not in decoded_url
+                        and "linkedin.com/school/" not in decoded_url
+                    ):
+                        continue
+
+                    # Verify company name appears in title or URL
+                    url_lower = decoded_url.lower()
+                    # Check if significant company words appear in title or URL
+                    matches = sum(
+                        1
+                        for word in company_words
+                        if word in title or word in url_lower
+                    )
+                    if (
+                        matches < len(company_words) * 0.5
+                    ):  # At least half the words should match
+                        logger.debug(f"Skipping '{title[:40]}' - name mismatch")
+                        continue
+
+                    # Extract and return the URL
+                    match = re.search(
+                        r"linkedin\.com/(company|school)/([\w\-]+)", decoded_url
+                    )
+                    if match:
+                        page_type = match.group(1)
+                        slug = match.group(2)
+                        result_url = f"https://www.linkedin.com/{page_type}/{slug}"
+                        logger.info(f"Found company via Playwright: {result_url}")
+                        browser.close()
+                        return result_url
+
+                browser.close()
+                logger.debug("No matching LinkedIn company found via Playwright")
+
+        except Exception as e:
+            logger.error(f"Playwright company search error: {e}")
+
+        return None
+
+    def _search_person_playwright(
+        self,
+        name: str,
+        location: Optional[str] = None,
+        company: Optional[str] = None,
+        require_org_match: bool = True,
+    ) -> Optional[str]:
+        """
+        Search for LinkedIn profile using Playwright to render Bing search results.
+
+        This is the most reliable method for finding person profiles.
+        Bing's search results contain the actual LinkedIn URLs.
+
+        Args:
+            name: Person's name
+            location: Optional location
+            company: Optional company/organisation
+            require_org_match: If True, only return results that match the org.
+                             If False, return first result matching the name.
+
+        Returns:
+            LinkedIn profile URL if found, None otherwise
+        """
+        try:
+            from playwright.sync_api import sync_playwright  # type: ignore
+        except ImportError:
+            logger.warning("Playwright not installed - pip install playwright")
+            return None
+
+        # Build search query
+        parts = [name]
+        if location:
+            parts.append(location)
+        if company:
+            parts.append(company)
+        parts.append("LinkedIn")
+        search_query = " ".join(parts)
+        logger.debug(f"Playwright Bing search: {search_query}")
+
+        try:
+            with sync_playwright() as p:
+                # Non-headless mode required - Bing detects headless browsers
+                browser = p.chromium.launch(headless=False)
+                page = browser.new_page()
+
+                url = f"https://www.bing.com/search?q={search_query.replace(' ', '+')}"
+                page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                page.wait_for_timeout(3000)
+
+                # Parse name for matching (first and last, ignoring middle names)
+                name_parts = name.lower().split()
+                first_name = name_parts[0] if name_parts else ""
+                last_name = name_parts[-1] if len(name_parts) >= 2 else ""
+
+                result_items = page.query_selector_all(".b_algo")
+                for item in result_items:
+                    heading = item.query_selector("h2")
+                    if not heading:
+                        continue
+
+                    title = heading.inner_text()
+                    link = heading.query_selector("a")
+                    if not link:
+                        continue
+
+                    href = link.get_attribute("href") or ""
+
+                    # Decode Bing redirect URL (base64 encoded)
+                    u_match = re.search(r"[&?]u=a1([^&]+)", href)
+                    if not u_match:
+                        continue
+
+                    try:
+                        encoded = u_match.group(1)
+                        # Add padding if needed
+                        padding = 4 - len(encoded) % 4
+                        if padding != 4:
+                            encoded += "=" * padding
+                        decoded_url = base64.urlsafe_b64decode(encoded).decode("utf-8")
+                    except Exception:
+                        continue
+
+                    if "linkedin.com/in/" not in decoded_url:
+                        continue
+
+                    # Get result text for matching
+                    snippet_el = item.query_selector(".b_caption p")
+                    snippet = snippet_el.inner_text() if snippet_el else ""
+                    result_text = f"{title} {snippet}".lower()
+
+                    # Check name match (required) - first and last name
+                    if first_name and last_name:
+                        if (
+                            first_name not in result_text
+                            or last_name not in result_text
+                        ):
+                            logger.debug(f"Skipping '{title[:40]}' - name mismatch")
+                            continue
+
+                    # Check org match (optional based on require_org_match)
+                    if company and require_org_match:
+                        company_lower = company.lower()
+                        # Check for significant words from company name
+                        company_words = [w for w in company_lower.split() if len(w) > 3]
+                        org_match = any(word in result_text for word in company_words)
+                        org_match = org_match or company_lower in result_text
+
+                        if not org_match:
+                            logger.debug(f"Skipping '{title[:40]}' - org mismatch")
+                            continue
+
+                    # Extract vanity name and return
+                    vanity_match = re.search(r"linkedin\.com/in/([\w\-]+)", decoded_url)
+                    if vanity_match:
+                        vanity = vanity_match.group(1)
+                        result_url = f"https://www.linkedin.com/in/{vanity}"
+                        logger.info(f"Found profile via Playwright: {result_url}")
+                        browser.close()
+                        return result_url
+
+                browser.close()
+                logger.debug("No matching LinkedIn profile found via Playwright")
+
+        except Exception as e:
+            logger.error(f"Playwright search error: {e}")
+
+        return None
 
     def _extract_department_name(self, position: str) -> Optional[str]:
         """Extract department name from a position title if present."""
@@ -804,7 +1108,9 @@ NOT_FOUND"""
                 person_cache_key = f"{name}@{company}"
 
                 if person_cache_key not in person_cache:
-                    logger.info(f"Level 1: Searching for personal profile: {name} at {company}")
+                    logger.info(
+                        f"Level 1: Searching for personal profile: {name} at {company}"
+                    )
                     person_url = self.search_person(name, company, position)
                     person_cache[person_cache_key] = person_url
                     time.sleep(delay_between_requests)
@@ -845,7 +1151,11 @@ NOT_FOUND"""
                     if dept_url:
                         # Look up URN for department
                         dept_urn = self.lookup_organization_urn(dept_url)
-                        department_cache[dept_cache_key] = (dept_url, dept_slug, dept_urn)
+                        department_cache[dept_cache_key] = (
+                            dept_url,
+                            dept_slug,
+                            dept_urn,
+                        )
                         time.sleep(delay_between_requests)
                     else:
                         department_cache[dept_cache_key] = (None, None, None)
@@ -867,7 +1177,9 @@ NOT_FOUND"""
             # ============================================================
             if company in company_data:
                 url, slug, urn = company_data[company]
-                logger.info(f"Level 3: Using organization fallback for {name}: {company}")
+                logger.info(
+                    f"Level 3: Using organization fallback for {name}: {company}"
+                )
                 if not person.get("linkedin_profile", "").strip():
                     person["linkedin_profile"] = url
                 if slug:
@@ -879,7 +1191,9 @@ NOT_FOUND"""
                 # ============================================================
                 # HIERARCHY LEVEL 4: Nothing found
                 # ============================================================
-                logger.warning(f"Level 4: No LinkedIn profile found for {name} at {company}")
+                logger.warning(
+                    f"Level 4: No LinkedIn profile found for {name} at {company}"
+                )
                 person["linkedin_profile"] = None
                 person["linkedin_slug"] = None
                 person["linkedin_urn"] = None
