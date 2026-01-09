@@ -452,6 +452,98 @@ NOT_FOUND"""
             return url
         return None
 
+    def _extract_person_url(self, text: str) -> Optional[str]:
+        """Extract a LinkedIn personal profile URL from text."""
+        # Pattern for LinkedIn personal profile URLs (linkedin.com/in/username)
+        pattern = r"https?://(?:www\.)?linkedin\.com/in/([\w\-]+)"
+
+        match = re.search(pattern, text)
+        if match:
+            url = match.group(0)
+            # Normalize to https://www.linkedin.com format
+            if not url.startswith("https://www."):
+                url = url.replace("http://", "https://")
+                url = url.replace("https://linkedin.com", "https://www.linkedin.com")
+            return url
+        return None
+
+    def search_person(
+        self, name: str, company: str, position: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Search for an individual person's LinkedIn profile using Gemini with Google Search.
+
+        Args:
+            name: Person's name (e.g., "Suzanne Farid")
+            company: Company or organization they work at (e.g., "UCL")
+            position: Optional job title to help identify the right person
+
+        Returns:
+            LinkedIn profile URL if found, None otherwise
+        """
+        if not self.client:
+            return None
+
+        if not name or not company:
+            return None
+
+        logger.info(f"Searching for person LinkedIn profile: {name} at {company}")
+
+        # Build search context
+        position_context = f", {position}" if position else ""
+
+        prompt = f"""Find the LinkedIn profile for this specific person:
+
+Name: {name}
+Company/Organization: {company}{position_context}
+
+TASK: Search for the LinkedIn personal profile page for this individual.
+
+RULES:
+1. Find a linkedin.com/in/username profile URL for THIS SPECIFIC PERSON
+2. The person should work at or be affiliated with {company}
+3. Do NOT return company pages (linkedin.com/company/...)
+4. Do NOT return school pages (linkedin.com/school/...)
+5. Only return a profile if you're confident it's the right person
+
+RESPONSE FORMAT:
+If you find their LinkedIn profile, respond with ONLY the URL like:
+https://www.linkedin.com/in/username
+
+If you cannot find their personal LinkedIn profile, respond exactly:
+NOT_FOUND"""
+
+        try:
+            response = self.client.models.generate_content(
+                model=Config.MODEL_TEXT,
+                contents=prompt,
+                config={
+                    "tools": [{"google_search": {}}],
+                    "max_output_tokens": 256,
+                },
+            )
+
+            if not response.text:
+                return None
+
+            result = response.text.strip()
+
+            if "NOT_FOUND" in result.upper():
+                logger.info(f"Person profile not found: {name} at {company}")
+                return None
+
+            # Extract LinkedIn personal profile URL
+            linkedin_url = self._extract_person_url(result)
+            if linkedin_url:
+                logger.info(f"Found person profile: {name} -> {linkedin_url}")
+                return linkedin_url
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error searching for person {name}: {e}")
+            return None
+
     def _extract_department_name(self, position: str) -> Optional[str]:
         """Extract department name from a position title if present."""
         if not position:
@@ -504,7 +596,7 @@ NOT_FOUND"""
         # Common patterns - try no-hyphen versions first (more likely for schools)
         # Pattern: orgdept (e.g., uclaengineering)
         candidates.append(f"{org_nohyphen}{dept_nohyphen}")
-        
+
         # Pattern: org-dept (e.g., ucla-engineering)
         candidates.append(f"{org_slug}-{dept_slug}")
 
@@ -638,10 +730,12 @@ NOT_FOUND"""
         delay_between_requests: float = 1.0,
     ) -> tuple[int, int, dict[str, tuple[str, Optional[str]]]]:
         """
-        Look up LinkedIn company pages for the companies mentioned in relevant_people.
+        Look up LinkedIn profiles for people using a hierarchical approach.
 
-        For each person, first tries to find a department-specific LinkedIn page
-        based on their position. If not found, falls back to the parent organization.
+        For each person, tries to find profiles in this order:
+        1. Personal LinkedIn profile (linkedin.com/in/username)
+        2. Department-specific page (if position indicates a department)
+        3. Parent organization page
 
         Args:
             relevant_people: List of person dicts with name, company, position, linkedin_profile
@@ -655,7 +749,7 @@ NOT_FOUND"""
             logger.warning("Cannot populate profiles - Gemini client not initialized")
             return (0, 0, {})
 
-        # First, look up parent organizations
+        # First, look up parent organizations (needed as fallback)
         companies = set()
         for person in relevant_people:
             company = person.get("company", "").strip()
@@ -670,7 +764,7 @@ NOT_FOUND"""
         companies_not_found = 0
         company_data: dict[str, tuple[str, Optional[str], Optional[str]]] = {}
 
-        # Look up parent organizations first
+        # Look up parent organizations first (as fallback)
         for i, company in enumerate(companies):
             linkedin_url, slug = self.search_company(company)
 
@@ -686,34 +780,63 @@ NOT_FOUND"""
             if i < len(companies) - 1:
                 time.sleep(delay_between_requests)
 
-        # Now try to find department-specific pages for each person
-        # Cache department lookups to avoid duplicate searches
+        # Cache for department lookups to avoid duplicate searches
         department_cache: dict[
             str, tuple[Optional[str], Optional[str], Optional[str]]
         ] = {}
 
+        # Cache for person lookups to avoid duplicate searches
+        person_cache: dict[str, Optional[str]] = {}
+
+        # Process each person with hierarchical lookup
         for person in relevant_people:
+            name = person.get("name", "").strip()
             company = person.get("company", "").strip()
             position = person.get("position", "").strip()
 
             if not company:
                 continue
 
-            # Try to extract department from position
+            # ============================================================
+            # HIERARCHY LEVEL 1: Try to find the individual's personal profile
+            # ============================================================
+            if name:
+                person_cache_key = f"{name}@{company}"
+
+                if person_cache_key not in person_cache:
+                    logger.info(f"Level 1: Searching for personal profile: {name} at {company}")
+                    person_url = self.search_person(name, company, position)
+                    person_cache[person_cache_key] = person_url
+                    time.sleep(delay_between_requests)
+
+                person_url = person_cache[person_cache_key]
+                if person_url:
+                    person["linkedin_profile"] = person_url
+                    # Extract slug from personal profile URL
+                    match = re.search(r"linkedin\.com/in/([\w\-]+)", person_url)
+                    if match:
+                        person["linkedin_slug"] = match.group(1)
+                    # Personal profiles don't have organization URNs
+                    person["linkedin_urn"] = None
+                    person["linkedin_profile_type"] = "personal"
+                    continue  # Found personal profile, skip to next person
+
+            # ============================================================
+            # HIERARCHY LEVEL 2: Try to find department-specific page
+            # ============================================================
             department = self._extract_department_name(position)
 
             if department:
-                cache_key = f"{department}@{company}"
+                dept_cache_key = f"{department}@{company}"
 
-                if cache_key not in department_cache:
+                if dept_cache_key not in department_cache:
                     # Get parent org slug if available
                     parent_slug = None
                     if company in company_data:
                         parent_slug = company_data[company][1]
 
-                    # Search for department page
                     logger.info(
-                        f"Looking for department page: {department} at {company}"
+                        f"Level 2: Looking for department page: {department} at {company}"
                     )
                     dept_url, dept_slug = self.search_department(
                         department, company, parent_slug
@@ -722,33 +845,45 @@ NOT_FOUND"""
                     if dept_url:
                         # Look up URN for department
                         dept_urn = self.lookup_organization_urn(dept_url)
-                        department_cache[cache_key] = (dept_url, dept_slug, dept_urn)
+                        department_cache[dept_cache_key] = (dept_url, dept_slug, dept_urn)
                         time.sleep(delay_between_requests)
                     else:
-                        department_cache[cache_key] = (None, None, None)
-                        time.sleep(
-                            delay_between_requests * 0.5
-                        )  # Shorter delay for not found
+                        department_cache[dept_cache_key] = (None, None, None)
+                        time.sleep(delay_between_requests * 0.5)
 
                 # Use department data if found
-                dept_data = department_cache[cache_key]
+                dept_data = department_cache[dept_cache_key]
                 if dept_data[0]:  # Department page found
                     person["linkedin_profile"] = dept_data[0]
                     if dept_data[1]:
                         person["linkedin_slug"] = dept_data[1]
                     if dept_data[2]:
                         person["linkedin_urn"] = dept_data[2]
-                    continue  # Skip to next person
+                    person["linkedin_profile_type"] = "department"
+                    continue  # Found department, skip to next person
 
-            # Fall back to parent organization
+            # ============================================================
+            # HIERARCHY LEVEL 3: Fall back to parent organization
+            # ============================================================
             if company in company_data:
                 url, slug, urn = company_data[company]
+                logger.info(f"Level 3: Using organization fallback for {name}: {company}")
                 if not person.get("linkedin_profile", "").strip():
                     person["linkedin_profile"] = url
                 if slug:
                     person["linkedin_slug"] = slug
                 if urn:
                     person["linkedin_urn"] = urn
+                person["linkedin_profile_type"] = "organization"
+            else:
+                # ============================================================
+                # HIERARCHY LEVEL 4: Nothing found
+                # ============================================================
+                logger.warning(f"Level 4: No LinkedIn profile found for {name} at {company}")
+                person["linkedin_profile"] = None
+                person["linkedin_slug"] = None
+                person["linkedin_urn"] = None
+                person["linkedin_profile_type"] = None
 
         # Return company_data with just (url, slug) for backwards compatibility
         return_data = {k: (v[0], v[1]) for k, v in company_data.items()}
