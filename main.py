@@ -778,9 +778,165 @@ def _test_verification(engine: ContentEngine) -> None:
         logger.exception("Verification test failed")
 
 
+def _get_stories_needing_linkedin_profiles(engine: ContentEngine) -> list:
+    """Get stories that have relevant_people with missing LinkedIn profiles."""
+    import json as json_module
+
+    stories_needing_profiles = []
+    with engine.db._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, title, relevant_people
+            FROM stories
+            WHERE relevant_people IS NOT NULL
+              AND relevant_people != '[]'
+        """)
+        for row in cursor.fetchall():
+            try:
+                relevant_people = json_module.loads(row["relevant_people"])
+                if not relevant_people:
+                    continue
+
+                # Check if any person is missing a LinkedIn profile
+                people_needing_lookup = [
+                    p
+                    for p in relevant_people
+                    if not p.get("linkedin_profile", "").strip()
+                ]
+                if people_needing_lookup:
+                    # Fetch the full story object
+                    story = engine.db.get_story(row["id"])
+                    if story:
+                        stories_needing_profiles.append(story)
+            except json_module.JSONDecodeError:
+                continue
+
+    return stories_needing_profiles
+
+
+def _lookup_linkedin_profiles_for_relevant_people(
+    engine: ContentEngine,
+    stories: list,
+) -> None:
+    """Look up LinkedIn company pages for organizations in relevant_people."""
+    from linkedin_profile_lookup import LinkedInCompanyLookup
+
+    # Use Gemini to search for company LinkedIn pages
+    lookup = LinkedInCompanyLookup(genai_client=engine.genai_client)
+
+    if not lookup.client:
+        print("\n⚠ Gemini API not configured.")
+        print("LinkedIn company lookup requires a configured GEMINI_API_KEY.")
+        return
+
+    total_companies_found = 0
+    total_companies_not_found = 0
+    stories_updated = 0
+    all_company_data: dict[str, tuple[str, str | None]] = {}
+
+    try:
+        for story in stories:
+            if not story.relevant_people:
+                continue
+
+            print(f"\n[{story.id}] {story.title[:60]}...")
+
+            # Get unique companies from this story's relevant_people
+            companies = set()
+            for person in story.relevant_people:
+                company = person.get("company", "").strip()
+                if company and company not in all_company_data:
+                    companies.add(company)
+
+            if not companies:
+                print("  No new companies to look up")
+                continue
+
+            print(f"  Looking up {len(companies)} company LinkedIn page(s)...")
+
+            found, not_found, company_data = lookup.populate_company_profiles(
+                story.relevant_people,
+                delay_between_requests=1.5,
+            )
+
+            # Merge into our master list
+            all_company_data.update(company_data)
+
+            if found > 0:
+                # Update the story in the database
+                engine.db.update_story(story)
+                stories_updated += 1
+                print(f"  ✓ Found {found} company page(s), {not_found} not found")
+
+                # Show what was found
+                for company, (url, slug) in company_data.items():
+                    slug_display = f" (slug: {slug})" if slug else ""
+                    print(f"    • {company}: {url}{slug_display}")
+            else:
+                print(f"  ✗ No company pages found ({not_found} searched)")
+
+            total_companies_found += found
+            total_companies_not_found += not_found
+    finally:
+        # Clean up resources
+        lookup.close()
+
+    print("\n--- LinkedIn Company Lookup Complete ---")
+    print(f"Stories updated: {stories_updated}")
+    print(f"Companies found: {total_companies_found}")
+    print(f"Companies not found: {total_companies_not_found}")
+
+    if all_company_data:
+        print("\nCompany LinkedIn Pages Found:")
+        for company, (url, slug) in sorted(all_company_data.items()):
+            slug_display = f" (slug: {slug})" if slug else ""
+            print(f"  • {company}: {url}{slug_display}")
+
+
 def _test_enrichment(engine: ContentEngine) -> None:
     """Test the story enrichment component (organizations and people)."""
     print("\n--- Story Enrichment (Organizations & People) ---")
+
+    # First, check if there are stories with relevant_people needing LinkedIn profiles
+    stories_needing_profiles = _get_stories_needing_linkedin_profiles(engine)
+    if stories_needing_profiles:
+        print(
+            f"\n📋 Found {len(stories_needing_profiles)} stories with relevant_people needing LinkedIn profiles:"
+        )
+        total_people = 0
+        for story in stories_needing_profiles[:5]:
+            people_needing = [
+                p
+                for p in story.relevant_people
+                if not p.get("linkedin_profile", "").strip()
+            ]
+            total_people += len(people_needing)
+            print(
+                f"    [{story.id}] {story.title[:50]}... ({len(people_needing)} people)"
+            )
+            for person in people_needing[:2]:
+                name = person.get("name", "Unknown")
+                company = person.get("company", "")
+                position = person.get("position", "")
+                context = f" ({position}, {company})" if company or position else ""
+                print(f"        • {name}{context}")
+            if len(people_needing) > 2:
+                print(f"        ... and {len(people_needing) - 2} more")
+        if len(stories_needing_profiles) > 5:
+            print(f"    ... and {len(stories_needing_profiles) - 5} more stories")
+
+        lookup_profiles = (
+            input(
+                f"\nLook up LinkedIn profiles for these {total_people} people? (y/n): "
+            )
+            .strip()
+            .lower()
+        )
+        if lookup_profiles == "y":
+            _lookup_linkedin_profiles_for_relevant_people(
+                engine, stories_needing_profiles
+            )
+            return
 
     stories = engine.db.get_stories_needing_enrichment()
 

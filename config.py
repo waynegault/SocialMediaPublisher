@@ -263,7 +263,7 @@ RELEVANT PEOPLE - MANDATORY EXTRACTION:
 For EVERY story, identify and include in relevant_people:
 1. People MENTIONED in the story (researchers, engineers, scientists, executives quoted)
 2. Key leaders from ANY organizations/universities mentioned in the story:
-   - CEO, President, Managing Director
+   - CEO, President, Managing Director, Founder, Owner
    - Head/Director of Engineering, Head/Director of Research
    - Head/Director of Operations, Head/Director of HR
    - Principal Investigator, Head of Lab/School
@@ -450,7 +450,7 @@ RELEVANT PEOPLE - MANDATORY EXTRACTION:
 For EVERY story, identify and include in relevant_people:
 1. People MENTIONED in the story (researchers, engineers, scientists, executives quoted)
 2. Key leaders from ALL organizations/universities mentioned in the story:
-   - CEO, President, Managing Director
+   - CEO, President, Managing Director, Founder, Owner
    - Head/Director of Engineering, Head/Director of Research
    - Head/Director of Operations, Head/Director of HR
    - Principal Investigator, Head of Lab/School
@@ -521,7 +521,7 @@ SOURCES:
 
 TASK: Search for LinkedIn profiles/company pages for:
 1. The main company/companies mentioned in the story
-2. Key executives (CEO, CTO, Chief Engineer, etc.) of those companies
+2. Key executives (CEO, CTO, Chief Engineer, Founder, Owner, etc.) of those companies
 3. Researchers or authors named in the story
 4. Any other notable individuals mentioned
 
@@ -657,7 +657,7 @@ IMPORTANT: Leadership positions change frequently. Use web search to find CURREN
 Do NOT rely on potentially outdated training data.
 
 Find the following roles if they exist:
-1. CEO / Chief Executive Officer / Managing Director
+1. CEO / Chief Executive Officer / Managing Director / Founder / Owner
 2. President
 3. CTO / Chief Technology Officer / Chief Engineer
 4. CHRO / Chief Human Resources Officer / Head of HR
@@ -748,7 +748,7 @@ TASK: Identify key individuals associated with this story.
 LOOK FOR:
 1. Anyone EXPLICITLY NAMED in the story (researchers, executives, spokespersons, scientists, engineers)
 2. Authors or lead researchers on the work described
-3. Company executives if a company is involved (CEO, CTO, President)
+3. Company executives if a company is involved (CEO, CTO, President, Founder, Owner)
 4. University professors or lab directors if academic research
 5. Government officials if regulatory/policy related
 
