@@ -371,100 +371,62 @@ class StorySearcher:
         logger.debug(f"Gemini response length: {len(response.text)} chars")
         stories_data = self._parse_response(response.text)
 
-        # Extract real URLs from grounding metadata (not hallucinated by LLM)
-        # This only works when response_mime_type is NOT set to application/json
-        grounding_sources = self._extract_grounding_urls(response)
-        if grounding_sources:
-            logger.info(
-                f"Extracted {len(grounding_sources)} real URLs from grounding metadata"
-            )
-            # Replace hallucinated sources with real grounded URLs
-            stories_data = self._replace_sources_with_grounding(
-                stories_data, grounding_sources
-            )
-        else:
-            logger.warning(
-                "No grounding URLs found in response metadata - sources may be unreliable"
-            )
+        # Resolve redirect URLs in each story's sources
+        # The LLM outputs vertexaisearch redirect URLs that must be resolved
+        stories_data = self._resolve_story_source_urls(stories_data)
 
         return self._process_stories_data(stories_data, since_date)
 
-    def _extract_grounding_urls(self, response: Any) -> list[dict]:
+    def _resolve_story_source_urls(self, stories_data: list[dict]) -> list[dict]:
         """
-        Extract real URLs from Gemini grounding metadata.
-        Returns list of dicts with 'uri' and 'title' keys.
-
-        Tries multiple sources:
-        1. grounding_chunks (preferred - has individual source URLs)
-        2. search_entry_point.rendered_content (fallback - HTML with search links)
-
-        All redirect URLs are resolved to their final destinations.
-        Failed resolutions are excluded from the results.
+        Resolve redirect URLs in story sources to actual article URLs.
+        
+        The LLM outputs vertexaisearch.cloud.google.com redirect URLs.
+        These must be resolved to get the actual article URLs.
+        Google Search query URLs are filtered out as they are not article sources.
         """
-        sources: list[dict] = []
-        failed_resolutions = 0
-        try:
-            if not response.candidates:
-                return sources
-            candidate = response.candidates[0]
-            if not hasattr(candidate, "grounding_metadata"):
-                return sources
-            metadata = candidate.grounding_metadata
-            if not metadata:
-                return sources
+        if not stories_data:
+            return stories_data
 
-            # Try grounding_chunks first (preferred)
-            if hasattr(metadata, "grounding_chunks") and metadata.grounding_chunks:
-                for chunk in metadata.grounding_chunks:
-                    if hasattr(chunk, "web") and hasattr(chunk.web, "uri"):
-                        uri = chunk.web.uri
-                        title = (
-                            getattr(chunk.web, "title", "")
-                            if hasattr(chunk, "web")
-                            else ""
-                        )
-                        if uri and uri.startswith("http"):
-                            # Resolve Vertex AI Search redirect URLs
-                            final_uri = self._resolve_redirect_url(uri)
-                            # Only add if resolution succeeded (non-empty, non-redirect)
-                            if (
-                                final_uri
-                                and "vertexaisearch.cloud.google.com" not in final_uri
-                            ):
-                                sources.append({"uri": final_uri, "title": title})
-                            elif not final_uri:
-                                failed_resolutions += 1
+        for story in stories_data:
+            sources = story.get("sources") or story.get("source_links") or []
+            resolved_sources = []
 
-            # Fallback: extract from search_entry_point HTML
-            if not sources and hasattr(metadata, "search_entry_point"):
-                entry_point = metadata.search_entry_point
-                if (
-                    hasattr(entry_point, "rendered_content")
-                    and entry_point.rendered_content
-                ):
-                    # Parse URLs from the HTML carousel
-                    html_content = entry_point.rendered_content
-                    # Find all href URLs in the HTML
-                    url_matches = re.findall(r'href="([^"]+)"', html_content)
-                    for url in url_matches:
-                        if url.startswith("http"):
-                            final_uri = self._resolve_redirect_url(url)
-                            if (
-                                final_uri
-                                and "vertexaisearch.cloud.google.com" not in final_uri
-                            ):
-                                sources.append({"uri": final_uri, "title": ""})
-                            elif not final_uri:
-                                failed_resolutions += 1
+            for url in sources:
+                if not url or not url.startswith("http"):
+                    continue
 
-            if failed_resolutions > 0:
-                logger.warning(
-                    f"Failed to resolve {failed_resolutions} redirect URL(s)"
+                # Skip Google Search query URLs - these are not article sources
+                if "google.com/search?" in url:
+                    logger.debug(f"Skipping Google Search URL: {url[:60]}...")
+                    continue
+
+                # Resolve vertexaisearch redirect URLs
+                if "vertexaisearch.cloud.google.com" in url:
+                    resolved = self._resolve_redirect_url(url)
+                    if resolved and "vertexaisearch.cloud.google.com" not in resolved:
+                        resolved_sources.append(resolved)
+                        logger.debug(f"Resolved URL: {url[:50]}... -> {resolved[:50]}...")
+                    else:
+                        logger.warning(f"Failed to resolve redirect URL: {url[:60]}...")
+                else:
+                    # Keep non-redirect URLs as-is
+                    resolved_sources.append(url)
+
+            # Update story sources with resolved URLs
+            if resolved_sources:
+                story["sources"] = resolved_sources
+                logger.info(
+                    f"Resolved {len(resolved_sources)} source URL(s) for: "
+                    f"'{story.get('title', '')[:40]}...'"
                 )
+            else:
+                logger.warning(
+                    f"No valid source URLs for: '{story.get('title', '')[:50]}...'"
+                )
+                story["sources"] = []
 
-        except Exception as e:
-            logger.debug(f"Could not extract grounding URLs: {e}")
-        return sources
+        return stories_data
 
     def _resolve_redirect_url(self, url: str, max_retries: int = 3) -> str:
         """
@@ -615,65 +577,6 @@ class StorySearcher:
         if "vertexaisearch.cloud.google.com" not in current_url:
             return current_url
         return ""
-
-    def _replace_sources_with_grounding(
-        self, stories_data: list[dict], grounding_sources: list[dict]
-    ) -> list[dict]:
-        """
-        Replace LLM-generated sources with real grounding URLs.
-
-        SIMPLE & RELIABLE APPROACH:
-        All grounding URLs were used by Gemini to generate the entire response.
-        Therefore, ALL grounding URLs are valid sources for ALL stories.
-        We assign all grounding URLs to each story - no AI matching needed.
-
-        This gives 100% confidence that source_links contain only real URLs
-        that were actually used in generating the stories.
-        """
-        if not grounding_sources:
-            return stories_data
-
-        if not stories_data:
-            return stories_data
-
-        # Extract all valid grounding URLs (already resolved, no redirects)
-        all_grounding_urls = []
-        for source in grounding_sources:
-            url = source.get("uri", "")
-            if url and url.startswith("http"):
-                # Double-check no redirect URLs slipped through
-                if "vertexaisearch.cloud.google.com" not in url:
-                    all_grounding_urls.append(url)
-
-        if not all_grounding_urls:
-            logger.warning("No valid grounding URLs after filtering")
-            return stories_data
-
-        # Remove duplicates while preserving order
-        seen: set[str] = set()
-        unique_grounding_urls = []
-        for url in all_grounding_urls:
-            if url not in seen:
-                seen.add(url)
-                unique_grounding_urls.append(url)
-
-        logger.info(
-            f"Assigning {len(unique_grounding_urls)} grounding URL(s) to "
-            f"{len(stories_data)} stories"
-        )
-
-        # Assign ALL grounding URLs to EACH story
-        # These are the actual URLs Gemini used to generate the response
-        for story in stories_data:
-            story_title = story.get("title", "")
-            # Replace any LLM-hallucinated sources with real grounding URLs
-            story["sources"] = unique_grounding_urls.copy()
-            logger.debug(
-                f"Assigned {len(unique_grounding_urls)} source URL(s) to: "
-                f"'{story_title[:50]}...'"
-            )
-
-        return stories_data
 
     def _search_for_source_url(self, title: str, summary: str = "") -> Optional[str]:
         """
@@ -1386,15 +1289,8 @@ class StorySearcher:
                     return []
                 stories_data = self._parse_response(response.text)
 
-                # Extract real URLs from grounding metadata (same as main search)
-                grounding_sources = self._extract_grounding_urls(response)
-                if grounding_sources:
-                    logger.info(
-                        f"Extracted {len(grounding_sources)} real URLs from grounding metadata"
-                    )
-                    stories_data = self._replace_sources_with_grounding(
-                        stories_data, grounding_sources
-                    )
+                # Resolve redirect URLs in story sources
+                stories_data = self._resolve_story_source_urls(stories_data)
 
             self._preview_stories = stories_data
             return stories_data
