@@ -261,6 +261,7 @@ class ContentVerifier:
             story_sources=", ".join(story.source_links[:3]),
             relevant_people_count=relevant_people_count,
             linkedin_profiles_found=linkedin_profiles_found,
+            summary_word_limit=Config.SUMMARY_WORD_COUNT,
         )
 
     def _validate_linkedin_profiles(self, story: Story) -> tuple[bool, str]:
