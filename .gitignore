@@ -48,8 +48,9 @@ logs/
 data/
 output/
 
-# Database backups (primary db is tracked, backups are not)
+# Database files (ignore local DB; backups are also ignored)
+/content_engine.db
 *.db.backup
 /content_engine.db.backup
 /.linkedin_session
-/generated_images
+/generated_images/
