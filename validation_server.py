@@ -135,7 +135,7 @@ HTML_TEMPLATE = """
             background: rgba(255,255,255,0.05);
             border-radius: 12px;
             padding: 20px;
-            width: 70%;
+            width: 100%;
         }
 
         .preview-section {
@@ -147,7 +147,7 @@ HTML_TEMPLATE = """
             background: rgba(255,255,255,0.05);
             border-radius: 12px;
             padding: 25px;
-            flex: 0 0 70%;
+            flex: 1;
         }
 
         .linkedin-preview {
@@ -156,7 +156,7 @@ HTML_TEMPLATE = """
             border-radius: 8px;
             padding: 20px;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 10pt;
+            font-size: 11pt;
         }
 
         .linkedin-header {
