@@ -1007,7 +1007,7 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
 
     def test_config_defaults():
         assert Config.SUMMARY_WORD_COUNT >= 50
-        assert Config.STORIES_PER_CYCLE >= 1
+        assert Config.MAX_STORIES_PER_DAY >= 1
         assert Config.MAX_STORIES_PER_SEARCH >= 1
 
     def test_config_validate():
@@ -1019,9 +1019,11 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert os.path.isdir(Config.IMAGE_DIR)
 
     def test_config_publish_hours_valid():
-        assert 0 <= Config.PUBLISH_START_HOUR <= 23
-        assert 0 <= Config.PUBLISH_END_HOUR <= 23
-        assert Config.PUBLISH_START_HOUR < Config.PUBLISH_END_HOUR
+        start_hour = Config.get_pub_start_hour()
+        end_hour = Config.get_pub_end_hour()
+        assert 0 <= start_hour <= 23
+        assert 0 <= end_hour <= 23
+        assert start_hour < end_hour
 
     suite.add_test("_get_int with default", test_get_int_valid)
     suite.add_test("_get_bool with default", test_get_bool_default)

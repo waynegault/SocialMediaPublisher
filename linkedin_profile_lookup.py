@@ -1346,3 +1346,108 @@ NOT_FOUND"""
 
 # Backwards compatibility alias
 LinkedInProfileLookup = LinkedInCompanyLookup
+
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+    """Create unit tests for linkedin_profile_lookup module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("LinkedIn Profile Lookup Tests")
+
+    def test_validate_linkedin_url_valid_company():
+        lookup = LinkedInCompanyLookup(genai_client=None)
+        valid, slug = lookup.validate_linkedin_url(
+            "https://www.linkedin.com/company/google"
+        )
+        assert valid is True
+        assert slug == "google"
+        lookup.close()
+
+    def test_validate_linkedin_url_valid_school():
+        lookup = LinkedInCompanyLookup(genai_client=None)
+        valid, slug = lookup.validate_linkedin_url(
+            "https://www.linkedin.com/school/stanford-university"
+        )
+        assert valid is True
+        assert slug == "stanford-university"
+        lookup.close()
+
+    def test_validate_linkedin_url_invalid():
+        lookup = LinkedInCompanyLookup(genai_client=None)
+        valid, slug = lookup.validate_linkedin_url("https://example.com/not-linkedin")
+        assert valid is False
+        assert slug is None
+        lookup.close()
+
+    def test_validate_linkedin_url_empty():
+        lookup = LinkedInCompanyLookup(genai_client=None)
+        valid, slug = lookup.validate_linkedin_url("")
+        assert valid is False
+        assert slug is None
+        lookup.close()
+
+    def test_generate_acronym_long():
+        lookup = LinkedInCompanyLookup(genai_client=None)
+        # Acronym for 3+ word phrases
+        acronym = lookup._generate_acronym(
+            "International Business Machines Corporation"
+        )
+        assert acronym == "IBMC"
+        lookup.close()
+
+    def test_generate_acronym_short():
+        lookup = LinkedInCompanyLookup(genai_client=None)
+        # Short names don't generate acronyms
+        acronym = lookup._generate_acronym("MIT")
+        assert acronym is None
+        lookup.close()
+
+    def test_extract_company_url():
+        lookup = LinkedInCompanyLookup(genai_client=None)
+        text = "Check out https://www.linkedin.com/company/acme-corp for more info"
+        url = lookup._extract_company_url(text)
+        assert url == "https://www.linkedin.com/company/acme-corp"
+        lookup.close()
+
+    def test_extract_person_url():
+        lookup = LinkedInCompanyLookup(genai_client=None)
+        text = "Visit https://www.linkedin.com/in/jane-doe-12345 for profile"
+        url = lookup._extract_person_url(text)
+        assert url is not None
+        assert "jane-doe" in url
+        lookup.close()
+
+    def test_lookup_class_init():
+        lookup = LinkedInCompanyLookup(genai_client=None)
+        # When no genai_client passed and no API key, client is None
+        assert lookup._uc_driver is None
+        assert lookup._http_client is None
+        lookup.close()
+
+    def test_context_manager():
+        with LinkedInCompanyLookup(genai_client=None) as lookup:
+            assert lookup is not None
+        # Should close without error
+
+    suite.add_test(
+        "Validate LinkedIn URL - valid company",
+        test_validate_linkedin_url_valid_company,
+    )
+    suite.add_test(
+        "Validate LinkedIn URL - valid school", test_validate_linkedin_url_valid_school
+    )
+    suite.add_test(
+        "Validate LinkedIn URL - invalid", test_validate_linkedin_url_invalid
+    )
+    suite.add_test("Validate LinkedIn URL - empty", test_validate_linkedin_url_empty)
+    suite.add_test("Generate acronym - long phrase", test_generate_acronym_long)
+    suite.add_test("Generate acronym - short name", test_generate_acronym_short)
+    suite.add_test("Extract company URL from text", test_extract_company_url)
+    suite.add_test("Extract person URL from text", test_extract_person_url)
+    suite.add_test("Lookup class initialization", test_lookup_class_init)
+    suite.add_test("Context manager works", test_context_manager)
+
+    return suite

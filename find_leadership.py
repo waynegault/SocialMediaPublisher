@@ -278,3 +278,68 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+    """Create unit tests for find_leadership module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("Find Leadership Tests")
+
+    def test_is_university_true():
+        assert is_university("University of Cambridge") is True
+        assert is_university("MIT") is True
+        assert is_university("Stanford College") is True
+        assert is_university("Imperial College London") is True
+        assert is_university("California Institute of Technology") is True
+
+    def test_is_university_false():
+        assert is_university("Google") is False
+        assert is_university("Shell Oil Company") is False
+        assert is_university("BASF") is False
+        assert is_university("Acme Corp") is False
+
+    def test_company_roles_defined():
+        assert COMPANY_ROLES is not None
+        assert len(COMPANY_ROLES) > 0
+        assert "CEO" in COMPANY_ROLES
+        assert "Chief Technology Officer" in COMPANY_ROLES
+
+    def test_university_roles_defined():
+        assert UNIVERSITY_ROLES is not None
+        assert len(UNIVERSITY_ROLES) > 0
+        assert "Vice Chancellor" in UNIVERSITY_ROLES
+        assert "Dean" in UNIVERSITY_ROLES
+
+    def test_get_organizations_from_db_returns_list():
+        # This should work even with empty db (returns empty list)
+        result = get_organizations_from_db()
+        assert isinstance(result, list)
+
+    def test_main_function_exists():
+        assert callable(main)
+
+    def test_search_leadership_uc_exists():
+        assert callable(search_leadership_uc)
+
+    suite.add_test(
+        "is_university returns True for universities", test_is_university_true
+    )
+    suite.add_test(
+        "is_university returns False for companies", test_is_university_false
+    )
+    suite.add_test("COMPANY_ROLES list is defined", test_company_roles_defined)
+    suite.add_test("UNIVERSITY_ROLES list is defined", test_university_roles_defined)
+    suite.add_test(
+        "get_organizations_from_db returns list",
+        test_get_organizations_from_db_returns_list,
+    )
+    suite.add_test("main function exists", test_main_function_exists)
+    suite.add_test(
+        "search_leadership_uc function exists", test_search_leadership_uc_exists
+    )
+
+    return suite
