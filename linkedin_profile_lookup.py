@@ -1,10 +1,12 @@
-"""LinkedIn company and person profile lookup using Gemini with Google Search grounding and Playwright."""
+"""LinkedIn company and person profile lookup using Gemini with Google Search grounding and undetected-chromedriver."""
 
 import base64
 import logging
+import os
 import re
+import sys
 import time
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 import httpx
 from google import genai  # type: ignore
@@ -12,6 +14,41 @@ from google import genai  # type: ignore
 from config import Config
 
 logger = logging.getLogger(__name__)
+
+# Import undetected-chromedriver for CAPTCHA-resistant browser automation
+try:
+    import undetected_chromedriver as uc  # type: ignore
+
+    UC_AVAILABLE = True
+except ImportError:
+    UC_AVAILABLE = False
+    logger.warning(
+        "undetected-chromedriver not installed - pip install undetected-chromedriver"
+    )
+
+
+def _suppress_uc_cleanup_errors():
+    """Suppress Windows handle errors from UC Chrome cleanup."""
+    if sys.platform == "win32":
+        # Monkey-patch time.sleep in the UC module to suppress cleanup errors
+        original_sleep = time.sleep
+
+        def patched_sleep(seconds):
+            try:
+                original_sleep(seconds)
+            except OSError:
+                pass  # Suppress WinError 6: handle is invalid
+
+        # Apply to UC module if loaded
+        if UC_AVAILABLE:
+            import undetected_chromedriver
+
+            undetected_chromedriver.time = type(sys)("time")
+            undetected_chromedriver.time.sleep = patched_sleep
+
+
+# Apply the patch on module load
+_suppress_uc_cleanup_errors()
 
 
 class LinkedInCompanyLookup:
@@ -35,6 +72,89 @@ class LinkedInCompanyLookup:
 
         # HTTP client for LinkedIn API calls
         self._http_client: Optional[httpx.Client] = None
+
+        # Shared browser session for UC Chrome searches (reused across multiple searches)
+        self._uc_driver: Optional[Any] = None
+
+    def __enter__(self):
+        """Context manager entry - returns self."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - closes browser session."""
+        self.close_browser()
+        return False
+
+    def _get_uc_driver(self) -> Optional[Any]:
+        """Get or create a shared UC Chrome driver instance.
+
+        The driver is reused across multiple searches for efficiency.
+        Call close_browser() when done with all searches.
+
+        Returns:
+            UC Chrome driver instance, or None if UC not available
+        """
+        if not UC_AVAILABLE:
+            logger.warning(
+                "undetected-chromedriver not installed - pip install undetected-chromedriver"
+            )
+            return None
+
+        # Return existing driver if still valid
+        if self._uc_driver is not None:
+            try:
+                # Check if driver is still alive
+                _ = self._uc_driver.current_url
+                return self._uc_driver
+            except Exception:
+                # Driver is dead, clean up and create new one
+                self._uc_driver = None
+
+        # Create new driver
+        try:
+            from selenium.webdriver.common.by import By
+
+            options = uc.ChromeOptions()
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-software-rasterizer")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--no-first-run")
+            options.add_argument("--no-default-browser-check")
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_argument("--disable-infobars")
+            options.add_argument("--disable-popup-blocking")
+
+            # Consistent user agent (random user agents are red flags)
+            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+            options.add_argument(f"--user-agent={user_agent}")
+
+            self._uc_driver = uc.Chrome(
+                options=options,
+                use_subprocess=False,  # More stable on Windows
+                suppress_welcome=True,
+            )
+            self._uc_driver.set_page_load_timeout(30)
+            logger.debug("Created new UC Chrome driver session")
+            return self._uc_driver
+
+        except Exception as e:
+            logger.error(f"Failed to create UC Chrome driver: {e}")
+            return None
+
+    def close_browser(self):
+        """Close the shared browser session.
+
+        Call this when done with all searches to clean up resources.
+        """
+        if self._uc_driver is not None:
+            try:
+                self._uc_driver.quit()
+            except Exception:
+                pass
+            self._uc_driver = None
+            logger.debug("Closed UC Chrome driver session")
 
     def _get_http_client(self) -> httpx.Client:
         """Get or create HTTP client for LinkedIn API calls."""
@@ -311,8 +431,46 @@ NOT_FOUND"""
             if is_valid:
                 return (url, slug)
 
+        # Try Playwright search with acronym if we can generate one
+        acronym = self._generate_acronym(company_name)
+        if acronym and acronym.upper() != company_name.upper():
+            logger.info(f"Trying Playwright/Bing search with acronym: {acronym}")
+            url = self._search_company_playwright(acronym)
+            if url:
+                is_valid, slug = self.validate_linkedin_url(url)
+                if is_valid:
+                    return (url, slug)
+
         logger.info(f"No LinkedIn company page found for: {company_name}")
         return (None, None)
+
+    def _generate_acronym(self, company_name: str) -> Optional[str]:
+        """Generate an acronym from a multi-word company name."""
+        # Known acronyms
+        known_acronyms = {
+            "Massachusetts Institute of Technology": "MIT",
+            "University of California, Santa Barbara": "UCSB",
+            "University of California, Los Angeles": "UCLA",
+            "University of California, Berkeley": "UC Berkeley",
+            "California Institute of Technology": "Caltech",
+            "Georgia Institute of Technology": "Georgia Tech",
+            "International Union of Pure and Applied Chemistry": "IUPAC",
+        }
+
+        if company_name in known_acronyms:
+            return known_acronyms[company_name]
+
+        # Generate acronym from multi-word names
+        words = company_name.split()
+        skip_words = {"of", "the", "and", "for", "in", "on", "at", "to", "a", "an"}
+        significant_words = [w for w in words if w.lower() not in skip_words]
+
+        if len(significant_words) >= 3:
+            acronym = "".join(w[0].upper() for w in significant_words if w)
+            if len(acronym) >= 3:
+                return acronym
+
+        return None
 
     def _get_simplified_search(self, company_name: str) -> Optional[str]:
         """Generate a simplified search query by removing common suffixes."""
@@ -382,20 +540,9 @@ NOT_FOUND"""
 
     def _get_acronym_search(self, company_name: str) -> Optional[str]:
         """Generate an acronym-based search if company name is multi-word."""
-        # Common known acronyms
-        known_acronyms = {
-            "Massachusetts Institute of Technology": "MIT",
-            "University of California, Santa Barbara": "UCSB",
-            "University of California, Los Angeles": "UCLA",
-            "University of California, Berkeley": "UC Berkeley",
-            "California Institute of Technology": "Caltech",
-            "Georgia Institute of Technology": "Georgia Tech",
-        }
-
-        if company_name in known_acronyms:
-            acronym = known_acronyms[company_name]
-            return f'"{acronym}" site:linkedin.com/school OR site:linkedin.com/company'
-
+        acronym = self._generate_acronym(company_name)
+        if acronym:
+            return f'"{acronym}" site:linkedin.com/company OR site:linkedin.com/school'
         return None
 
     def _search_with_query(
@@ -619,9 +766,9 @@ NOT_FOUND"""
 
     def _search_company_playwright(self, company_name: str) -> Optional[str]:
         """
-        Search for LinkedIn company page using Playwright to render Bing search results.
+        Search for LinkedIn company page using undetected-chromedriver to render Bing search results.
 
-        This is a fallback method when Gemini search doesn't find the company.
+        Uses shared browser session for efficiency across multiple searches.
 
         Args:
             company_name: Company name to search for
@@ -629,40 +776,31 @@ NOT_FOUND"""
         Returns:
             LinkedIn company/school URL if found, None otherwise
         """
-        try:
-            from playwright.sync_api import sync_playwright  # type: ignore
-        except ImportError:
-            logger.warning("Playwright not installed - pip install playwright")
+        driver = self._get_uc_driver()
+        if driver is None:
             return None
+
+        from selenium.webdriver.common.by import By
 
         # Build search query
         search_query = f"{company_name} LinkedIn company"
-        logger.debug(f"Playwright Bing company search: {search_query}")
+        logger.debug(f"UC Chrome Bing company search: {search_query}")
 
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=False)
-                page = browser.new_page()
+            url = f"https://www.bing.com/search?q={search_query.replace(' ', '+')}"
+            driver.get(url)
+            time.sleep(2)  # Wait for page to load
 
-                url = f"https://www.bing.com/search?q={search_query.replace(' ', '+')}"
-                page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                page.wait_for_timeout(3000)
+            # Prepare company name parts for matching
+            company_lower = company_name.lower()
+            company_words = [w for w in company_lower.split() if len(w) > 2]
 
-                # Prepare company name parts for matching
-                company_lower = company_name.lower()
-                company_words = [w for w in company_lower.split() if len(w) > 2]
-
-                result_items = page.query_selector_all(".b_algo")
-                for item in result_items:
-                    heading = item.query_selector("h2")
-                    if not heading:
-                        continue
-
-                    title = heading.inner_text().lower()
-                    link = heading.query_selector("a")
-                    if not link:
-                        continue
-
+            result_items = driver.find_elements(By.CSS_SELECTOR, ".b_algo")
+            for item in result_items:
+                try:
+                    heading = item.find_element(By.CSS_SELECTOR, "h2")
+                    title = heading.text.lower()
+                    link = heading.find_element(By.CSS_SELECTOR, "a")
                     href = link.get_attribute("href") or ""
 
                     # Decode Bing redirect URL
@@ -688,15 +826,12 @@ NOT_FOUND"""
 
                     # Verify company name appears in title or URL
                     url_lower = decoded_url.lower()
-                    # Check if significant company words appear in title or URL
                     matches = sum(
                         1
                         for word in company_words
                         if word in title or word in url_lower
                     )
-                    if (
-                        matches < len(company_words) * 0.5
-                    ):  # At least half the words should match
+                    if matches < len(company_words) * 0.5:
                         logger.debug(f"Skipping '{title[:40]}' - name mismatch")
                         continue
 
@@ -708,15 +843,19 @@ NOT_FOUND"""
                         page_type = match.group(1)
                         slug = match.group(2)
                         result_url = f"https://www.linkedin.com/{page_type}/{slug}"
-                        logger.info(f"Found company via Playwright: {result_url}")
-                        browser.close()
+                        logger.info(f"Found company via UC Chrome: {result_url}")
                         return result_url
 
-                browser.close()
-                logger.debug("No matching LinkedIn company found via Playwright")
+                except Exception as e:
+                    logger.debug(f"Error processing result item: {e}")
+                    continue
+
+            logger.debug("No matching LinkedIn company found via UC Chrome")
 
         except Exception as e:
-            logger.error(f"Playwright company search error: {e}")
+            logger.error(f"UC Chrome company search error: {e}")
+            # If browser crashed, reset it
+            self._uc_driver = None
 
         return None
 
@@ -728,10 +867,9 @@ NOT_FOUND"""
         require_org_match: bool = True,
     ) -> Optional[str]:
         """
-        Search for LinkedIn profile using Playwright to render Bing search results.
+        Search for LinkedIn profile using undetected-chromedriver to render Bing search results.
 
-        This is the most reliable method for finding person profiles.
-        Bing's search results contain the actual LinkedIn URLs.
+        Uses shared browser session for efficiency across multiple searches.
 
         Args:
             name: Person's name
@@ -743,11 +881,11 @@ NOT_FOUND"""
         Returns:
             LinkedIn profile URL if found, None otherwise
         """
-        try:
-            from playwright.sync_api import sync_playwright  # type: ignore
-        except ImportError:
-            logger.warning("Playwright not installed - pip install playwright")
+        driver = self._get_uc_driver()
+        if driver is None:
             return None
+
+        from selenium.webdriver.common.by import By
 
         # Build search query
         parts = [name]
@@ -757,34 +895,24 @@ NOT_FOUND"""
             parts.append(company)
         parts.append("LinkedIn")
         search_query = " ".join(parts)
-        logger.debug(f"Playwright Bing search: {search_query}")
+        logger.debug(f"UC Chrome Bing search: {search_query}")
 
         try:
-            with sync_playwright() as p:
-                # Non-headless mode required - Bing detects headless browsers
-                browser = p.chromium.launch(headless=False)
-                page = browser.new_page()
+            url = f"https://www.bing.com/search?q={search_query.replace(' ', '+')}"
+            driver.get(url)
+            time.sleep(2)  # Wait for page to load
 
-                url = f"https://www.bing.com/search?q={search_query.replace(' ', '+')}"
-                page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                page.wait_for_timeout(3000)
+            # Parse name for matching (first and last, ignoring middle names)
+            name_parts = name.lower().split()
+            first_name = name_parts[0] if name_parts else ""
+            last_name = name_parts[-1] if len(name_parts) >= 2 else ""
 
-                # Parse name for matching (first and last, ignoring middle names)
-                name_parts = name.lower().split()
-                first_name = name_parts[0] if name_parts else ""
-                last_name = name_parts[-1] if len(name_parts) >= 2 else ""
-
-                result_items = page.query_selector_all(".b_algo")
-                for item in result_items:
-                    heading = item.query_selector("h2")
-                    if not heading:
-                        continue
-
-                    title = heading.inner_text()
-                    link = heading.query_selector("a")
-                    if not link:
-                        continue
-
+            result_items = driver.find_elements(By.CSS_SELECTOR, ".b_algo")
+            for item in result_items:
+                try:
+                    heading = item.find_element(By.CSS_SELECTOR, "h2")
+                    title = heading.text
+                    link = heading.find_element(By.CSS_SELECTOR, "a")
                     href = link.get_attribute("href") or ""
 
                     # Decode Bing redirect URL (base64 encoded)
@@ -794,7 +922,6 @@ NOT_FOUND"""
 
                     try:
                         encoded = u_match.group(1)
-                        # Add padding if needed
                         padding = 4 - len(encoded) % 4
                         if padding != 4:
                             encoded += "=" * padding
@@ -806,8 +933,11 @@ NOT_FOUND"""
                         continue
 
                     # Get result text for matching
-                    snippet_el = item.query_selector(".b_caption p")
-                    snippet = snippet_el.inner_text() if snippet_el else ""
+                    try:
+                        snippet_el = item.find_element(By.CSS_SELECTOR, ".b_caption p")
+                        snippet = snippet_el.text
+                    except Exception:
+                        snippet = ""
                     result_text = f"{title} {snippet}".lower()
 
                     # Check name match (required) - first and last name
@@ -822,7 +952,6 @@ NOT_FOUND"""
                     # Check org match (optional based on require_org_match)
                     if company and require_org_match:
                         company_lower = company.lower()
-                        # Check for significant words from company name
                         company_words = [w for w in company_lower.split() if len(w) > 3]
                         org_match = any(word in result_text for word in company_words)
                         org_match = org_match or company_lower in result_text
@@ -836,15 +965,19 @@ NOT_FOUND"""
                     if vanity_match:
                         vanity = vanity_match.group(1)
                         result_url = f"https://www.linkedin.com/in/{vanity}"
-                        logger.info(f"Found profile via Playwright: {result_url}")
-                        browser.close()
+                        logger.info(f"Found profile via UC Chrome: {result_url}")
                         return result_url
 
-                browser.close()
-                logger.debug("No matching LinkedIn profile found via Playwright")
+                except Exception as e:
+                    logger.debug(f"Error processing result item: {e}")
+                    continue
+
+            logger.debug("No matching LinkedIn profile found via UC Chrome")
 
         except Exception as e:
-            logger.error(f"Playwright search error: {e}")
+            logger.error(f"UC Chrome search error: {e}")
+            # If browser crashed, reset it
+            self._uc_driver = None
 
         return None
 
@@ -1204,10 +1337,11 @@ NOT_FOUND"""
         return (companies_found, companies_not_found, return_data)
 
     def close(self) -> None:
-        """Clean up HTTP client resources."""
+        """Clean up HTTP client and browser resources."""
         if self._http_client:
             self._http_client.close()
             self._http_client = None
+        self.close_browser()
 
 
 # Backwards compatibility alias

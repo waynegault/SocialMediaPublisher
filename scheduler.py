@@ -17,32 +17,54 @@ class Scheduler:
         """Initialize the scheduler."""
         self.db = database
 
-    def schedule_stories(self) -> list[Story]:
+    def schedule_stories(self, schedule_all: bool = False) -> list[Story]:
         """
         Schedule stories for publication.
-        Returns the list of scheduled stories.
+
+        Args:
+            schedule_all: If True, schedule ALL available stories across multiple days.
+                         If False (default), schedule up to MAX_STORIES_PER_DAY for today only.
+
+        Returns the list of newly scheduled stories.
         """
-        target_count = Config.STORIES_PER_CYCLE
-
-        # Clear any existing scheduled stories (re-scheduling)
-        cleared = self.db.clear_scheduled_status()
-        if cleared > 0:
-            logger.info(f"Cleared {cleared} previously scheduled stories")
-
-        # Get candidates in quality order
-        candidates = self.db.get_approved_unpublished_stories(target_count)
+        if schedule_all:
+            # Get ALL available approved unpublished stories (sorted by quality score)
+            candidates = self.db.get_approved_unpublished_stories(limit=1000)
+        else:
+            # For single-day scheduling, limit to MAX_STORIES_PER_DAY
+            target_count = Config.MAX_STORIES_PER_DAY
+            # Clear any existing scheduled stories when doing cycle-based scheduling
+            cleared = self.db.clear_scheduled_status()
+            if cleared > 0:
+                logger.info(f"Cleared {cleared} previously scheduled stories")
+            candidates = self.db.get_approved_unpublished_stories(target_count)
 
         if not candidates:
             logger.warning("No approved stories available to schedule")
             return []
 
-        if len(candidates) < target_count:
-            logger.warning(
-                f"Only {len(candidates)} stories available (target: {target_count})"
-            )
+        logger.info(f"Found {len(candidates)} stories to schedule")
 
-        # Calculate publication times
-        scheduled_times = self._calculate_schedule_times(len(candidates))
+        # Get existing scheduled times to avoid conflicts
+        existing_scheduled = self.db.get_scheduled_stories()
+        existing_times = set()
+        latest_scheduled_time = None
+
+        for story in existing_scheduled:
+            if story.scheduled_time:
+                existing_times.add(story.scheduled_time.date())
+                if (
+                    latest_scheduled_time is None
+                    or story.scheduled_time > latest_scheduled_time
+                ):
+                    latest_scheduled_time = story.scheduled_time
+
+        # Calculate publication times, starting after any existing scheduled stories
+        scheduled_times = self._calculate_schedule_times(
+            len(candidates),
+            start_after=latest_scheduled_time,
+            exclude_dates=existing_times if schedule_all else set(),
+        )
 
         # Assign times to stories
         scheduled_stories = []
@@ -59,57 +81,99 @@ class Scheduler:
         logger.info(f"Scheduled {len(scheduled_stories)} stories for publication")
         return scheduled_stories
 
-    def _calculate_schedule_times(self, count: int) -> list[datetime]:
+    def _calculate_schedule_times(
+        self,
+        count: int,
+        start_after: datetime | None = None,
+        exclude_dates: set | None = None,
+    ) -> list[datetime]:
         """
         Calculate publication times for a given number of stories.
         Distributes them evenly across the publication window with jitter.
+
+        Args:
+            count: Number of time slots to generate
+            start_after: If provided, start scheduling after this datetime
+            exclude_dates: Set of dates to skip (already have scheduled stories)
         """
         if count == 0:
             return []
 
         now = datetime.now()
-        start_hour = Config.PUBLISH_START_HOUR
-        end_hour = Config.PUBLISH_END_HOUR
-        window_hours = Config.PUBLISH_WINDOW_HOURS
+        start_hour = Config.get_pub_start_hour()
+        end_hour = Config.get_pub_end_hour()
+        max_per_day = Config.MAX_STORIES_PER_DAY
         jitter_minutes = Config.JITTER_MINUTES
 
         # Determine the base start time
-        base_time = self._get_next_valid_start_time(now, start_hour, end_hour)
+        if start_after and start_after > now:
+            # Start from the day after the latest scheduled story
+            base_time = start_after.replace(
+                hour=start_hour, minute=0, second=0, microsecond=0
+            ) + timedelta(days=1)
+        else:
+            base_time = self._get_next_valid_start_time(now, start_hour, end_hour)
 
-        # Calculate the available publishing hours per day
+        # Calculate daily hours available
         daily_hours = end_hour - start_hour
 
-        # Calculate interval between posts
-        if count == 1:
-            interval_hours = 0
-        else:
-            # Spread across the window, but constrained to valid hours
-            interval_hours = min(window_hours / count, daily_hours / count)
-
+        # Calculate time slots: up to max_per_day per day, spread evenly
         scheduled_times = []
-        current_time = base_time
+        current_date = base_time.date()
+        stories_on_current_day = 0
 
-        for _ in range(count):
-            # Add jitter
+        for i in range(count):
+            # Skip dates that already have scheduled stories
+            if exclude_dates:
+                while current_date in exclude_dates:
+                    current_date += timedelta(days=1)
+                    stories_on_current_day = 0
+
+            # If we've hit max for this day, move to next day
+            if stories_on_current_day >= max_per_day:
+                current_date += timedelta(days=1)
+                stories_on_current_day = 0
+                # Skip excluded dates again
+                if exclude_dates:
+                    while current_date in exclude_dates:
+                        current_date += timedelta(days=1)
+
+            # Calculate time slot within the day
+            # Spread stories evenly across the publishing window
+            slot_duration = daily_hours / max(max_per_day, 1)
+            slot_start = start_hour + (stories_on_current_day * slot_duration)
+            slot_end = slot_start + slot_duration
+
+            # Pick a random time within this slot
+            random_minutes = random.randint(0, int(slot_duration * 60) - 1)
+            scheduled_hour = int(slot_start) + (random_minutes // 60)
+            scheduled_minute = random_minutes % 60
+
+            scheduled_time = datetime.combine(
+                current_date, datetime.min.time()
+            ).replace(
+                hour=min(scheduled_hour, end_hour - 1),
+                minute=scheduled_minute,
+                second=0,
+                microsecond=0,
+            )
+
+            # Add jitter (but stay within valid hours)
             jitter = random.randint(-jitter_minutes, jitter_minutes)
-            scheduled_time = current_time + timedelta(minutes=jitter)
+            scheduled_time += timedelta(minutes=jitter)
 
             # Ensure time is within valid hours
             scheduled_time = self._adjust_to_valid_hours(
                 scheduled_time, start_hour, end_hour
             )
 
+            # If adjustment moved to next day, update tracking
+            if scheduled_time.date() != current_date:
+                current_date = scheduled_time.date()
+                stories_on_current_day = 0
+
             scheduled_times.append(scheduled_time)
-
-            # Move to next slot
-            current_time += timedelta(hours=interval_hours)
-
-            # If we've gone past end hour, move to next day
-            if current_time.hour >= end_hour:
-                current_time = current_time.replace(
-                    hour=start_hour, minute=0, second=0, microsecond=0
-                )
-                current_time += timedelta(days=1)
+            stories_on_current_day += 1
 
         return scheduled_times
 

@@ -162,11 +162,13 @@ class ContentEngine:
         """
         Run a complete search cycle:
         1. Search for new stories
-        2. Generate images for qualifying stories
-        3. Verify content quality
-        4. Enrich with company mentions from sources
-        5. Schedule for publication
+        2. Enrich with company mentions from sources
+        3. Generate images for qualifying stories
+        4. Assign promotion messages
+        5. Verify content quality
         6. Clean up old unused stories
+
+        Note: Scheduling is handled separately via Action 20.
         """
         logger.info("=" * 60)
         logger.info("Starting Search Cycle")
@@ -178,36 +180,28 @@ class ContentEngine:
             new_stories = self.searcher.search_and_process()
             logger.info(f"Found {new_stories} new stories")
 
-            # Step 2: Generate images
-            logger.info("Step 2: Generating images...")
-            images_generated = self.image_generator.generate_images_for_stories()
-            logger.info(f"Generated {images_generated} images")
-
-            # Step 3: Verify content
-            logger.info("Step 3: Verifying content...")
-            approved, rejected = self.verifier.verify_pending_content()
-            logger.info(f"Verification: {approved} approved, {rejected} rejected")
-
-            # Step 4: Enrich with company mentions
-            logger.info("Step 4: Enriching with company mentions...")
+            # Step 2: Enrich with company mentions
+            logger.info("Step 2: Enriching with company mentions...")
             enriched, skipped = self.enricher.enrich_pending_stories()
             logger.info(f"Enrichment: {enriched} enriched, {skipped} skipped")
 
-            # Step 5: Schedule stories
-            logger.info("Step 5: Scheduling stories...")
-            scheduled = self.scheduler.schedule_stories()
-            logger.info(f"Scheduled {len(scheduled)} stories for publication")
+            # Step 3: Generate images
+            logger.info("Step 3: Generating images...")
+            images_generated = self.image_generator.generate_images_for_stories()
+            logger.info(f"Generated {images_generated} images")
 
-            # Log schedule summary
-            schedule_summary = self.scheduler.get_schedule_summary()
-            logger.info(schedule_summary)
+            # Step 4: Assign promotion messages
+            logger.info("Step 4: Assigning promotion messages...")
+            promo_assigned = self._assign_promotions_batch()
+            logger.info(f"Assigned {promo_assigned} promotion messages")
+
+            # Step 5: Verify content
+            logger.info("Step 5: Verifying content...")
+            approved, rejected = self.verifier.verify_pending_content()
+            logger.info(f"Verification: {approved} approved, {rejected} rejected")
 
             # Step 6: Cleanup old stories
             logger.info("Step 6: Cleaning up old stories...")
-            cutoff = datetime.now() - timedelta(days=Config.EXCLUSION_PERIOD_DAYS)
-            self.db.delete_old_unused_stories(cutoff)
-            self.image_generator.cleanup_orphaned_images()
-
             # Update tracking
             self._last_search_cycle = datetime.now()
 
@@ -233,6 +227,88 @@ class ContentEngine:
 
         logger.info("Search cycle complete")
         logger.info("=" * 60)
+
+    def _assign_promotions_batch(self) -> int:
+        """Assign AI-generated promotion messages to stories that don't have one."""
+        import random
+
+        style_examples = [
+            "🎓 MEng Process & Chemical Engineering (Strathclyde) | Exploring opportunities in hydrogen and clean energy sectors.",
+            "Chemical engineer with hydrogen specialization seeking to contribute to innovative energy projects. Open to conversations.",
+            "Process engineer actively exploring opportunities in the hydrogen economy. Let's connect if you're building in this space.",
+            "Strathclyde MEng graduate passionate about sustainable chemical processes. Currently exploring my next challenge.",
+            "Open to opportunities in hydrogen production, carbon capture, or process engineering. Happy to discuss how I might add value.",
+        ]
+
+        # Get stories that need a promotion message
+        with self.db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, title, summary
+                FROM stories
+                WHERE (promotion IS NULL OR promotion = '')
+                  AND image_path IS NOT NULL
+                ORDER BY id DESC
+            """)
+            rows = cursor.fetchall()
+
+        if not rows:
+            return 0
+
+        examples_text = "\n".join(f"- {ex}" for ex in style_examples)
+        assigned = 0
+
+        for row in rows:
+            story_id = row["id"]
+            title = row["title"]
+            summary = row["summary"] or ""
+
+            prompt = f"""Generate a professional LinkedIn job-seeking message that subtly connects to this story's topic.
+
+STORY:
+Title: {title}
+Summary: {summary[:500]}
+
+REQUIREMENTS:
+1. Reference the specific technology, company, industry, or theme from the story
+2. Mention MEng Process & Chemical Engineering from Strathclyde University
+3. Express interest in opportunities related to the story's topic
+4. Maintain professional gravitas - NOT begging, showing expertise and enthusiasm
+5. Keep it to 1-2 sentences, max 200 characters
+6. Can include a relevant emoji at the start
+
+STYLE EXAMPLES (match this tone):
+{examples_text}
+
+OUTPUT: Write ONLY the promotion message, nothing else."""
+
+            try:
+                response = self.genai_client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=prompt,
+                )
+                if response.text:
+                    promotion = response.text.strip().strip('"').strip("'")
+                else:
+                    promotion = random.choice(style_examples)
+
+                if len(promotion) > 300:
+                    promotion = promotion[:297] + "..."
+
+            except Exception as e:
+                logger.warning(f"AI generation failed for story {story_id}: {e}")
+                promotion = random.choice(style_examples)
+
+            with self.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE stories SET promotion = ? WHERE id = ?",
+                    (promotion, story_id),
+                )
+
+            assigned += 1
+
+        return assigned
 
     def run_publish_check(self) -> tuple[int, int]:
         """
@@ -336,8 +412,8 @@ Social Media Publisher - Debug Menu
 ============================================================
 
   Pipeline:
-    1. Run Full Pipeline (search → images → verify → schedule → publish)
-    2. Publish One Story Now (immediate test publish)
+    1. Run Full Pipeline (search → enrich → images → promo → verify → cleanup)
+    2. Publish One Scheduled Story Now
 
   Configuration:
     3. Show Configuration
@@ -359,18 +435,20 @@ Social Media Publisher - Debug Menu
    15. Test Story Search
    16. Test Company & Individual Enrichment
    17. Test Image Generation
-   18. Test Content Verification
-   19. Test Scheduling
-   20. Test LinkedIn Connection
-   21. Test LinkedIn Publish (due stories)
-   22. Run Unit Tests
+   18. Assign Promotion Message to Stories
+   19. Test Content Verification
+   20. Test Scheduling
+   21. Human Validation (Web GUI)
+   22. Test LinkedIn Connection
+   23. Test LinkedIn Publish (due stories)
+   24. Run Unit Tests
 
   Analytics:
-   23. View LinkedIn Analytics
-   24. Refresh All Analytics
+   25. View LinkedIn Analytics
+   26. Refresh All Analytics
 
   Danger Zone:
-   25. Reset (delete database and images)
+   27. Reset (delete database and images)
 
    0. Exit
 ============================================================
@@ -432,22 +510,26 @@ Social Media Publisher - Debug Menu
         elif choice == "17":
             _test_image_generation(engine)
         elif choice == "18":
-            _test_verification(engine)
+            _assign_promotion_message(engine)
         elif choice == "19":
-            _test_scheduling(engine)
+            _test_verification(engine)
         elif choice == "20":
-            _test_linkedin_connection(engine)
+            _test_scheduling(engine)
         elif choice == "21":
-            _test_linkedin_publish(engine)
+            _human_validation(engine)
         elif choice == "22":
+            _test_linkedin_connection(engine)
+        elif choice == "23":
+            _test_linkedin_publish(engine)
+        elif choice == "24":
             _run_unit_tests()
         # Analytics
-        elif choice == "23":
+        elif choice == "25":
             _view_linkedin_analytics(engine)
-        elif choice == "24":
+        elif choice == "26":
             _refresh_linkedin_analytics(engine)
         # Danger Zone
-        elif choice == "25":
+        elif choice == "27":
             _reset_all(engine)
         else:
             print("Invalid choice. Please try again.")
@@ -473,15 +555,17 @@ def _test_search(engine: ContentEngine) -> None:
         print(f"\nResult: Found and saved {new_count} new stories")
 
         if new_count > 0:
-            print("\nNewly saved stories:")
-            # Get the most recent stories
+            print("\nNewly saved stories (by quality score):")
+            # Get the most recent stories, sorted by quality score
             with engine.db._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT id, title, quality_score FROM stories ORDER BY id DESC LIMIT ?",
                     (new_count,),
                 )
-                for row in cursor.fetchall():
+                rows = cursor.fetchall()
+                # Sort by quality score descending (highest first)
+                for row in sorted(rows, key=lambda r: r[2], reverse=True):
                     print(f"  - [{row[0]}] {row[1][:60]}... (Score: {row[2]})")
     except RuntimeError as e:
         if "quota exceeded" in str(e).lower():
@@ -568,6 +652,118 @@ def _test_image_generation(engine: ContentEngine) -> None:
     except Exception as e:
         print(f"\nError: {e}")
         logger.exception("Image generation test failed")
+
+
+def _assign_promotion_message(engine: ContentEngine) -> None:
+    """Assign an AI-generated promotion message aligned to each story's content."""
+    import random
+
+    print("\n--- Assign Promotion Message ---")
+
+    # Style examples embedded directly (no external file needed)
+    style_examples = [
+        "🎓 MEng Process & Chemical Engineering (Strathclyde) | Exploring opportunities in hydrogen and clean energy sectors.",
+        "Chemical engineer with hydrogen specialization seeking to contribute to innovative energy projects. Open to conversations.",
+        "Process engineer actively exploring opportunities in the hydrogen economy. Let's connect if you're building in this space.",
+        "Strathclyde MEng graduate passionate about sustainable chemical processes. Currently exploring my next challenge.",
+        "Open to opportunities in hydrogen production, carbon capture, or process engineering. Happy to discuss how I might add value.",
+    ]
+
+    # Get stories that need a promotion message (include summary for context)
+    with engine.db._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, title, summary, promotion
+            FROM stories
+            WHERE promotion IS NULL OR promotion = ''
+            ORDER BY id DESC
+        """)
+        rows = cursor.fetchall()
+
+    if not rows:
+        print("\nNo stories need a promotion message. All stories already have one.")
+
+        # Show a sample of existing promotions
+        with engine.db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, title, promotion
+                FROM stories
+                WHERE promotion IS NOT NULL AND promotion != ''
+                ORDER BY id DESC
+                LIMIT 3
+            """)
+            sample = cursor.fetchall()
+            if sample:
+                print("\nSample of existing promotions:")
+                for row in sample:
+                    print(f"  [{row['id']}] {row['title'][:50]}...")
+                    print(f"      → {row['promotion'][:80]}...")
+        return
+
+    print(f"\nGenerating personalized promotion messages for {len(rows)} stories...")
+
+    examples_text = "\n".join(f"- {ex}" for ex in style_examples)
+
+    # Generate AI-aligned promotions
+    assigned = 0
+    for row in rows:
+        story_id = row["id"]
+        title = row["title"]
+        summary = row["summary"] or ""
+
+        # Build prompt for AI
+        prompt = f"""Generate a professional LinkedIn job-seeking message that subtly connects to this story's topic.
+
+STORY:
+Title: {title}
+Summary: {summary[:500]}
+
+REQUIREMENTS:
+1. Reference the specific technology, company, industry, or theme from the story
+2. Mention MEng Process & Chemical Engineering from Strathclyde University
+3. Express interest in opportunities related to the story's topic
+4. Maintain professional gravitas - NOT begging, showing expertise and enthusiasm
+5. Keep it to 1-2 sentences, max 200 characters
+6. Can include a relevant emoji at the start
+
+STYLE EXAMPLES (match this tone):
+{examples_text}
+
+OUTPUT: Write ONLY the promotion message, nothing else."""
+
+        try:
+            response = engine.genai_client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+            )
+            if response.text:
+                promotion = response.text.strip().strip('"').strip("'")
+            else:
+                promotion = random.choice(style_examples)
+
+            # Validate length
+            if len(promotion) > 300:
+                promotion = promotion[:297] + "..."
+
+        except Exception as e:
+            logger.warning(f"AI generation failed for story {story_id}: {e}")
+            # Fall back to random selection from style examples
+            promotion = random.choice(style_examples)
+
+        # Update the database
+        with engine.db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE stories SET promotion = ? WHERE id = ?",
+                (promotion, story_id),
+            )
+
+        assigned += 1
+        print(f"  [{story_id}] {title[:50]}...")
+        print(f"      → {promotion[:80]}...")
+
+    print(f"\n✓ Generated personalized promotion messages for {assigned} stories.")
 
 
 def _check_and_fix_missing_images(engine: ContentEngine) -> int:
@@ -755,8 +951,15 @@ def _test_verification(engine: ContentEngine) -> None:
         print(f"  [{story.id}] {story.title}")
         print(f"       Image: {img_status}")
 
+    # Create a LinkedIn lookup callback for auto-retry on insufficient coverage
+    def linkedin_lookup_callback(stories_to_process: list) -> None:
+        """Callback to run LinkedIn profile lookup for stories with insufficient coverage."""
+        _lookup_linkedin_profiles_for_relevant_people(engine, stories_to_process)
+
     try:
-        approved, rejected = engine.verifier.verify_pending_content()
+        approved, rejected = engine.verifier.verify_pending_content(
+            linkedin_lookup_callback=linkedin_lookup_callback
+        )
         print(f"\nResult: {approved} approved, {rejected} rejected")
 
         # Check for image-related rejections and offer to retry
@@ -801,7 +1004,7 @@ def _get_stories_needing_linkedin_profiles(engine: ContentEngine) -> list:
                 people_needing_lookup = [
                     p
                     for p in relevant_people
-                    if not p.get("linkedin_profile", "").strip()
+                    if not (p.get("linkedin_profile") or "").strip()
                 ]
                 if people_needing_lookup:
                     # Fetch the full story object
@@ -834,6 +1037,10 @@ def _lookup_linkedin_profiles_for_relevant_people(
     stories_updated = 0
     all_company_data: dict[str, tuple[str, str | None]] = {}
     all_companies_not_found: set[str] = set()
+
+    # Track people results for summary
+    people_with_profiles: list[dict] = []  # People who got LinkedIn profiles
+    people_without_profiles: list[dict] = []  # People who didn't get profiles
 
     try:
         for story in stories:
@@ -877,6 +1084,21 @@ def _lookup_linkedin_profiles_for_relevant_people(
             # Merge into our master list
             all_company_data.update(company_data)
 
+            # Track people results
+            for person in story.relevant_people:
+                person_info = {
+                    "name": person.get("name", "Unknown"),
+                    "company": person.get("company", ""),
+                    "position": person.get("position", ""),
+                    "linkedin_profile": person.get("linkedin_profile"),
+                    "linkedin_profile_type": person.get("linkedin_profile_type"),
+                    "story_id": story.id,
+                }
+                if person.get("linkedin_profile"):
+                    people_with_profiles.append(person_info)
+                else:
+                    people_without_profiles.append(person_info)
+
             if found > 0:
                 # Update the story in the database
                 engine.db.update_story(story)
@@ -896,333 +1118,175 @@ def _lookup_linkedin_profiles_for_relevant_people(
         # Clean up resources
         lookup.close()
 
-    print("\n--- LinkedIn Company Lookup Complete ---")
+    print("\n" + "=" * 60)
+    print("LinkedIn Profile Lookup Summary")
+    print("=" * 60)
+    print(f"Stories processed: {len(stories)}")
     print(f"Stories updated: {stories_updated}")
     print(f"Companies found: {total_companies_found}")
     print(f"Companies not found: {total_companies_not_found}")
 
+    # Summary of people with profiles
+    if people_with_profiles:
+        print(f"\n✓ People WITH LinkedIn Profiles ({len(people_with_profiles)}):")
+        # Group by profile type
+        by_type: dict[str, list] = {}
+        for p in people_with_profiles:
+            ptype = p.get("linkedin_profile_type") or "unknown"
+            if ptype not in by_type:
+                by_type[ptype] = []
+            by_type[ptype].append(p)
+
+        for ptype, people in sorted(by_type.items()):
+            type_label = {
+                "personal": "👤 Personal profiles",
+                "department": "🏢 Department pages",
+                "organization": "🏛️ Organization pages",
+            }.get(ptype, f"  {ptype}")
+            print(f"  {type_label}: {len(people)}")
+            for p in people[:5]:  # Show first 5 of each type
+                company_str = f" @ {p['company']}" if p["company"] else ""
+                print(f"    • {p['name']}{company_str}")
+            if len(people) > 5:
+                print(f"    ... and {len(people) - 5} more")
+
+    # Summary of people without profiles
+    if people_without_profiles:
+        print(f"\n✗ People WITHOUT LinkedIn Profiles ({len(people_without_profiles)}):")
+        for p in people_without_profiles[:10]:  # Show first 10
+            company_str = f" @ {p['company']}" if p["company"] else ""
+            position_str = f" ({p['position']})" if p["position"] else ""
+            print(f"  • {p['name']}{company_str}{position_str}")
+        if len(people_without_profiles) > 10:
+            print(f"  ... and {len(people_without_profiles) - 10} more")
+
+    # Company details
     if all_companies_not_found:
-        print("\nCompanies NOT Found:")
+        print("\n✗ Companies NOT Found:")
         for company in sorted(all_companies_not_found):
-            print(f"  ✗ {company}")
+            print(f"  • {company}")
 
     if all_company_data:
-        print("\nCompany LinkedIn Pages Found:")
+        print("\n✓ Company LinkedIn Pages Found:")
         for company, (url, slug) in sorted(all_company_data.items()):
             slug_display = f" (slug: {slug})" if slug else ""
             print(f"  • {company}: {url}{slug_display}")
 
 
 def _test_enrichment(engine: ContentEngine) -> None:
-    """Test the story enrichment component (organizations and people)."""
-    print("\n--- Story Enrichment (Organizations & People) ---")
+    """Test the story enrichment component - LinkedIn profile lookup for relevant_people."""
+    import json as json_module
 
-    # First, check if there are stories with relevant_people needing LinkedIn profiles
-    stories_needing_profiles = _get_stories_needing_linkedin_profiles(engine)
+    print("\n--- LinkedIn Profile Enrichment ---")
+
+    # Get all stories with relevant_people
+    all_stories_with_people = []
+    stories_needing_profiles = []
+    stories_complete = []
+
+    with engine.db._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, title, relevant_people, verification_status, image_path
+            FROM stories
+            WHERE relevant_people IS NOT NULL
+              AND relevant_people != '[]'
+            ORDER BY id
+        """)
+        for row in cursor.fetchall():
+            try:
+                relevant_people = json_module.loads(row["relevant_people"])
+                if not relevant_people:
+                    continue
+
+                story = engine.db.get_story(row["id"])
+                if not story:
+                    continue
+
+                # Count people with/without profiles
+                people_with = [
+                    p
+                    for p in relevant_people
+                    if (p.get("linkedin_profile") or "").strip()
+                ]
+                people_without = [
+                    p
+                    for p in relevant_people
+                    if not (p.get("linkedin_profile") or "").strip()
+                ]
+
+                story_info = {
+                    "story": story,
+                    "people_with": people_with,
+                    "people_without": people_without,
+                    "verification_status": row["verification_status"],
+                    "has_image": bool(row["image_path"]),
+                }
+                all_stories_with_people.append(story_info)
+
+                if people_without:
+                    stories_needing_profiles.append(story_info)
+                else:
+                    stories_complete.append(story_info)
+
+            except json_module.JSONDecodeError:
+                continue
+
+    if not all_stories_with_people:
+        stats = engine.db.get_statistics()
+        if stats.get("total_stories", 0) == 0:
+            print("No stories in database. Search for stories first (Choice 15).")
+        else:
+            print("No stories have relevant_people identified.")
+            print("Search for stories (Choice 15) to find stories with people.")
+        return
+
+    # Show summary
+    print(f"\nStories with relevant_people: {len(all_stories_with_people)}")
+    print(f"  • Needing LinkedIn profiles: {len(stories_needing_profiles)}")
+    print(f"  • LinkedIn profiles complete: {len(stories_complete)}")
+
+    # Show status of each story
+    print("\nStory Status:")
+    for info in all_stories_with_people:
+        story = info["story"]
+        with_count = len(info["people_with"])
+        without_count = len(info["people_without"])
+        total = with_count + without_count
+
+        if without_count == 0:
+            status = f"✓ {with_count}/{total} profiles"
+        else:
+            status = f"✗ {with_count}/{total} profiles ({without_count} missing)"
+
+        img_icon = "✓" if info["has_image"] else "✗"
+        ver_icon = "✓" if info["verification_status"] == "approved" else "○"
+
+        print(f"  [{story.id}] {story.title[:45]}...")
+        print(f"       LinkedIn: {status} | Image: {img_icon} | Verified: {ver_icon}")
+
+    # If there are stories needing profiles, process them
     if stories_needing_profiles:
         print(
-            f"\n📋 Found {len(stories_needing_profiles)} stories with relevant_people needing LinkedIn profiles:"
+            f"\n📋 Looking up LinkedIn profiles for {len(stories_needing_profiles)} stories..."
         )
-        total_people = 0
-        for story in stories_needing_profiles[:5]:
-            people_needing = [
-                p
-                for p in story.relevant_people
-                if not p.get("linkedin_profile", "").strip()
-            ]
-            total_people += len(people_needing)
-            print(
-                f"    [{story.id}] {story.title[:50]}... ({len(people_needing)} people)"
-            )
-            for person in people_needing[:2]:
-                name = person.get("name", "Unknown")
-                company = person.get("company", "")
-                position = person.get("position", "")
-                context = f" ({position}, {company})" if company or position else ""
-                print(f"        • {name}{context}")
-            if len(people_needing) > 2:
-                print(f"        ... and {len(people_needing) - 2} more")
-        if len(stories_needing_profiles) > 5:
-            print(f"    ... and {len(stories_needing_profiles) - 5} more stories")
-
-        lookup_profiles = (
-            input(
-                f"\nLook up LinkedIn profiles for these {total_people} people? (y/n): "
-            )
-            .strip()
-            .lower()
+        stories_to_process = [info["story"] for info in stories_needing_profiles]
+        _lookup_linkedin_profiles_for_relevant_people(engine, stories_to_process)
+    else:
+        print("\n✓ All stories have complete LinkedIn profiles!")
+        print("\nNext steps:")
+        incomplete_images = sum(
+            1 for info in all_stories_with_people if not info["has_image"]
         )
-        if lookup_profiles == "y":
-            _lookup_linkedin_profiles_for_relevant_people(
-                engine, stories_needing_profiles
-            )
-            return
-
-    stories = engine.db.get_stories_needing_enrichment()
-
-    if not stories:
-        # Check why none are pending
-        stats = engine.db.get_statistics()
-        print("No stories pending enrichment.")
-        if stats.get("total_stories", 0) == 0:
-            print("  No stories in database. Search for stories first (Choice 15).")
-        else:
-            print(f"  Total stories: {stats.get('total_stories', 0)}")
-            print("\nRequired for enrichment:")
-            print("  ✓ verification_status = 'approved'")
-            print("  ✓ image_path IS NOT NULL (has an image)")
-            print("  ✓ enrichment_status = 'pending'")
-            print("\nStory Status Breakdown:")
-            # Show status of all stories
-            skipped_eligible = []
-            with engine.db._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT id, title, verification_status, image_path, enrichment_status,
-                           organizations, story_people, org_leaders, linkedin_handles
-                    FROM stories ORDER BY id
-                """)
-                for row in cursor.fetchall():
-                    import json
-
-                    has_image = "✓" if row["image_path"] else "✗"
-                    print(f"  [{row['id']}] {row['title'][:50]}...")
-                    print(
-                        f"      Verified: {row['verification_status']} | Image: {has_image} | Enrichment: {row['enrichment_status']}"
-                    )
-                    # Show enrichment details if enriched
-                    if row["enrichment_status"] == "enriched":
-                        # Show organizations
-                        orgs_json = row["organizations"]
-                        if orgs_json and orgs_json != "[]":
-                            try:
-                                orgs = json.loads(orgs_json)
-                                if orgs:
-                                    print(
-                                        f"      → Organizations: {', '.join(orgs[:3])}"
-                                        + (
-                                            f" (+{len(orgs) - 3} more)"
-                                            if len(orgs) > 3
-                                            else ""
-                                        )
-                                    )
-                            except json.JSONDecodeError:
-                                pass
-                        else:
-                            print("      → No organizations identified")
-
-                        # Show story people
-                        people_json = row["story_people"]
-                        if people_json and people_json != "[]":
-                            try:
-                                people = json.loads(people_json)
-                                if people:
-                                    names = [p.get("name", "") for p in people[:3]]
-                                    print(
-                                        f"      → Story people: {', '.join(names)}"
-                                        + (
-                                            f" (+{len(people) - 3} more)"
-                                            if len(people) > 3
-                                            else ""
-                                        )
-                                    )
-                            except json.JSONDecodeError:
-                                pass
-
-                        # Show org leaders
-                        leaders_json = row["org_leaders"]
-                        if leaders_json and leaders_json != "[]":
-                            try:
-                                leaders = json.loads(leaders_json)
-                                if leaders:
-                                    names = [
-                                        f"{ldr.get('name', '')} ({ldr.get('title', '')})"
-                                        for ldr in leaders[:2]
-                                    ]
-                                    print(
-                                        f"      → Org leaders: {', '.join(names)}"
-                                        + (
-                                            f" (+{len(leaders) - 2} more)"
-                                            if len(leaders) > 2
-                                            else ""
-                                        )
-                                    )
-                            except json.JSONDecodeError:
-                                pass
-
-                        # Show LinkedIn handles count
-                        handles_json = row["linkedin_handles"]
-                        if handles_json and handles_json != "[]":
-                            try:
-                                handles = json.loads(handles_json)
-                                if handles:
-                                    print(
-                                        f"      → LinkedIn handles: {len(handles)} found"
-                                    )
-                            except json.JSONDecodeError:
-                                pass
-
-                    # Track stories that were skipped but could be re-enriched
-                    if (
-                        row["verification_status"] == "approved"
-                        and row["image_path"]
-                        and row["enrichment_status"] == "skipped"
-                    ):
-                        skipped_eligible.append(row["id"])
-
-            # Offer to reset skipped stories
-            if skipped_eligible:
-                print(
-                    f"\n⚠ Found {len(skipped_eligible)} previously skipped stories that can now be enriched:"
-                )
-                for story_id in skipped_eligible:
-                    print(f"    Story {story_id}")
-                reset = (
-                    input(
-                        "\nReset these stories back to 'pending' for enrichment? (y/n): "
-                    )
-                    .strip()
-                    .lower()
-                )
-                if reset == "y":
-                    with engine.db._get_connection() as conn:
-                        cursor = conn.cursor()
-                        for story_id in skipped_eligible:
-                            cursor.execute(
-                                "UPDATE stories SET enrichment_status = 'pending' WHERE id = ?",
-                                (story_id,),
-                            )
-                    print(
-                        f"✓ Reset {len(skipped_eligible)} stories. Run enrichment again."
-                    )
-                    return
-
-            # Check if there are enriched stories that need org leaders
-            stories_needing_leaders = engine.enricher._get_stories_needing_org_leaders()
-            if stories_needing_leaders:
-                print(
-                    f"\n📋 Found {len(stories_needing_leaders)} stories with organizations but no leaders:"
-                )
-                for story in stories_needing_leaders[:5]:
-                    print(f"    [{story.id}] {story.title[:50]}...")
-                    print(
-                        f"        Organizations: {', '.join(story.organizations[:3])}"
-                    )
-                if len(stories_needing_leaders) > 5:
-                    print(f"    ... and {len(stories_needing_leaders) - 5} more")
-
-                find_leaders = (
-                    input(
-                        "\nFind organization leaders (CEO, CTO, etc.) for these organizations? (y/n): "
-                    )
-                    .strip()
-                    .lower()
-                )
-                if find_leaders == "y":
-                    _find_org_leaders(engine)
-                    return
-
-            # Check if there are stories that need LinkedIn handles
-            stories_needing_handles = (
-                engine.enricher._get_stories_needing_linkedin_handles()
-            )
-            if stories_needing_handles:
-                print(
-                    f"\n📋 Found {len(stories_needing_handles)} stories with people but no LinkedIn handles:"
-                )
-                for story in stories_needing_handles[:5]:
-                    people_count = len(story.story_people) + len(story.org_leaders)
-                    print(
-                        f"    [{story.id}] {story.title[:50]}... ({people_count} people)"
-                    )
-                if len(stories_needing_handles) > 5:
-                    print(f"    ... and {len(stories_needing_handles) - 5} more")
-
-                find_handles = (
-                    input("\nFind LinkedIn handles for these people? (y/n): ")
-                    .strip()
-                    .lower()
-                )
-                if find_handles == "y":
-                    _find_linkedin_handles(engine)
-                    return
-
-        return
-
-    print(f"Stories pending enrichment: {len(stories)}")
-    for story in stories[:5]:  # Show first 5
-        print(f"  [{story.id}] {story.title}")
-        print(f"       Status: {story.enrichment_status}")
-    if len(stories) > 5:
-        print(f"  ... and {len(stories) - 5} more")
-
-    confirm = (
-        input("\nEnrich these stories (extract organizations & people)? (y/n): ")
-        .strip()
-        .lower()
-    )
-    if confirm != "y":
-        print("Cancelled.")
-        return
-
-    try:
-        print(f"\nEnriching {len(stories)} story/stories...")
-        enriched, skipped = engine.enricher.enrich_pending_stories()
-        print(f"\nResult: {enriched} enriched, {skipped} skipped")
-
-        if enriched > 0:
-            print("\nEnriched stories:")
-            # Show recently enriched stories
-            with engine.db._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """SELECT id, title, organizations, story_people
-                       FROM stories WHERE enrichment_status = 'enriched'
-                       ORDER BY id DESC LIMIT ?""",
-                    (enriched,),
-                )
-                for row in cursor.fetchall():
-                    import json
-
-                    orgs = (
-                        json.loads(row["organizations"]) if row["organizations"] else []
-                    )
-                    people = (
-                        json.loads(row["story_people"]) if row["story_people"] else []
-                    )
-                    print(f"  [{row['id']}] {row['title'][:50]}...")
-                    if orgs:
-                        print(f"       Organizations: {', '.join(orgs[:3])}")
-                    if people:
-                        names = [p.get("name", "") for p in people[:3]]
-                        print(f"       People: {', '.join(names)}")
-                    if not orgs and not people:
-                        print("       ⚠ Nothing found")
-
-        # Show enrichment stats
-        stats = engine.enricher.get_enrichment_stats()
-        print("\nEnrichment Statistics:")
-        print(f"  Total enriched: {stats.get('total_enriched', 0)}")
-        print(f"  With organizations: {stats.get('with_orgs', 0)}")
-        print(f"  With people: {stats.get('with_people', 0)}")
-        print(f"  With LinkedIn handles: {stats.get('with_handles', 0)}")
-
-        # Offer to find org leaders
-        if enriched > 0 and stats.get("with_orgs", 0) > 0:
-            print("\n" + "-" * 40)
-            find_leaders = (
-                input(
-                    "Find organization leaders (CEO, CTO, etc.) for these organizations? (y/n): "
-                )
-                .strip()
-                .lower()
-            )
-            if find_leaders == "y":
-                _find_org_leaders(engine)
-
-    except Exception as e:
-        print(f"\nError: {e}")
-        logger.exception("Enrichment test failed")
+        unverified = sum(
+            1
+            for info in all_stories_with_people
+            if info["verification_status"] != "approved"
+        )
+        if incomplete_images > 0:
+            print(f"  • Generate images for {incomplete_images} stories (Choice 17)")
+        if unverified > 0:
+            print(f"  • Verify {unverified} stories (Choice 18)")
 
 
 def _find_org_leaders(engine: ContentEngine) -> None:
@@ -1362,34 +1426,85 @@ def _enrich_individuals(engine: ContentEngine) -> None:
 
 
 def _test_scheduling(engine: ContentEngine) -> None:
-    """Test the scheduling component."""
-    print("\n--- Testing Scheduling ---")
-    print(f"Stories per cycle: {Config.STORIES_PER_CYCLE}")
-    print(f"Publish window: {Config.PUBLISH_WINDOW_HOURS} hours")
-    print(
-        f"Publish hours: {Config.PUBLISH_START_HOUR}:00 - {Config.PUBLISH_END_HOUR}:00"
-    )
+    """Test the scheduling component - schedules ALL available stories."""
+    print("\n--- Schedule All Available Stories ---")
+    print(f"Publish hours: {Config.START_PUB_TIME} - {Config.END_PUB_TIME}")
+    print(f"Max stories per day: {Config.MAX_STORIES_PER_DAY}")
     print(f"Jitter: ±{Config.JITTER_MINUTES} minutes")
 
+    # Show existing scheduled stories
+    existing_scheduled = engine.db.get_scheduled_stories()
+    if existing_scheduled:
+        print(f"\nAlready scheduled: {len(existing_scheduled)} stories")
+        latest = max(s.scheduled_time for s in existing_scheduled if s.scheduled_time)
+        print(f"Latest scheduled for: {latest.strftime('%Y-%m-%d %H:%M')}")
+        print("New stories will be scheduled AFTER existing ones.")
+    else:
+        print("\nNo existing scheduled stories.")
+
+    # Count available stories
     available = engine.db.count_unpublished_stories()
-    print(f"\nAvailable approved stories: {available}")
+    print(f"\nAvailable approved stories to schedule: {available}")
 
     if available == 0:
-        print("No approved stories available to schedule.")
-        return
+        print("\nNo approved stories available to schedule.")
+        print("Running full pipeline to generate content...")
+        try:
+            engine.run_search_cycle()
+            # Re-check available stories after pipeline
+            available = engine.db.count_unpublished_stories()
+            print(f"\nAfter pipeline: {available} stories available to schedule")
+            if available == 0:
+                print(
+                    "Still no stories available after pipeline. Check search sources."
+                )
+                return
+        except Exception as e:
+            print(f"\nError running pipeline: {e}")
+            logger.exception("Pipeline failed during scheduling")
+            return
 
-    confirm = input("\nSchedule stories? (y/n): ").strip().lower()
+    confirm = (
+        input(
+            f"\nSchedule ALL {available} stories (up to {Config.MAX_STORIES_PER_DAY}/day)? (y/n): "
+        )
+        .strip()
+        .lower()
+    )
     if confirm != "y":
         print("Cancelled.")
         return
 
     try:
-        scheduled = engine.scheduler.schedule_stories()
-        print(f"\nResult: Scheduled {len(scheduled)} stories")
-        print(engine.scheduler.get_schedule_summary())
+        scheduled = engine.scheduler.schedule_stories(schedule_all=True)
+        print(f"\nResult: Scheduled {len(scheduled)} new stories")
+        if scheduled:
+            first_date = min(s.scheduled_time for s in scheduled if s.scheduled_time)
+            last_date = max(s.scheduled_time for s in scheduled if s.scheduled_time)
+            print(f"  From: {first_date.strftime('%Y-%m-%d %H:%M')}")
+            print(f"  To:   {last_date.strftime('%Y-%m-%d %H:%M')}")
+        print("\n" + engine.scheduler.get_schedule_summary())
     except Exception as e:
         print(f"\nError: {e}")
         logger.exception("Scheduling test failed")
+
+
+def _human_validation(engine: ContentEngine) -> None:
+    """Launch the web-based human validation GUI."""
+    print("\n--- Human Validation (Web GUI) ---")
+    print("This will open a web browser for reviewing and approving stories.")
+    print("You can Accept, Reject, or Edit each story before publication.")
+
+    try:
+        from validation_server import run_human_validation
+
+        run_human_validation(engine.db, port=5000)
+    except ImportError as e:
+        print(f"\nError: Could not import validation server: {e}")
+        print("Make sure Flask is installed: pip install flask")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Human validation failed")
 
 
 def _test_linkedin_connection(engine: ContentEngine) -> None:
@@ -1808,13 +1923,15 @@ def _restore_database(engine: ContentEngine) -> None:
 
 def _run_full_cycle(engine: ContentEngine) -> None:
     """Run the full search cycle."""
-    print("\n--- Run Full Search Cycle ---")
+    print("\n--- Run Full Pipeline ---")
     print("This will:")
     print("  1. Search for new stories")
-    print("  2. Generate images")
-    print("  3. Verify content")
-    print("  4. Schedule for publication")
-    print("  5. Clean up old stories")
+    print("  2. Enrich with company mentions")
+    print("  3. Generate images")
+    print("  4. Assign promotion messages")
+    print("  5. Verify content quality")
+    print("  6. Clean up old stories")
+    print("\nNote: Use Action 20 to schedule stories for publication.")
 
     confirm = input("\nProceed? (y/n): ").strip().lower()
     if confirm != "y":

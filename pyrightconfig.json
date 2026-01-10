@@ -8,5 +8,5 @@
         "**/*.md"
     ],
     "venvPath": ".",
-    "venv": "venv"
+    "venv": ".venv"
 }

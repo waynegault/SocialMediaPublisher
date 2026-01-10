@@ -151,6 +151,7 @@ class ImageGenerator:
 
             # Use Imagen model for image generation
             logger.info(f"Using Imagen model: {Config.MODEL_IMAGE}")
+            logger.debug(f"Prompt ({len(prompt.split())} words): {prompt[:200]}...")
             response = self.client.models.generate_images(
                 model=Config.MODEL_IMAGE,
                 prompt=prompt,
@@ -160,6 +161,8 @@ class ImageGenerator:
                     safety_filter_level=types.SafetyFilterLevel.BLOCK_LOW_AND_ABOVE,  # pyright: ignore[reportCallIssue]
                     person_generation=types.PersonGeneration.ALLOW_ADULT,  # pyright: ignore[reportCallIssue]
                     aspect_ratio=Config.IMAGE_ASPECT_RATIO,  # pyright: ignore[reportCallIssue]
+                    image_size=Config.IMAGE_SIZE,  # pyright: ignore[reportCallIssue] - "2K" for higher quality
+                    # Note: negative_prompt is NOT supported by Imagen API (only works with HuggingFace)
                 ),
             )
 
@@ -307,6 +310,7 @@ class ImageGenerator:
         )
 
         try:
+            refined = None
             if self.local_client:
                 logger.info("Using local LLM to refine image prompt...")
                 response = self.local_client.chat.completions.create(
@@ -314,22 +318,49 @@ class ImageGenerator:
                     messages=[{"role": "user", "content": refinement_prompt}],
                 )
                 refined = response.choices[0].message.content
-                if refined:
-                    return refined.strip()
+            else:
+                # Fallback to Gemini for refinement
+                logger.info("Using Gemini to refine image prompt...")
+                response = self.client.models.generate_content(
+                    model=Config.MODEL_TEXT, contents=refinement_prompt
+                )
+                refined = response.text
 
-            # Fallback to Gemini for refinement
-            logger.info("Using Gemini to refine image prompt...")
-            response = self.client.models.generate_content(
-                model=Config.MODEL_TEXT, contents=refinement_prompt
-            )
-            if response.text:
-                return response.text.strip()
+            if refined:
+                refined = self._clean_image_prompt(refined.strip())
+                return refined
 
         except Exception as e:
             logger.warning(f"Prompt refinement failed: {e}. Using base prompt.")
 
         # Ultimate fallback - use configurable fallback template
         return Config.IMAGE_FALLBACK_PROMPT.format(story_title=story.title[:60])
+
+    def _clean_image_prompt(self, prompt: str) -> str:
+        """Clean and validate the image prompt for optimal Imagen generation."""
+        # Remove markdown formatting (quotes, backticks, etc.)
+        prompt = prompt.strip().strip('"').strip("'").strip("`")
+        # Remove markdown code blocks if present
+        if prompt.startswith("```"):
+            lines = prompt.split("\n")
+            prompt = "\n".join(
+                line for line in lines if not line.startswith("```")
+            ).strip()
+
+        # Ensure prompt starts with "A photo of" for photorealistic output
+        lower_prompt = prompt.lower()
+        if not lower_prompt.startswith("a photo of"):
+            # Try to fix common variations
+            if lower_prompt.startswith("photo of"):
+                prompt = "A " + prompt
+            elif lower_prompt.startswith("photograph of"):
+                prompt = "A p" + prompt[1:]  # Keep original casing but fix
+            else:
+                # Prepend "A photo of" if missing
+                prompt = f"A photo of {prompt[0].lower()}{prompt[1:]}"
+
+        logger.debug(f"Cleaned prompt: {prompt[:100]}...")
+        return prompt
 
     def get_stories_with_images_count(self) -> int:
         """Get count of stories that have images."""
@@ -508,6 +539,49 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
+    def test_clean_image_prompt_already_starts_with_photo():
+        """Test prompt cleaning when already starts with 'A photo of'."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore
+            prompt = "A photo of an industrial plant with equipment"
+            result = gen._clean_image_prompt(prompt)
+            assert result.lower().startswith("a photo of")
+            assert "industrial plant" in result
+        finally:
+            os.unlink(db_path)
+
+    def test_clean_image_prompt_missing_prefix():
+        """Test prompt cleaning when missing 'A photo of' prefix."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore
+            prompt = "Industrial plant with equipment"
+            result = gen._clean_image_prompt(prompt)
+            assert result.lower().startswith("a photo of")
+            assert "industrial plant" in result.lower()
+        finally:
+            os.unlink(db_path)
+
+    def test_clean_image_prompt_removes_quotes():
+        """Test prompt cleaning removes markdown quotes."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore
+            prompt = '"A photo of an industrial plant"'
+            result = gen._clean_image_prompt(prompt)
+            assert result.lower().startswith("a photo of")
+            assert not result.startswith('"')
+            assert not result.endswith('"')
+        finally:
+            os.unlink(db_path)
+
     suite.add_test("Add AI watermark", test_add_ai_watermark)
     suite.add_test("Add AI watermark small image", test_add_ai_watermark_small_image)
     suite.add_test("Image generator init", test_image_generator_init)
@@ -519,5 +593,15 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     suite.add_test("Local image - no client", test_generate_local_image_no_client)
     suite.add_test("Cleanup orphaned images", test_cleanup_orphaned_images)
     suite.add_test("Get stories with images count", test_get_stories_with_images_count)
+    suite.add_test(
+        "Clean prompt - already has prefix",
+        test_clean_image_prompt_already_starts_with_photo,
+    )
+    suite.add_test(
+        "Clean prompt - missing prefix", test_clean_image_prompt_missing_prefix
+    )
+    suite.add_test(
+        "Clean prompt - removes quotes", test_clean_image_prompt_removes_quotes
+    )
 
     return suite
