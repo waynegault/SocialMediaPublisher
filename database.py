@@ -675,7 +675,7 @@ class Database:
                 SELECT * FROM stories
                 WHERE image_path IS NULL
                 AND quality_score >= ?
-                AND publish_status = 'unpublished'
+                AND publish_status IN ('unpublished', 'scheduled')
                 ORDER BY quality_score DESC
                 """,
                 (min_quality,),
@@ -905,7 +905,7 @@ class Database:
 
             # Stories needing images
             cursor.execute(
-                "SELECT COUNT(*) FROM stories WHERE image_path IS NULL AND publish_status = 'unpublished'"
+                "SELECT COUNT(*) FROM stories WHERE image_path IS NULL AND publish_status IN ('unpublished', 'scheduled')"
             )
             stats["needing_images"] = cursor.fetchone()[0]
 
