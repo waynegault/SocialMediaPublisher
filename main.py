@@ -418,38 +418,39 @@ Social Media Publisher - Debug Menu
     2. Show Configuration
     3. View All Prompts (full text)
     4. Show Full Status
+    5. Install Dependencies (requirements.txt)
 
   Database Operations:
-    5. View Database Statistics
-    6. List All Stories
-    7. List Pending Stories
-    8. List Scheduled Stories
-    9. List Human Approved Stories (not published)
-   10. Cleanup Old Stories
-   11. Backup Database
-   12. Restore Database from Backup
-   13. Verify Database Integrity
-   14. Retry Rejected Stories (regenerate image + re-verify)
+    6. View Database Statistics
+    7. List All Stories
+    8. List Pending Stories
+    9. List Scheduled Stories
+   10. List Human Approved Stories (not published)
+   11. Cleanup Old Stories
+   12. Backup Database
+   13. Restore Database from Backup
+   14. Verify Database Integrity
+   15. Retry Rejected Stories (regenerate image + re-verify)
 
   Component Testing:
-   15. Test Story Search
-   16. Test Company & Individual Enrichment
-   17. Test Image Generation
-   18. Assign Promotion Message to Stories
-   19. Test Content Verification
-   20. Test Scheduling
-   21. Human Validation (Web GUI)
-   22. Test LinkedIn Connection
-   23. Test LinkedIn Publish (due stories)
-   24. Publish One Scheduled Story Now
-   25. Run Unit Tests
+   16. Test Story Search
+   17. Test Company & Individual Enrichment
+   18. Test Image Generation
+   19. Assign Promotion Message to Stories
+   20. Test Content Verification
+   21. Test Scheduling
+   22. Human Validation (Web GUI)
+   23. Test LinkedIn Connection
+   24. Test LinkedIn Publish (due stories)
+   25. Publish One Scheduled Story Now
+   26. Run Unit Tests
 
   Analytics:
-   26. View LinkedIn Analytics
-   27. Refresh All Analytics
+   27. View LinkedIn Analytics
+   28. Refresh All Analytics
 
   Danger Zone:
-   28. Reset (delete database and images)
+   29. Reset (delete database and images)
 
    0. Exit
 ============================================================
@@ -482,57 +483,59 @@ Social Media Publisher - Debug Menu
             _show_all_prompts()
         elif choice == "4":
             engine.status()
-        # Database Operations
         elif choice == "5":
-            _show_database_stats(engine)
+            _install_dependencies()
+        # Database Operations
         elif choice == "6":
-            _list_all_stories(engine)
+            _show_database_stats(engine)
         elif choice == "7":
-            _list_pending_stories(engine)
+            _list_all_stories(engine)
         elif choice == "8":
-            _list_scheduled_stories(engine)
+            _list_pending_stories(engine)
         elif choice == "9":
-            _list_human_approved_stories(engine)
+            _list_scheduled_stories(engine)
         elif choice == "10":
-            _cleanup_old_stories(engine)
+            _list_human_approved_stories(engine)
         elif choice == "11":
-            _backup_database(engine)
+            _cleanup_old_stories(engine)
         elif choice == "12":
-            _restore_database(engine)
+            _backup_database(engine)
         elif choice == "13":
-            _verify_database(engine)
+            _restore_database(engine)
         elif choice == "14":
+            _verify_database(engine)
+        elif choice == "15":
             _retry_rejected_stories(engine)
         # Component Testing
-        elif choice == "15":
-            _test_search(engine)
         elif choice == "16":
-            _test_enrichment(engine)
+            _test_search(engine)
         elif choice == "17":
-            _test_image_generation(engine)
+            _test_enrichment(engine)
         elif choice == "18":
-            _assign_promotion_message(engine)
+            _test_image_generation(engine)
         elif choice == "19":
-            _test_verification(engine)
+            _assign_promotion_message(engine)
         elif choice == "20":
-            _test_scheduling(engine)
+            _test_verification(engine)
         elif choice == "21":
-            _human_validation(engine)
+            _test_scheduling(engine)
         elif choice == "22":
-            _test_linkedin_connection(engine)
+            _human_validation(engine)
         elif choice == "23":
-            _test_linkedin_publish(engine)
+            _test_linkedin_connection(engine)
         elif choice == "24":
-            _test_publish_one_story(engine)
+            _test_linkedin_publish(engine)
         elif choice == "25":
+            _test_publish_one_story(engine)
+        elif choice == "26":
             _run_unit_tests()
         # Analytics
-        elif choice == "26":
-            _view_linkedin_analytics(engine)
         elif choice == "27":
+            _view_linkedin_analytics(engine)
+        elif choice == "28":
             _refresh_linkedin_analytics(engine)
         # Danger Zone
-        elif choice == "28":
+        elif choice == "29":
             _reset_all(engine)
         else:
             print("Invalid choice. Please try again.")
@@ -2197,6 +2200,63 @@ def _show_all_prompts() -> None:
     print("\n" + "=" * 80)
     print("To customize these prompts, add them to your .env file.")
     print("=" * 80)
+
+
+def _install_dependencies() -> None:
+    """Install dependencies from requirements.txt into the virtual environment."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    print("\n--- Install Dependencies ---")
+
+    # Determine the project root (where requirements.txt should be)
+    project_root = Path(__file__).parent
+    requirements_file = project_root / "requirements.txt"
+
+    if not requirements_file.exists():
+        print(f"[!] requirements.txt not found at: {requirements_file}")
+        return
+
+    # Determine the pip executable in the virtual environment
+    venv_path = project_root / ".venv"
+    if sys.platform == "win32":
+        pip_path = venv_path / "Scripts" / "pip.exe"
+    else:
+        pip_path = venv_path / "bin" / "pip"
+
+    if not pip_path.exists():
+        print(f"[!] Virtual environment pip not found at: {pip_path}")
+        print("    Make sure .venv is created. Run: python -m venv .venv")
+        return
+
+    print(f"Requirements file: {requirements_file}")
+    print(f"Installing to: {venv_path}")
+    print("-" * 40)
+
+    try:
+        # Run pip install
+        result = subprocess.run(
+            [str(pip_path), "install", "-r", str(requirements_file)],
+            capture_output=True,
+            text=True,
+            cwd=str(project_root),
+        )
+
+        if result.returncode == 0:
+            print("✓ Dependencies installed successfully!")
+            # Show summary of what was installed/updated
+            output_lines = result.stdout.strip().split("\n")
+            for line in output_lines[-10:]:  # Show last 10 lines
+                if line.strip():
+                    print(f"  {line}")
+        else:
+            print(f"[!] Installation failed with exit code {result.returncode}")
+            if result.stderr:
+                print(f"Error: {result.stderr}")
+
+    except Exception as e:
+        print(f"[!] Error running pip: {e}")
 
 
 def _test_api_keys(engine: ContentEngine) -> None:

@@ -3,6 +3,7 @@
 import os
 import time
 import logging
+import random
 from pathlib import Path
 
 from google import genai
@@ -14,7 +15,55 @@ from PIL import Image, ImageDraw, ImageFont
 from config import Config
 from database import Database, Story
 
+# Appearance variations for generated images - ensures diverse women
+HAIR_COLORS = [
+    "platinum blonde",
+    "honey blonde",
+    "strawberry blonde",
+    "auburn",
+    "chestnut brown",
+    "dark brown",
+    "jet black",
+    "copper red",
+    "fiery redhead",
+]
+HAIR_STYLES = [
+    "long flowing hair",
+    "shoulder-length wavy hair",
+    "sleek ponytail",
+    "elegant updo",
+    "loose curls",
+    "professional bob",
+]
+ETHNICITIES = [
+    "Caucasian",
+    "East Asian",
+    "South Asian",
+    "Latina",
+    "Middle Eastern",
+    "African American",
+    "mixed heritage",
+]
+BODY_DESCRIPTORS = [
+    "slim and curvaceous",
+    "slender with an athletic figure",
+    "petite and shapely",
+]
+
 logger = logging.getLogger(__name__)
+
+
+def get_random_appearance() -> str:
+    """Generate a random appearance description for image variety."""
+    hair_color = random.choice(HAIR_COLORS)
+    hair_style = random.choice(HAIR_STYLES)
+    ethnicity = random.choice(ETHNICITIES)
+    body_type = random.choice(BODY_DESCRIPTORS)
+
+    return (
+        f"a gorgeous {ethnicity} woman with {hair_color} {hair_style}, "
+        f"{body_type}, with striking features and a confident radiant smile"
+    )
 
 
 def add_ai_watermark(image: Image.Image) -> Image.Image:
@@ -302,17 +351,30 @@ class ImageGenerator:
 
     def _build_image_prompt(self, story: Story) -> str:
         """Build a prompt for image generation using an LLM for refinement."""
-        # Build refinement prompt from config template
+        # Generate random appearance for this image to ensure variety
+        random_appearance = get_random_appearance()
+
+        # Build refinement prompt from config template with random appearance injected
         refinement_prompt = Config.IMAGE_REFINEMENT_PROMPT.format(
             story_title=story.title,
             story_summary=story.summary,
             image_style=Config.IMAGE_STYLE,
         )
 
+        # Inject the specific appearance to use for this image
+        appearance_instruction = f"""
+MANDATORY APPEARANCE FOR THIS IMAGE (use exactly as specified):
+The female engineer in this image must be: {random_appearance}.
+Do NOT deviate from this appearance description. Include these exact physical traits in your prompt.
+"""
+        refinement_prompt = appearance_instruction + "\n" + refinement_prompt
+
         try:
             refined = None
             if self.local_client:
-                logger.info("Using local LLM to refine image prompt...")
+                logger.info(
+                    f"Using local LLM to refine image prompt (appearance: {random_appearance[:50]}...)"
+                )
                 response = self.local_client.chat.completions.create(
                     model=Config.LM_STUDIO_MODEL,
                     messages=[{"role": "user", "content": refinement_prompt}],
@@ -320,7 +382,9 @@ class ImageGenerator:
                 refined = response.choices[0].message.content
             else:
                 # Fallback to Gemini for refinement
-                logger.info("Using Gemini to refine image prompt...")
+                logger.info(
+                    f"Using Gemini to refine image prompt (appearance: {random_appearance[:50]}...)"
+                )
                 response = self.client.models.generate_content(
                     model=Config.MODEL_TEXT, contents=refinement_prompt
                 )
@@ -333,8 +397,14 @@ class ImageGenerator:
         except Exception as e:
             logger.warning(f"Prompt refinement failed: {e}. Using base prompt.")
 
-        # Ultimate fallback - use configurable fallback template
-        return Config.IMAGE_FALLBACK_PROMPT.format(story_title=story.title[:60])
+        # Ultimate fallback - use configurable fallback template with random appearance
+        fallback = Config.IMAGE_FALLBACK_PROMPT.format(story_title=story.title[:60])
+        # Inject the random appearance into fallback
+        fallback = fallback.replace(
+            "a beautiful female chemical engineer",
+            f"{random_appearance} as a chemical engineer",
+        )
+        return fallback
 
     def _clean_image_prompt(self, prompt: str) -> str:
         """Clean and validate the image prompt for optimal Imagen generation."""
