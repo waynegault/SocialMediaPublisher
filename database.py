@@ -67,6 +67,7 @@ class Story:
 
     # --- 4. IMAGE GENERATION ---
     image_path: Optional[str] = None
+    image_alt_text: Optional[str] = None  # Accessibility alt text describing the image
 
     # --- 5. VERIFICATION ---
     verification_status: str = "pending"  # pending, approved, rejected
@@ -128,6 +129,7 @@ class Story:
             "linkedin_handles": self.linkedin_handles,
             # 4. Image Generation
             "image_path": self.image_path,
+            "image_alt_text": self.image_alt_text,
             # 5. Verification
             "verification_status": self.verification_status,
             "verification_reason": self.verification_reason,
@@ -200,6 +202,7 @@ class Story:
             if "quality_justification" in keys
             else "",
             image_path=row["image_path"],
+            image_alt_text=row["image_alt_text"] if "image_alt_text" in keys else None,
             verification_status=row["verification_status"],
             verification_reason=row["verification_reason"]
             if "verification_reason" in keys
@@ -436,6 +439,8 @@ class Database:
             )
             # Promotion message for LinkedIn posts
             self._migrate_add_column(cursor, "promotion", "TEXT", existing_columns)
+            # Image alt text for accessibility
+            self._migrate_add_column(cursor, "image_alt_text", "TEXT", existing_columns)
 
             # System state table for tracking last check date, etc.
             cursor.execute("""
@@ -579,6 +584,7 @@ class Database:
                     category = ?,
                     quality_justification = ?,
                     image_path = ?,
+                    image_alt_text = ?,
                     verification_status = ?,
                     verification_reason = ?,
                     publish_status = ?,
@@ -614,6 +620,7 @@ class Database:
                     story.category,
                     story.quality_justification,
                     story.image_path,
+                    story.image_alt_text,
                     story.verification_status,
                     story.verification_reason,
                     story.publish_status,

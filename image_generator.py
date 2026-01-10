@@ -168,9 +168,11 @@ class ImageGenerator:
                 logger.info(
                     f"[{i + 1}/{len(stories)}] Generating image for: {story.title}"
                 )
-                image_path = self._generate_image_for_story(story)
-                if image_path:
+                result = self._generate_image_for_story(story)
+                if result:
+                    image_path, alt_text = result
                     story.image_path = image_path
+                    story.image_alt_text = alt_text
                     self.db.update_story(story)
                     success_count += 1
                     logger.info(f"✓ Saved: {image_path}")
@@ -181,8 +183,8 @@ class ImageGenerator:
         logger.info(f"Successfully generated {success_count}/{len(stories)} images")
         return success_count
 
-    def _generate_image_for_story(self, story: Story) -> str | None:
-        """Generate an image for a single story. Returns the file path if successful."""
+    def _generate_image_for_story(self, story: Story) -> tuple[str, str] | None:
+        """Generate an image for a single story. Returns (file_path, alt_text) if successful."""
         prompt = self._build_image_prompt(story)
 
         try:
@@ -192,9 +194,11 @@ class ImageGenerator:
             )
             # If a Hugging Face token is configured and preferred, try it first
             if Config.HUGGINGFACE_API_TOKEN and Config.HF_PREFER_IF_CONFIGURED:
-                hf_path = self._generate_huggingface_image(story, prompt)
-                if hf_path:
-                    return hf_path
+                hf_result = self._generate_huggingface_image(story, prompt)
+                if hf_result:
+                    image_path, _ = hf_result
+                    alt_text = self._generate_alt_text(story, prompt)
+                    return (image_path, alt_text)
                 # HuggingFace failed, fall back to Imagen
                 logger.info("HuggingFace unavailable, falling back to Google Imagen...")
 
@@ -232,8 +236,17 @@ class ImageGenerator:
                 filepath = os.path.join(Config.IMAGE_DIR, filename)
                 watermarked_image.save(filepath)
 
+                # Verify the file was actually written
+                if os.path.exists(filepath):
+                    file_size = os.path.getsize(filepath)
+                    logger.info(f"Verified image saved: {filepath} ({file_size} bytes)")
+                else:
+                    logger.error(f"Image file NOT found after save: {filepath}")
+                    return None
+
                 logger.debug(f"Saved watermarked image to {filepath}")
-                return filepath
+                alt_text = self._generate_alt_text(story, prompt)
+                return (filepath, alt_text)
             else:
                 logger.warning(f"No image bytes for story {story.id}")
                 return None
@@ -245,14 +258,21 @@ class ImageGenerator:
                 print("Notice: Google's Imagen API requires a billed account.")
                 if Config.HUGGINGFACE_API_TOKEN:
                     print("I'll try Hugging Face Inference instead...")
-                    hf_path = self._generate_huggingface_image(story, prompt)
-                    if hf_path:
-                        return hf_path
+                    hf_result = self._generate_huggingface_image(story, prompt)
+                    if hf_result:
+                        image_path, _ = hf_result
+                        alt_text = self._generate_alt_text(story, prompt)
+                        return (image_path, alt_text)
                 print("I'll try to use your local LLM/Image generator instead...")
                 print("-" * 60 + "\n")
 
                 # Try local fallback
-                return self._generate_local_image(story, prompt)
+                local_result = self._generate_local_image(story, prompt)
+                if local_result:
+                    image_path, _ = local_result
+                    alt_text = self._generate_alt_text(story, prompt)
+                    return (image_path, alt_text)
+                return None
 
             if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
                 logger.error(
@@ -264,8 +284,12 @@ class ImageGenerator:
             logger.error(f"Image generation error for story {story.id}: {e}")
             return None
 
-    def _generate_huggingface_image(self, story: Story, prompt: str) -> str | None:
-        """Generate an image using Hugging Face InferenceClient (FREE with FLUX.1-schnell)."""
+    def _generate_huggingface_image(
+        self, story: Story, prompt: str
+    ) -> tuple[str, str] | None:
+        """Generate an image using Hugging Face InferenceClient (FREE with FLUX.1-schnell).
+        Returns (file_path, prompt_used) if successful, or None.
+        """
         # Use the configured model or default to the free FLUX.1-schnell
         model = Config.HF_TTI_MODEL or "black-forest-labs/FLUX.1-schnell"
 
@@ -297,15 +321,27 @@ class ImageGenerator:
             filepath = os.path.join(Config.IMAGE_DIR, filename)
             watermarked_image.save(filepath)
 
+            # Verify the file was actually written
+            if os.path.exists(filepath):
+                file_size = os.path.getsize(filepath)
+                logger.info(f"Verified HF image saved: {filepath} ({file_size} bytes)")
+            else:
+                logger.error(f"HF image file NOT found after save: {filepath}")
+                return None
+
             logger.info(f"Successfully generated HF image: {filepath}")
-            return filepath
+            return (filepath, prompt)
 
         except Exception as e:
             logger.warning(f"Hugging Face image generation failed: {e}")
             return None
 
-    def _generate_local_image(self, story: Story, prompt: str) -> str | None:
-        """Attempt to generate an image using the local OpenAI-compatible client."""
+    def _generate_local_image(
+        self, story: Story, prompt: str
+    ) -> tuple[str, str] | None:
+        """Attempt to generate an image using the local OpenAI-compatible client.
+        Returns (file_path, prompt_used) if successful, or None.
+        """
         if not self.local_client:
             logger.warning("No local client available for image generation")
             return None
@@ -336,7 +372,7 @@ class ImageGenerator:
                 watermarked_image.save(filepath)
 
                 logger.info(f"Successfully generated local image: {filepath}")
-                return filepath
+                return (filepath, prompt)
 
         except Exception as e:
             logger.warning(f"Local image generation failed: {e}")
@@ -431,6 +467,61 @@ Do NOT deviate from this appearance description. Include these exact physical tr
 
         logger.debug(f"Cleaned prompt: {prompt[:100]}...")
         return prompt
+
+    def _generate_alt_text(self, story: Story, image_prompt: str) -> str:
+        """Generate accessibility alt text for an image based on the story and image prompt.
+
+        Creates a concise, descriptive alt text suitable for screen readers.
+        """
+        alt_text_prompt = f"""Generate a concise alt text description (1-2 sentences, max 150 characters) for an image.
+
+The image was generated for this story:
+Title: {story.title}
+Summary: {story.summary[:200]}...
+
+The image depicts: {image_prompt[:300]}
+
+Write alt text that:
+1. Describes what's shown in the image for visually impaired users
+2. Is concise but informative (aim for 80-150 characters)
+3. Focuses on the main subject and setting
+4. Does NOT start with "Image of" or "Picture of"
+5. Does NOT include hashtags or promotional content
+
+Return ONLY the alt text, nothing else."""
+
+        try:
+            alt_text = None
+            if self.local_client:
+                logger.debug("Using local LLM to generate alt text")
+                response = self.local_client.chat.completions.create(
+                    model=Config.LM_STUDIO_MODEL,
+                    messages=[{"role": "user", "content": alt_text_prompt}],
+                )
+                alt_text = response.choices[0].message.content
+            else:
+                logger.debug("Using Gemini to generate alt text")
+                response = self.client.models.generate_content(
+                    model=Config.MODEL_TEXT, contents=alt_text_prompt
+                )
+                alt_text = response.text
+
+            if alt_text:
+                # Clean up the alt text
+                alt_text = alt_text.strip().strip('"').strip("'")
+                # Truncate if too long
+                if len(alt_text) > 200:
+                    alt_text = alt_text[:197] + "..."
+                logger.info(f"Generated alt text: {alt_text[:60]}...")
+                return alt_text
+
+        except Exception as e:
+            logger.warning(f"Alt text generation failed: {e}")
+
+        # Fallback alt text based on story title
+        fallback = f"Illustration for: {story.title[:100]}"
+        logger.info(f"Using fallback alt text: {fallback}")
+        return fallback
 
     def get_stories_with_images_count(self) -> int:
         """Get count of stories that have images."""

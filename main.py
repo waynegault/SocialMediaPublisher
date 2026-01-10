@@ -883,9 +883,11 @@ def _check_and_offer_image_retry(engine: ContentEngine) -> None:
         # Generate new image
         print("  Generating new image...")
         try:
-            image_path = engine.image_generator._generate_image_for_story(story)
-            if image_path:
+            result = engine.image_generator._generate_image_for_story(story)
+            if result:
+                image_path, image_alt_text = result
                 story.image_path = image_path
+                story.image_alt_text = image_alt_text
                 engine.db.update_story(story)
                 print(f"  ✓ New image generated: {image_path}")
             else:
@@ -1830,9 +1832,11 @@ def _retry_rejected_stories(engine: ContentEngine) -> None:
         # Step 3: Generate new image
         print("  Generating new image...")
         try:
-            image_path = engine.image_generator._generate_image_for_story(story)
-            if image_path:
+            result = engine.image_generator._generate_image_for_story(story)
+            if result:
+                image_path, image_alt_text = result
                 story.image_path = image_path
+                story.image_alt_text = image_alt_text
                 engine.db.update_story(story)
                 print(f"  ✓ New image generated: {image_path}")
             else:
