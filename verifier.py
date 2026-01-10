@@ -3,6 +3,7 @@
 import logging
 import base64
 from pathlib import Path
+from typing import Callable
 
 from google import genai  # type: ignore
 from openai import OpenAI
@@ -28,9 +29,17 @@ class ContentVerifier:
         self.client = client
         self.local_client = local_client
 
-    def verify_pending_content(self) -> tuple[int, int]:
+    def verify_pending_content(
+        self,
+        linkedin_lookup_callback: Callable[[list[Story]], None] | None = None,
+    ) -> tuple[int, int]:
         """
         Verify all pending content.
+
+        Args:
+            linkedin_lookup_callback: Optional callback function to run LinkedIn profile
+                lookup when coverage is insufficient. Takes a list of stories to process.
+
         Returns tuple of (approved_count, rejected_count).
         """
         stories = self.db.get_stories_needing_verification()
@@ -73,6 +82,23 @@ class ContentVerifier:
                 # Log LinkedIn profile status
                 linkedin_valid, linkedin_msg = self._validate_linkedin_profiles(story)
                 logger.info(f"  LinkedIn status: {linkedin_msg}")
+
+                # If LinkedIn coverage insufficient and callback available, try to fix it
+                if not linkedin_valid and linkedin_lookup_callback is not None:
+                    logger.info(f"  🔄 Auto-running LinkedIn profile lookup...")
+                    try:
+                        linkedin_lookup_callback([story])
+                        # Refresh the story from database after lookup
+                        refreshed_story = self.db.get_story(story.id)
+                        if refreshed_story:
+                            story = refreshed_story
+                        # Re-validate LinkedIn profiles after lookup
+                        linkedin_valid, linkedin_msg = self._validate_linkedin_profiles(
+                            story
+                        )
+                        logger.info(f"  LinkedIn status (after lookup): {linkedin_msg}")
+                    except Exception as e:
+                        logger.warning(f"  LinkedIn lookup failed: {e}")
 
                 # Reject stories without sufficient LinkedIn profile coverage
                 if not linkedin_valid:
@@ -254,6 +280,11 @@ class ContentVerifier:
                 linkedin_profiles_found, len(story.linkedin_handles)
             )
 
+        # Get promotion message (or placeholder if not set)
+        promotion_message = (
+            story.promotion if story.promotion else "(No promotion message assigned)"
+        )
+
         return Config.VERIFICATION_PROMPT.format(
             search_prompt=Config.SEARCH_PROMPT,
             story_title=story.title,
@@ -262,6 +293,7 @@ class ContentVerifier:
             relevant_people_count=relevant_people_count,
             linkedin_profiles_found=linkedin_profiles_found,
             summary_word_limit=Config.SUMMARY_WORD_COUNT,
+            promotion_message=promotion_message,
         )
 
     def _validate_linkedin_profiles(self, story: Story) -> tuple[bool, str]:

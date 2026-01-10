@@ -534,15 +534,71 @@ class StorySearcher:
                 logger.debug(f"Error resolving redirect (attempt {attempt + 1}): {e}")
                 continue
 
+        # Strategy 4: Browser-based fallback for stubborn redirects
+        if not resolved_url:
+            resolved_url = self._resolve_redirect_with_browser(url)
+
         # Cache the result (even failures, to avoid retrying)
         self._redirect_url_cache[url] = resolved_url
 
         if not resolved_url:
             logger.warning(
-                f"Failed to resolve redirect URL after {max_retries} attempts: {url[:60]}..."
+                f"Failed to resolve redirect URL after all strategies: {url[:60]}..."
             )
 
         return resolved_url
+
+    def _resolve_redirect_with_browser(self, url: str) -> str:
+        """
+        Use undetected-chromedriver to resolve a redirect URL that requests couldn't handle.
+
+        This is a last-resort fallback that starts a browser to follow the redirect.
+        Returns the final URL or empty string if resolution fails.
+        """
+        try:
+            import undetected_chromedriver as uc
+            from selenium.webdriver.support.ui import WebDriverWait
+
+            logger.debug(f"Trying browser-based redirect resolution for: {url[:50]}...")
+
+            options = uc.ChromeOptions()
+            options.add_argument("--headless=new")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+
+            driver = uc.Chrome(options=options, use_subprocess=True)
+            driver.set_page_load_timeout(15)
+
+            try:
+                driver.get(url)
+                # Wait a moment for any JavaScript redirects
+                import time
+
+                time.sleep(2)
+
+                final_url = driver.current_url
+
+                if final_url and "vertexaisearch.cloud.google.com" not in final_url:
+                    logger.info(
+                        f"Resolved via browser: {url[:40]}... -> {final_url[:50]}..."
+                    )
+                    return final_url
+
+            finally:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+
+        except ImportError:
+            logger.debug(
+                "undetected-chromedriver not available for redirect resolution"
+            )
+        except Exception as e:
+            logger.debug(f"Browser-based redirect resolution failed: {e}")
+
+        return ""
 
     def _follow_redirect_chain(self, url: str, max_hops: int = 5) -> str:
         """Follow a chain of redirects to get final URL."""
@@ -1168,6 +1224,13 @@ class StorySearcher:
                 else:
                     hashtags = []
 
+                # Extract organizations (list of company/institution names)
+                organizations = data.get("organizations", [])
+                if isinstance(organizations, list):
+                    organizations = [str(org).strip() for org in organizations if org]
+                else:
+                    organizations = []
+
                 # Extract relevant_people (list of dicts with name, company, position, linkedin_profile)
                 relevant_people = data.get("relevant_people", [])
                 if isinstance(relevant_people, list):
@@ -1200,6 +1263,7 @@ class StorySearcher:
                     verification_status="pending",
                     publish_status="unpublished",
                     hashtags=hashtags,
+                    organizations=organizations,
                     relevant_people=relevant_people,
                 )
 

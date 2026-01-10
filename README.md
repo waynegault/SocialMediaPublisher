@@ -41,6 +41,8 @@ For detailed architecture and component documentation, see the [Overview wiki](h
 - **Story Enrichment**: Extracts organizations, story people, and org leaders
 - **LinkedIn Profile Search**: Finds real LinkedIn profiles using Google Search grounding
 - **LinkedIn @ Mentions**: Automatic @ mentions using verified LinkedIn usernames
+- **Promotion Messages**: AI-generated personalized job-seeking messages aligned to each story
+- **Human Validation GUI**: Web-based interface for reviewing, editing, and approving stories
 - **Opportunity Messages**: Optional professional postscript about job openings
 - **Automatic Cleanup**: Removes old unused stories after a configurable
   exclusion period
@@ -55,14 +57,15 @@ For detailed architecture and component documentation, see the [Overview wiki](h
 
 1. **Search Cycle**: Discovers new stories based on your prompt and date range,
    extracting hashtags and relevant people (including key org leaders) during generation
-2. **Image Generation**: Creates images for stories that meet quality threshold,
-   following strict 1/3 people vs 2/3 story composition guidelines
-3. **Verification**: AI reviews each story+image for quality before publication,
-   including validation of LinkedIn profile identification
-4. **Enrichment**: Finds LinkedIn profiles for relevant people identified during search
-5. **Scheduling**: Approved stories are scheduled within your publishing window
-6. **Publishing**: Stories are published to LinkedIn at their scheduled times
-7. **Cleanup**: Old unpublished stories are removed after the exclusion period
+2. **Enrichment**: Finds LinkedIn profiles for relevant people identified during search
+3. **Image Generation**: Creates images for stories that meet quality threshold,
+   featuring an attractive engineer (minimum 40% of image) with technology (60%)
+4. **Promotion Assignment**: Generates personalized job-seeking messages aligned to each story
+5. **Verification**: AI reviews each story+image+promotion for quality before publication
+6. **Human Validation**: Optional web-based GUI for manual review and editing
+7. **Scheduling**: Approved stories are scheduled within your publishing window
+8. **Publishing**: Stories are published to LinkedIn at their scheduled times
+9. **Cleanup**: Old unpublished stories are removed after the exclusion period
 
 ## Installation
 
@@ -138,12 +141,14 @@ context into an optimized prompt following these principles:
 - Include lighting and atmosphere
 - End with camera/technical specifications
 
-**Image Composition (1/3 People vs 2/3 Story)**:
+**Image Composition (40% Human / 60% Technology)**:
 
-- Technology/equipment from the story occupies 2/3 of the image, positioned center
-- Human element (engineer/technician) occupies strictly 1/3, positioned at far edge
-- People provide context and scale, but are never the main focus
-- This ensures the story subject matter dominates the visual narrative
+- An attractive, professional engineer occupies MINIMUM 40% of the image
+- Technology/equipment from the story occupies the remaining 60%
+- The engineer is depicted as beautiful/handsome with varied features
+- Hair colors rotate: blonde, brunette, black, redhead
+- People provide professional context and human connection
+- This ensures relatable, engaging visuals for LinkedIn
 
 **Photography Modifiers Used**:
 
@@ -209,10 +214,9 @@ Set `IMAGE_STYLE` to override the default aesthetic. Examples:
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `STORIES_PER_CYCLE` | 3 | Maximum stories to publish per cycle |
-| `PUBLISH_WINDOW_HOURS` | 24 | Window to spread publications over |
-| `PUBLISH_START_HOUR` | 8 | Earliest hour to publish (0-23) |
-| `PUBLISH_END_HOUR` | 20 | Latest hour to publish (0-23) |
+| `MAX_STORIES_PER_DAY` | 4 | Maximum stories to schedule per day |
+| `START_PUB_TIME` | 08:00 | Start of publishing window (HH:MM) |
+| `END_PUB_TIME` | 20:00 | End of publishing window (HH:MM) |
 | `JITTER_MINUTES` | 30 | Random variance in publish time (+/-) |
 
 ### Cleanup Settings
@@ -289,12 +293,11 @@ SocialMediaPublisher/
 ├── verifier.py              # Content quality verification
 ├── scheduler.py             # Publication timing logic
 ├── linkedin_publisher.py    # LinkedIn API integration
+├── validation_server.py     # Web-based human validation GUI (Flask)
 ├── error_handling.py        # Circuit breaker and retry logic
 ├── rate_limiter.py          # Adaptive rate limiting
 ├── test_framework.py        # Custom unit test framework
-├── unit_tests.py            # Unit test suite
-├── linkedin_test.py         # LinkedIn connection test utility
-├── linkedin_diagnostics.py  # LinkedIn token diagnostics
+├── run_tests.py             # Unit test runner
 ├── company_mention_enricher.py # Story enrichment and LinkedIn profiles
 ├── opportunity_messages.py  # Professional postscripts for posts
 ├── requirements.txt         # Python dependencies
@@ -328,6 +331,7 @@ Stories are stored in SQLite with the following fields:
 - `relevant_people`: JSON array of people for LinkedIn lookup (name, company, position, linkedin_profile)
   - Populated during story generation with people from the story AND key org leaders
 - `linkedin_handles`: JSON array of verified LinkedIn profiles with @ handles
+- `promotion`: Personalized job-seeking message aligned to story content
 
 ## Workflow Details
 
@@ -354,15 +358,16 @@ Before publication, a separate AI review checks:
 
 Stories are scheduled to:
 
-- Only publish between `PUBLISH_START_HOUR` and `PUBLISH_END_HOUR`
-- Spread evenly across the `PUBLISH_WINDOW_HOURS`
-- Have random jitter of +/- `JITTER_MINUTES`
+- Only publish between `START_PUB_TIME` and `END_PUB_TIME`
+- Schedule up to `MAX_STORIES_PER_DAY` per day
+- Spread evenly across the publishing window with random jitter
+- Overflow to subsequent days if more stories are available
 
 ### Backfill Behavior
 
-If fewer than `STORIES_PER_CYCLE` new stories are found:
+If no approved stories are available when scheduling:
 
-- Previously approved but unpublished stories are used to fill the gap
+- The full pipeline runs automatically to generate new content
 - Stories are always selected by quality score (highest first)
 
 ## Troubleshooting

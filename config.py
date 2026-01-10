@@ -130,6 +130,16 @@ class Config:
     )
     # Aspect ratio for generated images (options: 1:1, 16:9, 9:16, 4:3, 3:4)
     IMAGE_ASPECT_RATIO: str = _get_str("IMAGE_ASPECT_RATIO", "16:9")
+    # Image resolution size ("1K" or "2K") - higher = better quality but slower
+    IMAGE_SIZE: str = _get_str("IMAGE_SIZE", "2K")
+    # Negative prompt - describes what to AVOID in generated images
+    IMAGE_NEGATIVE_PROMPT: str = _get_str(
+        "IMAGE_NEGATIVE_PROMPT",
+        "text, watermark, logo, blurry, low quality, artifacts, jpeg artifacts, "
+        "cartoon, illustration, anime, drawing, painting, sketch, abstract, "
+        "deformed, distorted, disfigured, bad anatomy, unrealistic proportions, "
+        "stock photo watermark, grainy, out of focus, overexposed, underexposed",
+    )
 
     # --- Prompt Templates ---
     # Image refinement prompt - sent to LLM to generate image generation prompts
@@ -165,13 +175,16 @@ Create a setting that reflects the sector mentioned in the story:
 - Avoid explicit company logos or branding to prevent trademark issues
 - Use authentic industrial or laboratory aesthetics that match the story context
 
-STEP 4 - ADD A HUMAN ELEMENT (STRICTLY 40% of image composition):
-- Include a female engineer or technician occupying MAXIMUM 40% of the image
-- Position her to the far left or far right edge of the frame, never center
-- She should be at a smaller scale relative to the equipment
-- Her activity relates to the technology but is clearly secondary
-- Authentic PPE appropriate for the specific work environment
-- The human element provides scale and context, NOT the main subject
+STEP 4 - ADD A PROMINENT HUMAN ELEMENT (MINIMUM 40% of image):
+- Include a beautiful female chemical engineer as the PROMINENT SUBJECT occupying AT LEAST 40-50% of the frame
+- Position her in CENTER-LEFT or CENTER-RIGHT of the frame - NOT at the edges
+- She should be LARGE in the frame, upper body clearly visible (waist up or closer)
+- Show her ACTIVELY ENGAGED: operating controls, analyzing samples, inspecting equipment, taking readings
+- Her face should be clearly visible with confident, warm expression and attractive features
+- VARY HER APPEARANCE: rotate between blonde, brunette, black hair, and redhead; different face shapes and features
+- Authentic PPE appropriate for the specific work environment (hard hat, safety glasses, lab coat, etc.)
+- The ONLY constant: she must be beautiful and professional-looking
+- The engineer is a CO-STAR with the technology, not a background prop
 
 TECHNICAL ACCURACY IS CRITICAL:
 - Name the specific type of equipment in your prompt (not just "industrial equipment")
@@ -179,19 +192,24 @@ TECHNICAL ACCURACY IS CRITICAL:
 - Match the setting to what the story describes
 - Include relevant instrumentation, gauges, control systems
 
-COMPOSITION RULE (STRICT - 60% TECHNOLOGY / 40% HUMAN):
-- Technology/equipment from the story: Dominates 60% of the frame, centered
-- Female engineer: Maximum 40%, positioned to far left or right edge
-- The technology IS the story; the human provides scale and context only
-- Equipment and process details are the hero of the image
+COMPOSITION RULE (STRICT - MINIMUM 40% HUMAN):
+- Female engineer: MINIMUM 40-50% of the frame, upper body prominently visible
+- She is positioned CENTER-LEFT or CENTER-RIGHT (not at far edges)
+- Technology/equipment: 50-60% of frame, visible behind/beside her
+- Camera framing: Medium shot or medium close-up of the engineer with technology context
+- The engineer and technology SHARE the spotlight equally
+- Show genuine interaction: hands on controls, eyes on instruments, actively working
 - Industrial/laboratory environment matching the story context
 
 AVOID:
 - Generic industrial backgrounds that could apply to any story
 - Vague descriptions like "technical equipment" or "machinery"
-- The engineer as the main focus - she is supporting context only
-- People occupying more than 40% of the visual space
-- Centering the person - they must be to one side
+- Engineer as a TINY figure in the background - she MUST be prominent
+- Engineer at the FAR EDGES of the frame - she should be center-left or center-right
+- Full-body distant shots - use medium or medium close-up framing
+- People occupying LESS than 40% of the visual space
+- Only showing the engineer's back or profile - show her face
+- Technology completely dominating without prominent human presence
 - Any technology or setting not mentioned in the story
 - Explicit company logos or trademarks
 
@@ -199,25 +217,28 @@ BAD IMAGE PROMPT EXAMPLE (too generic):
 "Industrial worker in factory with machinery and equipment in background"
 
 GOOD IMAGE PROMPT EXAMPLE (specific to story):
-"Hydrogen electrolysis facility with PEM electrolyzer stacks dominating center frame, female process engineer in hard hat and safety glasses reviewing control panel at far right edge, industrial piping and pressure vessels visible, technical documentation quality"
+"A photo of a beautiful blonde female process engineer in hard hat and safety glasses, framed from waist up in center-right of image, she is actively adjusting valves on a PEM electrolyzer control panel, confident warm expression as she monitors pressure readings, hydrogen electrolysis stacks visible behind her left shoulder, she occupies 45% of the frame, shot with 85mm lens professional DSLR, natural industrial lighting, editorial quality"
+
+NOTE: Vary the woman's hair color (blonde, brunette, black, redhead) and features across different images. The only constant is that she should be beautiful.
 
 STYLE: {image_style}
 
-OUTPUT: Write ONLY the image prompt. Maximum 80 words.
-The prompt MUST specifically describe the technology/process from the story headline - not generic industrial imagery.""",
+CRITICAL OUTPUT FORMAT:
+- MUST start with "A photo of..." (this triggers photorealistic rendering)
+- Write ONLY the image prompt. Maximum 80 words.
+- End with photography/camera style keywords like "shot with professional camera, editorial quality"
+- The prompt MUST specifically describe the technology/process from the story headline - not generic industrial imagery.""",
     )
 
     # Fallback image prompt template when LLM refinement fails
     # Placeholders: {story_title}
     IMAGE_FALLBACK_PROMPT: str = _get_str(
         "IMAGE_FALLBACK_PROMPT",
-        "Technical photograph illustrating: {story_title}. "
-        "The specific technology or process from the headline dominates 60% of the frame, positioned center. "
-        "Female engineer in appropriate PPE positioned to far left or right edge, occupying maximum 40% of the image. "
-        "Technology is the story (60%), engineer provides human context and scale only (40%). "
-        "Authentic industrial or laboratory setting matching the story subject. "
-        "Natural workplace lighting, photorealistic, engineering publication quality. "
-        "Avoid generic industrial backgrounds, explicit logos, or centering the person.",
+        "A photo of a beautiful female chemical engineer, framed from waist up in center-right of image, "
+        "actively working with technology related to: {story_title}. "
+        "She occupies 45% of the frame with face clearly visible, confident warm expression. "
+        "Relevant equipment visible behind her shoulder. Authentic industrial or laboratory setting. "
+        "Shot with 85mm lens, natural workplace lighting, editorial quality for engineering publication.",
     )
 
     # Search instruction prompt - the system prompt for story search
@@ -313,6 +334,7 @@ RESPOND WITH ONLY THIS JSON FORMAT:
       "quality_score": 8,
       "quality_justification": "Highly relevant topic, reputable source, timely",
       "hashtags": ["ChemicalEngineering", "Innovation"],
+      "organizations": ["MIT", "BASF"],
       "relevant_people": [
         {{"name": "Dr. Jane Smith", "company": "MIT", "position": "Lead Researcher", "linkedin_profile": ""}},
         {{"name": "John Doe", "company": "BASF", "position": "CEO", "linkedin_profile": ""}}
@@ -321,11 +343,17 @@ RESPOND WITH ONLY THIS JSON FORMAT:
   ]
 }}
 
-IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real URLs. Write ALL summaries in first person. ALWAYS populate relevant_people with people from the story AND key leaders from mentioned organizations.""",
+ORGANIZATIONS - ALWAYS EXTRACT:
+- ALWAYS include an "organizations" array listing ALL companies, universities, agencies, and institutions mentioned in the story
+- This is MANDATORY even when no specific people are named
+- Examples: ["Singapore PUB", "NEWater", "MIT", "BASF", "U.S. Department of Energy"]
+- Organizations enable later lookup of leadership profiles on LinkedIn
+
+IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real URLs. Write ALL summaries in first person. ALWAYS populate relevant_people with people from the story AND key leaders from mentioned organizations. ALWAYS populate organizations with ALL institutions mentioned.""",
     )
 
     # Verification prompt - used to verify story suitability for publication
-    # Placeholders: {search_prompt}, {story_title}, {story_summary}, {story_sources}, {relevant_people_count}, {linkedin_profiles_found}, {summary_word_limit}
+    # Placeholders: {search_prompt}, {story_title}, {story_summary}, {story_sources}, {relevant_people_count}, {linkedin_profiles_found}, {summary_word_limit}, {promotion_message}
     VERIFICATION_PROMPT: str = _get_str(
         "VERIFICATION_PROMPT",
         """You are a strict editorial review board for a professional engineering-focused LinkedIn publication.
@@ -337,6 +365,9 @@ STORY TO EVALUATE:
 Title: {story_title}
 Summary: {story_summary}
 Sources: {story_sources}
+
+PROMOTION MESSAGE (appended to post):
+{promotion_message}
 
 LINKEDIN PROFILE STATUS:
 Relevant people identified: {relevant_people_count}
@@ -353,15 +384,35 @@ EVALUATION CRITERIA:
 8. HASHTAGS: Are hashtags professional and relevant (no promotional or generic tags like #news)?
 9. LINKEDIN MENTIONS: Have LinkedIn profiles been identified for key people? (Not required for approval, but good to have)
 
+PROMOTION MESSAGE EVALUATION:
+10. PROMOTION ALIGNMENT: Does the promotion message connect authentically to the story's topic/technology/industry?
+11. PROMOTION TONE: Is the promotion professional and confident WITHOUT being:
+    - Sycophantic (excessive flattery or fawning)
+    - Begging or desperate-sounding
+    - Self-demeaning or apologetic
+    - Overly humble or submissive
+12. PROMOTION QUALITY: Does it maintain professional gravitas while expressing genuine interest in opportunities?
+
+BAD PROMOTION EXAMPLES (should REJECT):
+- "I would be so grateful if anyone could help me find a job, I really need this opportunity!"
+- "Your company is absolutely amazing and I'd do anything to work there!"
+- "I know I'm just a graduate but maybe someone might consider giving me a chance?"
+
+GOOD PROMOTION EXAMPLES (should APPROVE):
+- "🎓 MEng Chemical Engineer with keen interest in carbon capture technologies. Open to opportunities in this space."
+- "Hydrogen engineering enthusiast actively exploring roles in clean energy. Let's connect."
+- "Process engineer seeking to contribute to innovative sustainable technology projects."
+
 IMAGE EVALUATION (if an image is provided):
-10. IMAGE PROFESSIONALISM: Is the image credible and appropriate for a serious engineering context?
-11. IMAGE RELEVANCE: Does the image clearly relate to the technical subject of the story?
-12. IMAGE CREDIBILITY: Does the image avoid looking staged, promotional, or like generic AI stock imagery?
+13. IMAGE PROFESSIONALISM: Is the image credible and appropriate for a serious engineering context?
+14. IMAGE RELEVANCE: Does the image clearly relate to the technical subject of the story?
+15. IMAGE CREDIBILITY: Does the image avoid looking staged, promotional, or like generic AI stock imagery?
 
 IMPORTANT NOTES:
 - Images are AI-generated; AI watermarks or tags are acceptable
 - Evaluate image credibility and relevance, not origin
 - LinkedIn profiles are helpful but not mandatory for approval
+- The promotion message MUST maintain professional dignity - reject if it sounds desperate or self-demeaning
 
 BAD CONTENT EXAMPLE (should REJECT):
 Title: "AMAZING Breakthrough Will Change Everything!"
@@ -374,8 +425,9 @@ Summary: "What interests me about Dr. Chen's work at MIT is the practical engine
 Reason: Technical headline, first-person perspective, engineering analysis, specific details, critical thinking
 
 DECISION RULES:
-- APPROVE only if ALL primary criteria (1-8) are clearly satisfied
+- APPROVE only if ALL primary criteria (1-9) AND promotion criteria (10-12) are satisfied
 - REJECT if ANY primary criterion is weak or unmet
+- REJECT if promotion message sounds sycophantic, begging, or self-demeaning
 - When uncertain, REJECT
 
 Respond with ONLY one of these exact words:
@@ -820,13 +872,28 @@ Return ONLY valid JSON, no explanation.""",
     MIN_QUALITY_SCORE: int = _get_int("MIN_QUALITY_SCORE", 7)
 
     # --- Publication Settings ---
-    STORIES_PER_CYCLE: int = _get_int("STORIES_PER_CYCLE", 3)
-    PUBLISH_WINDOW_HOURS: int = _get_int("PUBLISH_WINDOW_HOURS", 24)
-    PUBLISH_START_HOUR: int = _get_int("PUBLISH_START_HOUR", 8)
-    PUBLISH_END_HOUR: int = _get_int("PUBLISH_END_HOUR", 20)
+    MAX_STORIES_PER_DAY: int = _get_int("MAX_STORIES_PER_DAY", 4)
+    START_PUB_TIME: str = _get_str("START_PUB_TIME", "08:00")
+    END_PUB_TIME: str = _get_str("END_PUB_TIME", "20:00")
     JITTER_MINUTES: int = _get_int("JITTER_MINUTES", 30)
     # Include "open to opportunities" postscript in LinkedIn posts
     INCLUDE_OPPORTUNITY_MESSAGE: bool = _get_bool("INCLUDE_OPPORTUNITY_MESSAGE", True)
+
+    @classmethod
+    def get_pub_start_hour(cls) -> int:
+        """Parse START_PUB_TIME and return hour."""
+        try:
+            return int(cls.START_PUB_TIME.split(":")[0])
+        except (ValueError, IndexError):
+            return 8
+
+    @classmethod
+    def get_pub_end_hour(cls) -> int:
+        """Parse END_PUB_TIME and return hour."""
+        try:
+            return int(cls.END_PUB_TIME.split(":")[0])
+        except (ValueError, IndexError):
+            return 20
 
     # --- Cleanup Settings ---
     EXCLUSION_PERIOD_DAYS: int = _get_int("EXCLUSION_PERIOD_DAYS", 30)
@@ -861,11 +928,11 @@ Return ONLY valid JSON, no explanation.""",
         if not cls.LINKEDIN_AUTHOR_URN:
             errors.append("LINKEDIN_AUTHOR_URN is required for publishing")
 
-        if cls.PUBLISH_START_HOUR >= cls.PUBLISH_END_HOUR:
-            errors.append("PUBLISH_START_HOUR must be less than PUBLISH_END_HOUR")
+        if cls.get_pub_start_hour() >= cls.get_pub_end_hour():
+            errors.append("START_PUB_TIME must be before END_PUB_TIME")
 
-        if cls.STORIES_PER_CYCLE < 1:
-            errors.append("STORIES_PER_CYCLE must be at least 1")
+        if cls.MAX_STORIES_PER_DAY < 1:
+            errors.append("MAX_STORIES_PER_DAY must be at least 1")
 
         if cls.SUMMARY_WORD_COUNT < 50:
             errors.append("SUMMARY_WORD_COUNT should be at least 50")
@@ -907,10 +974,9 @@ Return ONLY valid JSON, no explanation.""",
         print(f"  SEARCH_PREVIEW_MODE: {cls.SEARCH_PREVIEW_MODE}")
         print(f"  SUMMARY_WORD_COUNT: {cls.SUMMARY_WORD_COUNT}")
         print(f"  MIN_QUALITY_SCORE: {cls.MIN_QUALITY_SCORE}")
-        print(f"  STORIES_PER_CYCLE: {cls.STORIES_PER_CYCLE}")
-        print(f"  PUBLISH_WINDOW_HOURS: {cls.PUBLISH_WINDOW_HOURS}")
-        print(f"  PUBLISH_START_HOUR: {cls.PUBLISH_START_HOUR}")
-        print(f"  PUBLISH_END_HOUR: {cls.PUBLISH_END_HOUR}")
+        print(f"  MAX_STORIES_PER_DAY: {cls.MAX_STORIES_PER_DAY}")
+        print(f"  START_PUB_TIME: {cls.START_PUB_TIME}")
+        print(f"  END_PUB_TIME: {cls.END_PUB_TIME}")
         print(f"  JITTER_MINUTES: {cls.JITTER_MINUTES}")
         print(f"  EXCLUSION_PERIOD_DAYS: {cls.EXCLUSION_PERIOD_DAYS}")
         print(f"  DB_NAME: {cls.DB_NAME}")

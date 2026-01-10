@@ -14,8 +14,13 @@ ddgs>=1.0.0
 # Image processing
 Pillow>=10.0.0
 
-# Browser automation for LinkedIn profile lookup
-playwright>=1.40.0
+# Browser automation for LinkedIn profile lookup (CAPTCHA-resistant)
+undetected-chromedriver>=3.5.5
+selenium>=4.20.0
+setuptools>=80.0.0  # Required for distutils compatibility with Python 3.12+
 
 # Hugging Face for free image generation (FLUX.1-schnell)
 huggingface_hub>=0.20.0
+
+# Web-based human validation GUI
+flask>=3.0.0

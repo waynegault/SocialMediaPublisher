@@ -80,6 +80,8 @@ class Story:
     linkedin_post_url: Optional[str] = None
     # LinkedIn mentions: list of {"name": "...", "urn": "urn:li:person/organization:...", "type": "person/organization"}
     linkedin_mentions: list[dict] = field(default_factory=list)
+    # Promotional message to append to LinkedIn posts (randomly selected from promotion.json)
+    promotion: Optional[str] = None
 
     # --- 7. ANALYTICS (fetched from API after publication) ---
     linkedin_impressions: int = 0
@@ -140,6 +142,7 @@ class Story:
             "linkedin_post_id": self.linkedin_post_id,
             "linkedin_post_url": self.linkedin_post_url,
             "linkedin_mentions": self.linkedin_mentions,
+            "promotion": self.promotion,
             # 7. Analytics
             "linkedin_impressions": self.linkedin_impressions,
             "linkedin_clicks": self.linkedin_clicks,
@@ -246,6 +249,8 @@ class Story:
             relevant_people=json.loads(row["relevant_people"])
             if "relevant_people" in keys and row["relevant_people"]
             else [],
+            # Promotion message
+            promotion=row["promotion"] if "promotion" in keys else None,
             # Legacy fields
             company_mention_enrichment=row["company_mention_enrichment"]
             if "company_mention_enrichment" in keys
@@ -429,6 +434,8 @@ class Database:
             self._migrate_add_column(
                 cursor, "relevant_people", "TEXT DEFAULT '[]'", existing_columns
             )
+            # Promotion message for LinkedIn posts
+            self._migrate_add_column(cursor, "promotion", "TEXT", existing_columns)
 
             # System state table for tracking last check date, etc.
             cursor.execute("""
