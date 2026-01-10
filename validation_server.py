@@ -1,6 +1,7 @@
 """Human validation web GUI for reviewing and approving stories."""
 
 import logging
+import subprocess
 import threading
 import webbrowser
 from datetime import datetime
@@ -21,8 +22,27 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Story Validation Interface for Social Media Publisher">
     <title>Story Validation - Social Media Publisher</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='15' y='10' width='70' height='85' rx='8' fill='%231a1a2e' stroke='%2300d4ff' stroke-width='4'/><rect x='30' y='5' width='40' height='15' rx='4' fill='%2300d4ff'/><path d='M30 45 L45 60 L70 35' stroke='%2300c853' stroke-width='8' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
     <style>
+        /* Skip to main content link for keyboard users */
+        .skip-link {
+            position: absolute;
+            top: -40px;
+            left: 0;
+            background: #00d4ff;
+            color: #1a1a2e;
+            padding: 8px 16px;
+            z-index: 100;
+            font-weight: 600;
+            text-decoration: none;
+            border-radius: 0 0 8px 0;
+        }
+        .skip-link:focus {
+            top: 0;
+        }
+
         * {
             box-sizing: border-box;
             margin: 0;
@@ -33,45 +53,61 @@ HTML_TEMPLATE = """
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
             color: #e0e0e0;
-            min-height: 100vh;
-            padding: 20px;
+            height: 100vh;
+            max-height: 100vh;
+            padding: 8px;
+            overflow: hidden;
+            transition: padding 0.3s ease;
+        }
+
+        body.edit-mode-active {
+            padding: 6px;
         }
 
         .container {
-            max-width: 1400px;
+            max-width: 100%;
+            width: 100%;
+            height: 100%;
             margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        body.edit-mode-active .container {
+            max-width: 100%;
         }
 
         header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 15px 25px;
+            padding: 6px 12px;
             background: rgba(255,255,255,0.05);
-            border-radius: 12px;
-            margin-bottom: 20px;
+            border-radius: 8px;
+            flex-shrink: 0;
         }
 
         header h1 {
-            font-size: 1.5rem;
+            font-size: 1.2rem;
             color: #00d4ff;
         }
 
         .story-counter {
             color: #888;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
         }
 
         .top-buttons {
             display: flex;
-            gap: 10px;
+            gap: 6px;
         }
 
         .btn {
-            padding: 12px 24px;
+            padding: 6px 14px;
             border: none;
-            border-radius: 8px;
-            font-size: 1rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.2s ease;
@@ -80,6 +116,20 @@ HTML_TEMPLATE = """
         .btn:hover {
             transform: translateY(-2px);
             box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+
+        .btn:focus {
+            outline: 3px solid #00d4ff;
+            outline-offset: 2px;
+        }
+
+        .btn:focus:not(:focus-visible) {
+            outline: none;
+        }
+
+        .btn:focus-visible {
+            outline: 3px solid #00d4ff;
+            outline-offset: 2px;
         }
 
         .btn-accept {
@@ -128,46 +178,63 @@ HTML_TEMPLATE = """
         .main-content {
             display: flex;
             flex-direction: column;
-            gap: 20px;
+            gap: 6px;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
         }
 
         .story-details-section {
-            background: rgba(255,255,255,0.05);
-            border-radius: 12px;
-            padding: 20px;
+            background: linear-gradient(135deg, rgba(0,212,255,0.08) 0%, rgba(139,92,246,0.08) 100%);
+            border-radius: 8px;
+            padding: 8px 12px;
             width: 100%;
+            border: 1px solid rgba(0,212,255,0.2);
+            box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+            flex-shrink: 0;
         }
 
         .preview-section {
             display: flex;
-            gap: 20px;
+            gap: 10px;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
         }
 
         .preview-panel {
             background: rgba(255,255,255,0.05);
-            border-radius: 12px;
-            padding: 25px;
+            border-radius: 8px;
+            padding: 10px;
             flex: 1;
+            transition: flex 0.3s ease;
+            overflow-y: auto;
+            min-height: 0;
+        }
+
+        /* When edit mode is active, preview panel is 45% and edit panel is 55% */
+        .preview-section.edit-mode .preview-panel {
+            flex: 45;
         }
 
         .linkedin-preview {
             background: white;
             color: #000;
             border-radius: 8px;
-            padding: 20px;
+            padding: 12px;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 11pt;
+            font-size: 1rem;
         }
 
         .linkedin-header {
             display: flex;
-            gap: 12px;
-            margin-bottom: 15px;
+            gap: 10px;
+            margin-bottom: 10px;
         }
 
         .linkedin-avatar {
-            width: 48px;
-            height: 48px;
+            width: 40px;
+            height: 40px;
             background: linear-gradient(135deg, #0077b5, #00a0dc);
             border-radius: 50%;
             display: flex;
@@ -175,69 +242,72 @@ HTML_TEMPLATE = """
             justify-content: center;
             color: white;
             font-weight: bold;
-            font-size: 1.2rem;
+            font-size: 1rem;
         }
 
         .linkedin-author-info h3 {
-            font-size: 11pt;
+            font-size: 1rem;
             color: #000;
             margin-bottom: 2px;
         }
 
         .linkedin-author-info p {
-            font-size: 10pt;
+            font-size: 0.9rem;
             color: #666;
         }
 
         .linkedin-title {
-            font-size: 13pt;
+            font-size: 1.1rem;
             font-weight: 600;
             color: #000;
-            margin-bottom: 12px;
+            margin-bottom: 8px;
         }
 
         .linkedin-summary {
-            font-size: 11pt;
-            line-height: 1.5;
+            font-size: 1rem;
+            line-height: 1.4;
             color: #333;
-            margin-bottom: 15px;
+            margin-bottom: 10px;
             white-space: pre-wrap;
         }
 
         .linkedin-image {
             width: 100%;
-            border-radius: 8px;
-            margin-bottom: 15px;
+            max-height: 280px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            object-fit: cover;
+            object-position: center top;
         }
 
         .linkedin-mentions {
-            font-size: 10pt;
+            font-size: 0.8rem;
             color: #0077b5;
-            margin-bottom: 10px;
+            margin-bottom: 4px;
         }
 
         .linkedin-hashtags {
-            font-size: 10pt;
+            font-size: 0.8rem;
             color: #0077b5;
-            margin-bottom: 10px;
+            margin-bottom: 4px;
         }
 
         .linkedin-promotion {
-            font-size: 10pt;
+            font-size: 0.8rem;
             color: #666;
             font-style: italic;
-            padding-top: 10px;
+            padding-top: 6px;
             border-top: 1px solid #eee;
-            margin-top: 10px;
+            margin-top: 6px;
         }
 
         .linkedin-footer {
             display: flex;
             justify-content: space-around;
-            padding-top: 15px;
+            padding-top: 8px;
             border-top: 1px solid #eee;
             color: #666;
-            font-size: 0.85rem;
+            font-size: 1rem;
         }
 
         .linkedin-footer span {
@@ -247,88 +317,138 @@ HTML_TEMPLATE = """
         }
 
         .edit-panel {
-            background: rgba(255,255,255,0.05);
-            border-radius: 12px;
-            padding: 25px;
+            background: linear-gradient(145deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+            border-radius: 10px;
+            padding: 16px;
             display: none;
+            flex: 0;
+            transition: flex 0.3s ease;
+            border: 1px solid rgba(0,212,255,0.2);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            overflow-y: auto;
+            min-height: 0;
         }
 
         .edit-panel.visible {
-            display: block;
+            display: flex;
+            flex-direction: column;
+            flex: 55;
         }
 
         .edit-panel h2 {
-            font-size: 1.2rem;
-            margin-bottom: 20px;
+            font-size: 1.1rem;
+            margin-bottom: 10px;
             color: #00d4ff;
         }
 
         .edit-group {
-            margin-bottom: 20px;
+            margin-bottom: 10px;
+        }
+
+        .edit-row {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+
+        .edit-row .edit-group {
+            margin-bottom: 0;
+        }
+
+        .edit-row .edit-group.compact {
+            flex: 0 0 auto;
+        }
+
+        .edit-row .edit-group.flex-grow {
+            flex: 1;
         }
 
         .edit-group label {
             display: block;
             font-size: 0.85rem;
-            color: #888;
-            margin-bottom: 6px;
+            color: #00d4ff;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 500;
+        }
+
+        .edit-group input[type="datetime-local"] {
+            width: auto;
+            min-width: 180px;
         }
 
         .edit-group input,
         .edit-group textarea {
             width: 100%;
-            padding: 10px;
-            border: 1px solid #444;
+            padding: 8px 10px;
+            border: 1px solid rgba(255,255,255,0.15);
             border-radius: 6px;
-            background: rgba(255,255,255,0.08);
+            background: rgba(0,0,0,0.3);
             color: #e0e0e0;
-            font-size: 0.9rem;
+            font-size: 1rem;
+            line-height: 1.4;
+            transition: all 0.2s ease;
+            font-family: inherit;
         }
 
         .edit-group textarea {
-            min-height: 100px;
-            resize: vertical;
+            min-height: 38px;
+            resize: none;
+            overflow-y: auto;
+            box-sizing: border-box;
+        }
+
+        .edit-group input:hover,
+        .edit-group textarea:hover {
+            border-color: rgba(0,212,255,0.4);
+            background: rgba(0,0,0,0.4);
         }
 
         .edit-group input:focus,
         .edit-group textarea:focus {
             outline: none;
             border-color: #00d4ff;
+            background: rgba(0,0,0,0.5);
+            box-shadow: 0 0 0 3px rgba(0,212,255,0.15);
         }
 
         .edit-buttons {
             display: flex;
-            gap: 10px;
-            margin-top: 20px;
+            gap: 8px;
+            margin-top: auto;
+            padding-top: 8px;
+            flex-shrink: 0;
         }
 
         .navigation {
             display: flex;
             justify-content: center;
-            gap: 20px;
-            margin-top: 20px;
-            padding: 15px;
+            gap: 12px;
+            padding: 6px;
             background: rgba(255,255,255,0.05);
-            border-radius: 12px;
+            border-radius: 8px;
+            flex-shrink: 0;
         }
 
         .status-badge {
             display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
+            padding: 2px 10px;
+            border-radius: 12px;
             font-size: 0.75rem;
             font-weight: 600;
             text-transform: uppercase;
         }
 
+        /* WCAG AA compliant contrast ratios */
         .status-pending {
-            background: #ffc107;
+            background: #e6a800;
             color: #1a1a2e;
         }
 
         .status-approved {
-            background: #00c853;
-            color: white;
+            background: #00a844;
+            color: #ffffff;
         }
 
         .status-rejected {
@@ -347,12 +467,7 @@ HTML_TEMPLATE = """
         }
 
         .meta-info {
-            display: flex;
-            gap: 15px;
-            flex-wrap: wrap;
-            margin-bottom: 15px;
-            font-size: 0.85rem;
-            color: #888;
+            display: none;
         }
 
         .meta-info span {
@@ -362,67 +477,77 @@ HTML_TEMPLATE = """
         }
 
         .story-details-panel {
-            background: rgba(255,255,255,0.03);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 20px;
+            background: transparent;
+            border: none;
+            padding: 0;
+            margin-bottom: 0;
         }
 
         .story-details-panel h3 {
-            font-size: 0.9rem;
-            color: #00d4ff;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: none;
         }
 
         .details-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px 30px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 16px;
+            align-items: center;
         }
 
         .detail-item {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
+            display: inline-flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 8px;
+            background: linear-gradient(145deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.08);
+            transition: all 0.2s ease;
+        }
+
+        .detail-item:hover {
+            background: linear-gradient(145deg, rgba(255,255,255,0.12), rgba(255,255,255,0.06));
+            border-color: rgba(0,212,255,0.3);
         }
 
         .detail-item.full-width {
-            grid-column: 1 / -1;
+            flex-basis: 100%;
         }
 
         .detail-label {
-            font-size: 0.75rem;
-            color: #666;
+            font-size: 0.7rem;
+            color: #00d4ff;
             text-transform: uppercase;
             letter-spacing: 0.5px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .detail-label::after {
+            content: ':';
         }
 
         .detail-value {
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             color: #e0e0e0;
-            line-height: 1.4;
+            line-height: 1.3;
         }
 
         .detail-value.score {
-            font-size: 1.5rem;
+            font-size: 1rem;
             font-weight: 700;
-            color: #00d4ff;
+            background: linear-gradient(135deg, #00d4ff, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
 
-        .detail-value.justification {
-            font-style: italic;
-            color: #aaa;
-            font-size: 0.85rem;
-        }
-
+        .detail-value.justification,
         .detail-value.reason {
-            padding: 8px 12px;
-            background: rgba(255,255,255,0.05);
-            border-radius: 6px;
-            font-size: 0.85rem;
+            font-size: 0.8rem;
+            color: #bbb;
+            line-height: 1.4;
         }
 
         .toast {
@@ -466,21 +591,22 @@ HTML_TEMPLATE = """
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    <div class="container" role="application" aria-label="Story Validation Application">
+        <header role="banner">
             <div>
                 <h1>📋 Story Validation</h1>
-                <span class="story-counter" id="storyCounter">Loading...</span>
+                <span class="story-counter" id="storyCounter" aria-live="polite">Loading...</span>
             </div>
-            <div class="top-buttons" id="topButtons">
-                <button class="btn btn-accept" onclick="acceptStory()">✓ Accept</button>
-                <button class="btn btn-reject" onclick="rejectStory()">✗ Reject</button>
-                <button class="btn btn-edit" onclick="toggleEdit()">✎ Edit</button>
-                <button class="btn btn-close" onclick="closeValidator()">Close</button>
+            <div class="top-buttons" id="topButtons" role="toolbar" aria-label="Story actions">
+                <button class="btn btn-accept" onclick="acceptStory()" aria-label="Accept this story for publication">✓ Accept</button>
+                <button class="btn btn-reject" onclick="rejectStory()" aria-label="Reject this story">✗ Reject</button>
+                <button class="btn btn-edit" onclick="toggleEdit()" aria-label="Edit story details" aria-expanded="false" id="editToggleBtn">✎ Edit</button>
+                <button class="btn btn-close" onclick="closeValidator()" aria-label="Close validator and return to menu">Close</button>
             </div>
         </header>
 
-        <div class="main-content">
+        <main id="main-content" class="main-content" role="main">
             <!-- Story Details Section (above preview) -->
             <div class="story-details-section" id="storyDetailsSection">
                 <div class="meta-info" id="metaInfo"></div>
@@ -498,55 +624,57 @@ HTML_TEMPLATE = """
                     </div>
                 </div>
 
-                <div class="edit-panel" id="editPanel">
+                <div class="edit-panel" id="editPanel" role="region" aria-label="Edit story form">
                 <h2>Edit Story</h2>
 
-                <div class="edit-group">
-                    <label>Scheduled Time</label>
-                    <input type="datetime-local" id="editScheduledTime">
+                <div class="edit-row">
+                    <div class="edit-group compact">
+                        <label for="editScheduledTime">Scheduled</label>
+                        <input type="datetime-local" id="editScheduledTime" aria-describedby="scheduleHelp">
+                    </div>
+
+                    <div class="edit-group flex-grow">
+                        <label for="editTitle">Title</label>
+                        <input type="text" id="editTitle" aria-required="true">
+                    </div>
                 </div>
 
                 <div class="edit-group">
-                    <label>Title</label>
-                    <input type="text" id="editTitle">
+                    <label for="editSummary">Summary</label>
+                    <textarea id="editSummary" aria-required="true"></textarea>
                 </div>
 
                 <div class="edit-group">
-                    <label>Summary</label>
-                    <textarea id="editSummary" rows="6"></textarea>
+                    <label for="editHashtags">Hashtags (comma-separated)</label>
+                    <input type="text" id="editHashtags" placeholder="e.g., #Engineering, #Innovation">
                 </div>
 
                 <div class="edit-group">
-                    <label>Hashtags (comma-separated)</label>
-                    <input type="text" id="editHashtags">
+                    <label for="editMentions">LinkedIn Mentions (comma-separated handles)</label>
+                    <input type="text" id="editMentions" placeholder="e.g., @company, @person">
                 </div>
 
                 <div class="edit-group">
-                    <label>LinkedIn Mentions (comma-separated handles)</label>
-                    <input type="text" id="editMentions">
-                </div>
-
-                <div class="edit-group">
-                    <label>Promotion Message</label>
-                    <textarea id="editPromotion" rows="3"></textarea>
+                    <label for="editPromotion">Promotion Message</label>
+                    <textarea id="editPromotion"></textarea>
                 </div>
 
                 <div class="edit-buttons">
-                    <button class="btn btn-save" onclick="saveEdits()">Save Changes</button>
-                    <button class="btn btn-cancel" onclick="cancelEdit()">Cancel</button>
+                    <button class="btn btn-save" onclick="saveEdits()" aria-label="Save all changes">Save Changes</button>
+                    <button class="btn btn-cancel" onclick="cancelEdit()" aria-label="Cancel editing and discard changes">Cancel</button>
                 </div>
             </div>
             </div>
-        </div>
+        </main>
 
-        <div class="navigation">
-            <button class="btn btn-nav" id="prevBtn" onclick="navigate(-1)">← Previous</button>
-            <span id="navInfo" style="color: #888; align-self: center;">- / -</span>
-            <button class="btn btn-nav" id="nextBtn" onclick="navigate(1)">Next →</button>
-        </div>
+        <nav class="navigation" role="navigation" aria-label="Story navigation">
+            <button class="btn btn-nav" id="prevBtn" onclick="navigate(-1)" aria-label="Go to previous story">← Previous</button>
+            <span id="navInfo" role="status" aria-live="polite" style="color: #b0b0b0; align-self: center;">- / -</span>
+            <button class="btn btn-nav" id="nextBtn" onclick="navigate(1)" aria-label="Go to next story">Next →</button>
+        </nav>
     </div>
 
-    <div class="toast" id="toast"></div>
+    <div class="toast" id="toast" role="alert" aria-live="assertive"></div>
 
     <script>
         let stories = [];
@@ -625,7 +753,7 @@ HTML_TEMPLATE = """
                             <span class="detail-value score">${story.quality_score}/10</span>
                         </div>
                         <div class="detail-item">
-                            <span class="detail-label">Verification Status</span>
+                            <span class="detail-label">AI Verification</span>
                             <span class="detail-value"><span class="status-badge ${verificationBadgeClass}">${story.verification_status || 'pending'}</span></span>
                         </div>
                         <div class="detail-item full-width">
@@ -659,13 +787,17 @@ HTML_TEMPLATE = """
                 .map(t => t.startsWith('#') ? t : '#' + t)
                 .join(' ');
 
-            // Image HTML - use the raw path
+            // Image HTML - use the raw path and alt text
             let imageHtml = '';
             if (story.image_path) {
                 // Replace backslashes with forward slashes for URL using String.fromCharCode to avoid escape issues
                 const backslash = String.fromCharCode(92);
                 const imagePath = story.image_path.split(backslash).join('/');
-                imageHtml = '<img class="linkedin-image" src="/image/' + imagePath + '" alt="Story image" onerror="this.style.display=' + "'none'" + '">';
+                // Use the generated alt text or fallback to story title
+                const altText = story.image_alt_text || ('Illustration for: ' + story.title);
+                // Escape quotes in alt text for HTML attribute
+                const escapedAltText = altText.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                imageHtml = '<img class="linkedin-image" src="/image/' + imagePath + '" alt="' + escapedAltText + '" onerror="this.style.display=' + "'none'" + '">';
             }
 
             // Reordered: Author -> Image -> Title -> Summary -> Promotion -> Hashtags -> Mentions
@@ -718,7 +850,50 @@ HTML_TEMPLATE = """
             } else {
                 document.getElementById('editScheduledTime').value = '';
             }
+
+            // Auto-resize all textareas after populating
+            setTimeout(autoResizeAllTextareas, 10);
         }
+
+        function autoResizeTextarea(el) {
+            // Force reflow by temporarily setting height to 0
+            el.style.height = '0px';
+            el.style.overflowY = 'hidden';
+            // Get scrollHeight which is the full content height
+            const scrollHeight = el.scrollHeight;
+            // Set height with min 60px, max 400px
+            const newHeight = Math.min(Math.max(scrollHeight, 60), 400);
+            el.style.height = newHeight + 'px';
+            // Show scrollbar only if content exceeds max
+            el.style.overflowY = scrollHeight > 400 ? 'scroll' : 'hidden';
+        }
+
+        function autoResizeAllTextareas() {
+            const textareas = document.querySelectorAll('.edit-group textarea');
+            textareas.forEach(el => {
+                autoResizeTextarea(el);
+            });
+        }
+
+        // Use ResizeObserver to resize textareas when edit panel becomes visible
+        const editPanel = document.getElementById('editPanel');
+        if (editPanel) {
+            const resizeObserver = new ResizeObserver(() => {
+                if (editPanel.classList.contains('visible')) {
+                    autoResizeAllTextareas();
+                }
+            });
+            resizeObserver.observe(editPanel);
+        }
+
+        // Add input event listeners for auto-resize while typing
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('.edit-group textarea').forEach(textarea => {
+                textarea.addEventListener('input', function() {
+                    autoResizeTextarea(this);
+                });
+            });
+        });
 
         function updateNavigation() {
             document.getElementById('prevBtn').disabled = currentIndex <= 0;
@@ -739,13 +914,36 @@ HTML_TEMPLATE = """
 
         function toggleEdit() {
             isEditMode = !isEditMode;
-            document.getElementById('editPanel').classList.toggle('visible', isEditMode);
+            const editPanel = document.getElementById('editPanel');
+            const editToggleBtn = document.getElementById('editToggleBtn');
+            const previewSection = document.querySelector('.preview-section');
+
+            editPanel.classList.toggle('visible', isEditMode);
+            previewSection.classList.toggle('edit-mode', isEditMode);
+            document.body.classList.toggle('edit-mode-active', isEditMode);
+            editToggleBtn.setAttribute('aria-expanded', isEditMode);
+
+            if (isEditMode) {
+                // Focus first input when opening edit panel
+                document.getElementById('editScheduledTime').focus();
+                // Auto-resize textareas after panel is fully visible (multiple attempts)
+                setTimeout(autoResizeAllTextareas, 50);
+                setTimeout(autoResizeAllTextareas, 150);
+            }
         }
 
         function cancelEdit() {
             isEditMode = false;
-            document.getElementById('editPanel').classList.remove('visible');
+            const editPanel = document.getElementById('editPanel');
+            const editToggleBtn = document.getElementById('editToggleBtn');
+            const previewSection = document.querySelector('.preview-section');
+
+            editPanel.classList.remove('visible');
+            previewSection.classList.remove('edit-mode');
+            document.body.classList.remove('edit-mode-active');
+            editToggleBtn.setAttribute('aria-expanded', 'false');
             populateEditFields(stories[currentIndex]);
+            editToggleBtn.focus(); // Return focus to edit button
         }
 
         async function saveEdits() {
@@ -882,6 +1080,55 @@ HTML_TEMPLATE = """
             return div.innerHTML;
         }
 
+        // Keyboard navigation support (WCAG 2.1.1)
+        document.addEventListener('keydown', function(e) {
+            // Only handle if not in edit mode or not in an input field
+            const isInInput = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
+
+            if (!isEditMode && !isInInput) {
+                switch(e.key) {
+                    case 'ArrowLeft':
+                        e.preventDefault();
+                        navigate(-1);
+                        break;
+                    case 'ArrowRight':
+                        e.preventDefault();
+                        navigate(1);
+                        break;
+                    case 'a':
+                    case 'A':
+                        if (!e.ctrlKey && !e.metaKey) {
+                            e.preventDefault();
+                            acceptStory();
+                        }
+                        break;
+                    case 'r':
+                    case 'R':
+                        if (!e.ctrlKey && !e.metaKey) {
+                            e.preventDefault();
+                            rejectStory();
+                        }
+                        break;
+                    case 'e':
+                    case 'E':
+                        if (!e.ctrlKey && !e.metaKey) {
+                            e.preventDefault();
+                            toggleEdit();
+                        }
+                        break;
+                    case 'Escape':
+                        if (isEditMode) {
+                            e.preventDefault();
+                            cancelEdit();
+                        }
+                        break;
+                }
+            } else if (isEditMode && e.key === 'Escape') {
+                e.preventDefault();
+                cancelEdit();
+            }
+        });
+
         // Initialize
         loadStories();
     </script>
@@ -1011,6 +1258,11 @@ class ValidationServer:
                 logger.exception(f"Failed to reject story {story_id}")
                 return jsonify({"error": str(e)}), 500
 
+        @self.app.route("/favicon.ico")
+        def favicon():
+            """Return empty favicon to prevent 404 errors."""
+            return "", 204
+
         @self.app.route("/image/<path:image_path>")
         def serve_image(image_path: str):
             """Serve story images."""
@@ -1024,10 +1276,16 @@ class ValidationServer:
                     # Relative path - resolve from workspace root
                     image_file = Path(__file__).parent / normalized_path
 
+                logger.debug(
+                    f"Serving image: requested='{image_path}', resolved='{image_file}', exists={image_file.exists()}"
+                )
+
                 if image_file.exists():
                     return send_from_directory(
                         str(image_file.parent), image_file.name, mimetype="image/png"
                     )
+                else:
+                    logger.warning(f"Image not found: {image_file}")
                 return "", 404
             except Exception as e:
                 logger.warning(f"Failed to serve image {image_path}: {e}")
@@ -1108,8 +1366,22 @@ class ValidationServer:
         print("   Close the browser or click 'Close' to return to menu.")
         print("   Press Ctrl+C in terminal to force stop.\n")
 
-        # Open browser
-        webbrowser.open(f"http://localhost:{self.port}")
+        # Open Edge browser in app mode
+        url = f"http://localhost:{self.port}"
+        try:
+            # Try to open Edge in app mode (creates a standalone window)
+            edge_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+            if not Path(edge_path).exists():
+                edge_path = r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+            subprocess.Popen(
+                [edge_path, f"--app={url}", "--start-maximized"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            logger.warning(f"Could not open Edge in app mode: {e}")
+            # Fallback to default browser
+            webbrowser.open(url)
 
         # Run server in blocking mode but check for shutdown
         # Use werkzeug's make_server for cleaner shutdown
@@ -1118,7 +1390,7 @@ class ValidationServer:
         )
         server.timeout = 1  # Check shutdown event every second
 
-        # Run server
+        # Run server until shutdown is triggered
         try:
             while not self._shutdown_event.is_set():
                 server.handle_request()
