@@ -21,9 +21,12 @@ TEST_MODULES = [
     ("verifier", "Verifier"),
     ("image_generator", "Image Generator"),
     ("linkedin_publisher", "LinkedIn Publisher"),
+    ("linkedin_profile_lookup", "LinkedIn Profile Lookup"),
     ("searcher", "Searcher"),
     ("company_mention_enricher", "Company Mention Enricher"),
     ("opportunity_messages", "Opportunity Messages"),
+    ("validation_server", "Validation Server"),
+    ("find_leadership", "Find Leadership"),
 ]
 
 

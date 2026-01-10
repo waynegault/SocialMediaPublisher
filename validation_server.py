@@ -126,8 +126,20 @@ HTML_TEMPLATE = """
         }
 
         .main-content {
-            display: grid;
-            grid-template-columns: 1fr 350px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .story-details-section {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 20px;
+            width: 70%;
+        }
+
+        .preview-section {
+            display: flex;
             gap: 20px;
         }
 
@@ -135,6 +147,7 @@ HTML_TEMPLATE = """
             background: rgba(255,255,255,0.05);
             border-radius: 12px;
             padding: 25px;
+            flex: 0 0 70%;
         }
 
         .linkedin-preview {
@@ -143,6 +156,7 @@ HTML_TEMPLATE = """
             border-radius: 8px;
             padding: 20px;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 10pt;
         }
 
         .linkedin-header {
@@ -165,25 +179,25 @@ HTML_TEMPLATE = """
         }
 
         .linkedin-author-info h3 {
-            font-size: 0.95rem;
+            font-size: 11pt;
             color: #000;
             margin-bottom: 2px;
         }
 
         .linkedin-author-info p {
-            font-size: 0.75rem;
+            font-size: 10pt;
             color: #666;
         }
 
         .linkedin-title {
-            font-size: 1.1rem;
+            font-size: 13pt;
             font-weight: 600;
             color: #000;
             margin-bottom: 12px;
         }
 
         .linkedin-summary {
-            font-size: 0.9rem;
+            font-size: 11pt;
             line-height: 1.5;
             color: #333;
             margin-bottom: 15px;
@@ -197,19 +211,19 @@ HTML_TEMPLATE = """
         }
 
         .linkedin-mentions {
-            font-size: 0.85rem;
+            font-size: 10pt;
             color: #0077b5;
             margin-bottom: 10px;
         }
 
         .linkedin-hashtags {
-            font-size: 0.85rem;
+            font-size: 10pt;
             color: #0077b5;
             margin-bottom: 10px;
         }
 
         .linkedin-promotion {
-            font-size: 0.85rem;
+            font-size: 10pt;
             color: #666;
             font-style: italic;
             padding-top: 10px;
@@ -347,6 +361,70 @@ HTML_TEMPLATE = """
             gap: 5px;
         }
 
+        .story-details-panel {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .story-details-panel h3 {
+            font-size: 0.9rem;
+            color: #00d4ff;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .details-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px 30px;
+        }
+
+        .detail-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .detail-item.full-width {
+            grid-column: 1 / -1;
+        }
+
+        .detail-label {
+            font-size: 0.75rem;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .detail-value {
+            font-size: 0.9rem;
+            color: #e0e0e0;
+            line-height: 1.4;
+        }
+
+        .detail-value.score {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #00d4ff;
+        }
+
+        .detail-value.justification {
+            font-style: italic;
+            color: #aaa;
+            font-size: 0.85rem;
+        }
+
+        .detail-value.reason {
+            padding: 8px 12px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 6px;
+            font-size: 0.85rem;
+        }
+
         .toast {
             position: fixed;
             bottom: 30px;
@@ -403,17 +481,24 @@ HTML_TEMPLATE = """
         </header>
 
         <div class="main-content">
-            <div class="preview-panel">
+            <!-- Story Details Section (above preview) -->
+            <div class="story-details-section" id="storyDetailsSection">
                 <div class="meta-info" id="metaInfo"></div>
-                <div class="linkedin-preview" id="linkedinPreview">
-                    <div class="no-stories" id="noStories" style="display:none;">
-                        <h2>No Stories to Review</h2>
-                        <p>All stories have been processed or none are available.</p>
-                    </div>
-                </div>
+                <div id="storyDetailsPanel"></div>
             </div>
 
-            <div class="edit-panel" id="editPanel">
+            <!-- Preview Section (LinkedIn preview + Edit panel) -->
+            <div class="preview-section">
+                <div class="preview-panel">
+                    <div class="linkedin-preview" id="linkedinPreview">
+                        <div class="no-stories" id="noStories" style="display:none;">
+                            <h2>No Stories to Review</h2>
+                            <p>All stories have been processed or none are available.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="edit-panel" id="editPanel">
                 <h2>Edit Story</h2>
 
                 <div class="edit-group">
@@ -450,6 +535,7 @@ HTML_TEMPLATE = """
                     <button class="btn btn-save" onclick="saveEdits()">Save Changes</button>
                     <button class="btn btn-cancel" onclick="cancelEdit()">Cancel</button>
                 </div>
+            </div>
             </div>
         </div>
 
@@ -513,14 +599,54 @@ HTML_TEMPLATE = """
                 statusClass = 'status-rejected';
             }
 
-            // Meta info
+            // Build status displays
+            const verificationBadgeClass = story.verification_status === 'approved' ? 'status-approved' :
+                story.verification_status === 'rejected' ? 'status-rejected' : 'status-pending';
+            const publishBadgeClass = story.publish_status === 'published' ? 'status-published' :
+                story.publish_status === 'scheduled' ? 'status-scheduled' : 'status-pending';
+
+            // Meta info (compact top bar)
             const metaInfo = document.getElementById('metaInfo');
             metaInfo.innerHTML = `
                 <span><span class="status-badge ${statusClass}">${statusText}</span></span>
                 <span>📅 ${story.acquire_date ? new Date(story.acquire_date).toLocaleDateString() : 'N/A'}</span>
-                <span>⭐ Score: ${story.quality_score}/10</span>
                 <span>🏷️ ${story.category || 'Uncategorized'}</span>
-                ${story.scheduled_time ? `<span>🕐 Scheduled: ${new Date(story.scheduled_time).toLocaleString()}</span>` : ''}
+                <span>ID: ${story.id}</span>
+            `;
+
+            // Story details panel (detailed info) - goes in separate section above
+            const detailsPanel = document.getElementById('storyDetailsPanel');
+            detailsPanel.innerHTML = `
+                <div class="story-details-panel">
+                    <h3>📊 Story Details</h3>
+                    <div class="details-grid">
+                        <div class="detail-item">
+                            <span class="detail-label">Quality Score</span>
+                            <span class="detail-value score">${story.quality_score}/10</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Verification Status</span>
+                            <span class="detail-value"><span class="status-badge ${verificationBadgeClass}">${story.verification_status || 'pending'}</span></span>
+                        </div>
+                        <div class="detail-item full-width">
+                            <span class="detail-label">Quality Justification</span>
+                            <span class="detail-value justification">${story.quality_justification ? escapeHtml(story.quality_justification) : 'No justification provided'}</span>
+                        </div>
+                        ${story.verification_reason ? `
+                        <div class="detail-item full-width">
+                            <span class="detail-label">Verification Reason</span>
+                            <span class="detail-value reason">${escapeHtml(story.verification_reason)}</span>
+                        </div>` : ''}
+                        <div class="detail-item">
+                            <span class="detail-label">Publish Status</span>
+                            <span class="detail-value"><span class="status-badge ${publishBadgeClass}">${story.publish_status || 'unpublished'}</span></span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Scheduled Time</span>
+                            <span class="detail-value">${story.scheduled_time ? new Date(story.scheduled_time).toLocaleString() : 'Not scheduled'}</span>
+                        </div>
+                    </div>
+                </div>
             `;
 
             // Build mentions string
@@ -533,12 +659,16 @@ HTML_TEMPLATE = """
                 .map(t => t.startsWith('#') ? t : '#' + t)
                 .join(' ');
 
-            // Image HTML
+            // Image HTML - use the raw path
             let imageHtml = '';
             if (story.image_path) {
-                imageHtml = `<img class="linkedin-image" src="/image/${encodeURIComponent(story.image_path)}" alt="Story image">`;
+                // Replace backslashes with forward slashes for URL using String.fromCharCode to avoid escape issues
+                const backslash = String.fromCharCode(92);
+                const imagePath = story.image_path.split(backslash).join('/');
+                imageHtml = '<img class="linkedin-image" src="/image/' + imagePath + '" alt="Story image" onerror="this.style.display=' + "'none'" + '">';
             }
 
+            // Reordered: Author -> Image -> Title -> Summary -> Promotion -> Hashtags -> Mentions
             preview.innerHTML = `
                 <div class="linkedin-header">
                     <div class="linkedin-avatar">{{ author_initial }}</div>
@@ -548,14 +678,14 @@ HTML_TEMPLATE = """
                     </div>
                 </div>
 
+                ${imageHtml}
+
                 <div class="linkedin-title">${escapeHtml(story.title)}</div>
                 <div class="linkedin-summary">${escapeHtml(story.summary)}</div>
 
-                ${imageHtml}
-
-                ${mentions ? `<div class="linkedin-mentions">${escapeHtml(mentions)}</div>` : ''}
-                ${hashtags ? `<div class="linkedin-hashtags">${escapeHtml(hashtags)}</div>` : ''}
                 ${story.promotion ? `<div class="linkedin-promotion">${escapeHtml(story.promotion)}</div>` : ''}
+                ${hashtags ? `<div class="linkedin-hashtags">${escapeHtml(hashtags)}</div>` : ''}
+                ${mentions ? `<div class="linkedin-mentions">${escapeHtml(mentions)}</div>` : ''}
 
                 <div class="linkedin-footer">
                     <span>👍 Like</span>
@@ -885,10 +1015,18 @@ class ValidationServer:
         def serve_image(image_path: str):
             """Serve story images."""
             try:
-                image_file = Path(image_path)
+                # Normalize backslashes to forward slashes first
+                normalized_path = image_path.replace("\\", "/")
+
+                # Handle both relative and absolute paths
+                image_file = Path(normalized_path)
+                if not image_file.is_absolute():
+                    # Relative path - resolve from workspace root
+                    image_file = Path(__file__).parent / normalized_path
+
                 if image_file.exists():
                     return send_from_directory(
-                        image_file.parent, image_file.name, mimetype="image/png"
+                        str(image_file.parent), image_file.name, mimetype="image/png"
                     )
                 return "", 404
             except Exception as e:
@@ -915,31 +1053,60 @@ class ValidationServer:
             except (json.JSONDecodeError, TypeError):
                 return []
 
+        def safe_get(row, key, default=None):
+            """Safely get a value from sqlite3.Row, returning default if key doesn't exist."""
+            try:
+                return row[key] if row[key] is not None else default
+            except (KeyError, IndexError):
+                return default
+
         return {
             "id": row["id"],
             "title": row["title"],
             "summary": row["summary"],
-            "source_links": parse_json_field(row.get("source_links")),
-            "acquire_date": row.get("acquire_date"),
-            "quality_score": row.get("quality_score", 0),
-            "category": row.get("category", "Other"),
-            "hashtags": parse_json_field(row.get("hashtags")),
-            "image_path": row.get("image_path"),
-            "verification_status": row.get("verification_status", "pending"),
-            "verification_reason": row.get("verification_reason"),
-            "scheduled_time": row.get("scheduled_time"),
-            "publish_status": row.get("publish_status", "unpublished"),
-            "linkedin_handles": parse_json_field(row.get("linkedin_handles")),
-            "promotion": row.get("promotion"),
+            "source_links": parse_json_field(safe_get(row, "source_links")),
+            "acquire_date": safe_get(row, "acquire_date"),
+            "quality_score": safe_get(row, "quality_score", 0),
+            "quality_justification": safe_get(row, "quality_justification", ""),
+            "category": safe_get(row, "category", "Other"),
+            "hashtags": parse_json_field(safe_get(row, "hashtags")),
+            "image_path": safe_get(row, "image_path"),
+            "verification_status": safe_get(row, "verification_status", "pending"),
+            "verification_reason": safe_get(row, "verification_reason"),
+            "scheduled_time": safe_get(row, "scheduled_time"),
+            "publish_status": safe_get(row, "publish_status", "unpublished"),
+            "linkedin_handles": parse_json_field(safe_get(row, "linkedin_handles")),
+            "promotion": safe_get(row, "promotion"),
         }
 
     def start(self):
         """Start the validation server and open browser."""
         import werkzeug.serving
+        import socket
+
+        # Check if port is available, if not try to find an available one
+        original_port = self.port
+        for attempt in range(5):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.bind(("localhost", self.port))
+                sock.close()
+                break
+            except OSError:
+                if attempt == 0:
+                    print(f"   Port {self.port} is in use, trying another...")
+                self.port += 1
+        else:
+            print(f"   Could not find an available port. Try again later.")
+            return
+
+        if self.port != original_port:
+            print(f"   Using port {self.port} instead.")
 
         print(f"\n🌐 Starting validation server at http://localhost:{self.port}")
         print("   Opening browser...")
-        print("   Close the browser or click 'Close' to return to menu.\n")
+        print("   Close the browser or click 'Close' to return to menu.")
+        print("   Press Ctrl+C in terminal to force stop.\n")
 
         # Open browser
         webbrowser.open(f"http://localhost:{self.port}")
@@ -949,10 +1116,7 @@ class ValidationServer:
         server = werkzeug.serving.make_server(
             "localhost", self.port, self.app, threaded=True
         )
-
-        def serve():
-            while not self._shutdown_event.is_set():
-                server.handle_request()
+        server.timeout = 1  # Check shutdown event every second
 
         # Run server
         try:
@@ -961,6 +1125,7 @@ class ValidationServer:
         except KeyboardInterrupt:
             pass
 
+        server.server_close()
         print("   Validation server stopped.\n")
 
 
@@ -968,3 +1133,68 @@ def run_human_validation(database: Database, port: int = 5000) -> None:
     """Run the human validation web interface."""
     server = ValidationServer(database, port)
     server.start()
+
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+    """Create unit tests for validation_server module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("Validation Server Tests")
+
+    def test_html_template_exists():
+        assert HTML_TEMPLATE is not None
+        assert len(HTML_TEMPLATE) > 1000  # Should be substantial HTML
+        assert "<!DOCTYPE html>" in HTML_TEMPLATE
+        assert "Story Validation" in HTML_TEMPLATE
+
+    def test_html_has_required_buttons():
+        assert "Accept" in HTML_TEMPLATE
+        assert "Reject" in HTML_TEMPLATE
+        assert "Edit" in HTML_TEMPLATE
+        assert "Close" in HTML_TEMPLATE
+
+    def test_html_has_navigation():
+        assert "Previous" in HTML_TEMPLATE
+        assert "Next" in HTML_TEMPLATE
+        assert "navigate(" in HTML_TEMPLATE
+
+    def test_html_has_edit_fields():
+        assert "editTitle" in HTML_TEMPLATE
+        assert "editSummary" in HTML_TEMPLATE
+        assert "editHashtags" in HTML_TEMPLATE
+        assert "editPromotion" in HTML_TEMPLATE
+        assert "editScheduledTime" in HTML_TEMPLATE
+
+    def test_html_has_linkedin_preview():
+        assert "linkedin-preview" in HTML_TEMPLATE
+        assert "linkedin-header" in HTML_TEMPLATE
+        assert "linkedin-summary" in HTML_TEMPLATE
+
+    def test_html_has_api_endpoints():
+        assert "/api/stories" in HTML_TEMPLATE
+        assert "/api/shutdown" in HTML_TEMPLATE
+        assert "acceptStory()" in HTML_TEMPLATE
+        assert "rejectStory()" in HTML_TEMPLATE
+
+    def test_run_human_validation_function_exists():
+        assert callable(run_human_validation)
+
+    def test_validation_server_class_exists():
+        assert ValidationServer is not None
+
+    suite.add_test("HTML template exists and is substantial", test_html_template_exists)
+    suite.add_test("HTML has required action buttons", test_html_has_required_buttons)
+    suite.add_test("HTML has navigation controls", test_html_has_navigation)
+    suite.add_test("HTML has edit fields", test_html_has_edit_fields)
+    suite.add_test("HTML has LinkedIn preview elements", test_html_has_linkedin_preview)
+    suite.add_test("HTML has API endpoint references", test_html_has_api_endpoints)
+    suite.add_test(
+        "run_human_validation function exists",
+        test_run_human_validation_function_exists,
+    )
+    suite.add_test("ValidationServer class exists", test_validation_server_class_exists)
+
+    return suite

@@ -413,18 +413,18 @@ Social Media Publisher - Debug Menu
 
   Pipeline:
     1. Run Full Pipeline (search → enrich → images → promo → verify → cleanup)
-    2. Publish One Scheduled Story Now
 
   Configuration:
-    3. Show Configuration
-    4. View All Prompts (full text)
-    5. Show Full Status
+    2. Show Configuration
+    3. View All Prompts (full text)
+    4. Show Full Status
 
   Database Operations:
-    6. View Database Statistics
-    7. List All Stories
-    8. List Pending Stories
-    9. List Scheduled Stories
+    5. View Database Statistics
+    6. List All Stories
+    7. List Pending Stories
+    8. List Scheduled Stories
+    9. List Human Approved Stories (not published)
    10. Cleanup Old Stories
    11. Backup Database
    12. Restore Database from Backup
@@ -441,14 +441,15 @@ Social Media Publisher - Debug Menu
    21. Human Validation (Web GUI)
    22. Test LinkedIn Connection
    23. Test LinkedIn Publish (due stories)
-   24. Run Unit Tests
+   24. Publish One Scheduled Story Now
+   25. Run Unit Tests
 
   Analytics:
-   25. View LinkedIn Analytics
-   26. Refresh All Analytics
+   26. View LinkedIn Analytics
+   27. Refresh All Analytics
 
   Danger Zone:
-   27. Reset (delete database and images)
+   28. Reset (delete database and images)
 
    0. Exit
 ============================================================
@@ -473,25 +474,25 @@ Social Media Publisher - Debug Menu
         # Pipeline
         elif choice == "1":
             _run_full_cycle(engine)
-        elif choice == "2":
-            _test_publish_one_story(engine)
         # Configuration
-        elif choice == "3":
+        elif choice == "2":
             Config.print_config()
             _test_api_keys(engine)
-        elif choice == "4":
+        elif choice == "3":
             _show_all_prompts()
-        elif choice == "5":
+        elif choice == "4":
             engine.status()
         # Database Operations
-        elif choice == "6":
+        elif choice == "5":
             _show_database_stats(engine)
-        elif choice == "7":
+        elif choice == "6":
             _list_all_stories(engine)
-        elif choice == "8":
+        elif choice == "7":
             _list_pending_stories(engine)
-        elif choice == "9":
+        elif choice == "8":
             _list_scheduled_stories(engine)
+        elif choice == "9":
+            _list_human_approved_stories(engine)
         elif choice == "10":
             _cleanup_old_stories(engine)
         elif choice == "11":
@@ -522,14 +523,16 @@ Social Media Publisher - Debug Menu
         elif choice == "23":
             _test_linkedin_publish(engine)
         elif choice == "24":
+            _test_publish_one_story(engine)
+        elif choice == "25":
             _run_unit_tests()
         # Analytics
-        elif choice == "25":
-            _view_linkedin_analytics(engine)
         elif choice == "26":
+            _view_linkedin_analytics(engine)
+        elif choice == "27":
             _refresh_linkedin_analytics(engine)
         # Danger Zone
-        elif choice == "27":
+        elif choice == "28":
             _reset_all(engine)
         else:
             print("Invalid choice. Please try again.")
@@ -1728,6 +1731,33 @@ def _list_scheduled_stories(engine: ContentEngine) -> None:
     """List scheduled stories."""
     print("\n--- Scheduled Stories ---")
     print(engine.scheduler.get_schedule_summary())
+
+
+def _list_human_approved_stories(engine: ContentEngine) -> None:
+    """List human-approved stories that haven't been published yet."""
+    print("\n--- Human Approved Stories (Not Yet Published) ---")
+    stories = engine.db.get_approved_unpublished_stories(limit=100)
+
+    if not stories:
+        print("No human-approved unpublished stories found.")
+        print("\nTo approve stories for publication, use Action 22 (Human Validation).")
+        return
+
+    print(f"Found {len(stories)} approved stories awaiting publication:\n")
+    for story in stories:
+        has_image = "Yes" if story.image_path else "No"
+        has_promotion = "Yes" if story.promotion else "No"
+        scheduled = (
+            story.scheduled_time.strftime("%Y-%m-%d %H:%M")
+            if story.scheduled_time
+            else "Not scheduled"
+        )
+        print(f"[{story.id}] {story.title}")
+        print(
+            f"    Score: {story.quality_score} | Image: {has_image} | Promo: {has_promotion}"
+        )
+        print(f"    Scheduled: {scheduled}")
+        print()
 
 
 def _retry_rejected_stories(engine: ContentEngine) -> None:

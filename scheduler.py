@@ -312,8 +312,10 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
             # All times should be unique
             assert len(set(times)) == 3
             # All times should be in valid hours
+            start_hour = Config.get_pub_start_hour()
+            end_hour = Config.get_pub_end_hour()
             for t in times:
-                assert Config.PUBLISH_START_HOUR <= t.hour < Config.PUBLISH_END_HOUR
+                assert start_hour <= t.hour < end_hour
         finally:
             os.unlink(db_path)
 
