@@ -1088,24 +1088,52 @@ Return ONLY valid JSON, no explanation."""
 
             # Validate each URL to ensure name matches before accepting
             for url in unique_urls:
-                # Try to get page title/text to validate name
+                # Try to get the profile name from the page to validate
                 try:
                     driver.get(url)
                     time.sleep(1.5)
-                    page_text = driver.page_source.lower()
-
-                    # Check if both first and last name appear on the profile page
+                    
+                    # Extract the profile name from the page title or h1
+                    # LinkedIn profile titles are typically "FirstName LastName - Title | LinkedIn"
+                    page_title = driver.title.lower() if driver.title else ""
+                    
+                    # Also try to get the main profile name heading
+                    profile_name = ""
+                    try:
+                        from selenium.webdriver.common.by import By
+                        # Try multiple selectors for the profile name
+                        for selector in ["h1", ".text-heading-xlarge", "[data-generated-suggestion-target]"]:
+                            try:
+                                name_elem = driver.find_element(By.CSS_SELECTOR, selector)
+                                if name_elem and name_elem.text:
+                                    profile_name = name_elem.text.lower().strip()
+                                    break
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+                    
+                    # Use profile name if found, otherwise fall back to page title
+                    name_text = profile_name if profile_name else page_title
+                    
+                    # For validation, check if BOTH first and last name appear in the profile name
+                    # Use word boundary matching to avoid partial matches (e.g., "ning" in "engineering")
                     if first_name and last_name:
-                        if first_name in page_text and last_name in page_text:
-                            logger.debug(f"Found validated LinkedIn URL: {url}")
+                        # Check for whole word matches
+                        first_match = regex.search(rf"\b{regex.escape(first_name)}\b", name_text)
+                        last_match = regex.search(rf"\b{regex.escape(last_name)}\b", name_text)
+                        
+                        if first_match and last_match:
+                            logger.info(f"Found validated LinkedIn URL: {url} (name: {name_text[:50]})")
                             return url
                         else:
                             logger.debug(
-                                f"Skipping {url} - name mismatch (expected {first_name} {last_name})"
+                                f"Skipping {url} - name mismatch (expected '{first_name} {last_name}', found '{name_text[:50]}')"
                             )
                     elif first_name:
-                        if first_name in page_text:
-                            logger.debug(
+                        first_match = regex.search(rf"\b{regex.escape(first_name)}\b", name_text)
+                        if first_match:
+                            logger.info(
                                 f"Found LinkedIn URL (first name match): {url}"
                             )
                             return url
