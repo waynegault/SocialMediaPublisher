@@ -63,7 +63,7 @@ class StylePreset:
     camera_angle: str = ""  # Camera angle/perspective
     color_palette: ColorPalette = field(default_factory=ColorPalette)
     tags: list[str] = field(default_factory=list)
-    
+
     # Performance tracking
     usage_count: int = 0
     total_engagement: float = 0.0
@@ -72,21 +72,21 @@ class StylePreset:
     def apply_to_prompt(self, base_prompt: str) -> str:
         """Apply this style to a base prompt."""
         parts = []
-        
+
         if self.prompt_prefix:
             parts.append(self.prompt_prefix)
-        
+
         parts.append(base_prompt)
-        
+
         if self.lighting:
             parts.append(self.lighting)
-            
+
         if self.camera_angle:
             parts.append(self.camera_angle)
-            
+
         if self.prompt_suffix:
             parts.append(self.prompt_suffix)
-        
+
         return ", ".join(parts)
 
     @property
@@ -247,7 +247,7 @@ def _create_manufacturing() -> StylePreset:
 class StyleManager:
     """
     Manage image styles for consistent brand imagery.
-    
+
     Features:
     - Predefined style presets
     - Custom style creation
@@ -261,7 +261,7 @@ class StyleManager:
         self._presets: dict[str, StylePreset] = {}
         self._usage_history: list[StyleUsage] = []
         self._max_history = 1000
-        
+
         # Load default presets
         self._load_default_presets()
 
@@ -275,7 +275,7 @@ class StyleManager:
             _create_data_analytics(),
             _create_manufacturing(),
         ]
-        
+
         for preset in default_presets:
             self._presets[preset.name] = preset
 
@@ -310,24 +310,24 @@ class StyleManager:
     ) -> dict[str, str]:
         """
         Apply a style preset to a base prompt.
-        
+
         Args:
             base_prompt: The original image generation prompt
             style_preset: Name of the preset to apply (default: technical_professional)
             include_negative: Whether to include negative prompt
-            
+
         Returns:
             Dict with 'prompt' and optionally 'negative_prompt'
         """
         preset_name = style_preset or "technical_professional"
         preset = self._presets.get(preset_name)
-        
+
         if not preset:
             # Return original prompt if preset not found
             return {"prompt": base_prompt}
-        
+
         styled_prompt = preset.apply_to_prompt(base_prompt)
-        
+
         # Track usage
         usage = StyleUsage(
             preset_name=preset_name,
@@ -336,22 +336,22 @@ class StyleManager:
             styled_prompt=styled_prompt,
         )
         self._add_usage(usage)
-        
+
         # Update preset usage count
         preset.usage_count += 1
-        
+
         result: dict[str, str] = {"prompt": styled_prompt}
-        
+
         if include_negative and preset.negative_prompt:
             result["negative_prompt"] = preset.negative_prompt
-            
+
         return result
 
     def _add_usage(self, usage: StyleUsage) -> None:
         """Add usage record, maintaining history limit."""
         self._usage_history.append(usage)
         if len(self._usage_history) > self._max_history:
-            self._usage_history = self._usage_history[-self._max_history:]
+            self._usage_history = self._usage_history[-self._max_history :]
 
     def record_engagement(
         self,
@@ -360,7 +360,7 @@ class StyleManager:
     ) -> None:
         """
         Record engagement for a style preset.
-        
+
         Args:
             preset_name: Name of the preset used
             engagement_score: Engagement score achieved
@@ -373,13 +373,13 @@ class StyleManager:
         """Get the best performing style based on average engagement."""
         best_name: str | None = None
         best_avg = 0.0
-        
+
         for name, preset in self._presets.items():
             avg = preset.average_engagement
             if avg > best_avg:
                 best_avg = avg
                 best_name = name
-                
+
         return best_name
 
     def recommend_style(
@@ -388,21 +388,21 @@ class StyleManager:
     ) -> str:
         """
         Recommend a style based on content keywords.
-        
+
         Args:
             content_keywords: Keywords from the content
-            
+
         Returns:
             Name of recommended style preset
         """
         if not content_keywords:
             return "technical_professional"
-        
+
         # Score each preset based on tag matches
         scores: dict[str, int] = {}
-        
+
         keywords_lower = [kw.lower() for kw in content_keywords]
-        
+
         for name, preset in self._presets.items():
             score = 0
             for tag in preset.tags:
@@ -410,25 +410,25 @@ class StyleManager:
                     if tag in keyword or keyword in tag:
                         score += 1
             scores[name] = score
-        
+
         # Return best match or default
         if scores:
             best = max(scores, key=lambda k: scores[k])
             if scores[best] > 0:
                 return best
-        
+
         return "technical_professional"
 
     def get_random_style(self, exclude: list[str] | None = None) -> str:
         """Get a random style preset name."""
         available = list(self._presets.keys())
-        
+
         if exclude:
             available = [s for s in available if s not in exclude]
-            
+
         if not available:
             return "technical_professional"
-            
+
         return random.choice(available)
 
     def get_style_stats(self) -> dict[str, Any]:
@@ -438,14 +438,14 @@ class StyleManager:
             "total_usages": len(self._usage_history),
             "preset_stats": {},
         }
-        
+
         for name, preset in self._presets.items():
             stats["preset_stats"][name] = {
                 "usage_count": preset.usage_count,
                 "total_engagement": preset.total_engagement,
                 "average_engagement": preset.average_engagement,
             }
-            
+
         return stats
 
     def format_style_report(self) -> str:
@@ -458,20 +458,20 @@ class StyleManager:
             "",
             "Preset Performance:",
         ]
-        
+
         # Sort by usage count
         sorted_presets = sorted(
             self._presets.values(),
             key=lambda p: p.usage_count,
             reverse=True,
         )
-        
+
         for preset in sorted_presets:
             lines.append(
                 f"  {preset.name}: {preset.usage_count} uses, "
                 f"avg engagement: {preset.average_engagement:.2f}"
             )
-        
+
         return "\n".join(lines)
 
 
@@ -491,7 +491,7 @@ class StyleVariant:
 class StyleExperiment:
     """
     Run A/B tests on different image styles.
-    
+
     Integrates with ab_testing.py for statistical analysis.
     """
 
@@ -502,7 +502,7 @@ class StyleExperiment:
     ) -> None:
         """
         Initialize a style experiment.
-        
+
         Args:
             name: Experiment name
             variants: List of style variants to test
@@ -515,24 +515,24 @@ class StyleExperiment:
     def get_variant(self, content_id: str) -> str:
         """
         Get a style variant for given content.
-        
+
         Uses deterministic assignment for reproducibility.
         """
         if not self.variants:
             return "technical_professional"
-        
+
         # Use hash of content_id for deterministic selection
         hash_val = hash(content_id + self.name)
         total_weight = sum(v.weight for v in self.variants)
-        
+
         position = (abs(hash_val) % 1000) / 1000 * total_weight
-        
+
         cumulative = 0.0
         for variant in self.variants:
             cumulative += variant.weight
             if position < cumulative:
                 return variant.style_name
-        
+
         return self.variants[-1].style_name
 
     def record_result(
@@ -551,7 +551,7 @@ class StyleExperiment:
             "variants": {},
             "total_samples": sum(len(r) for r in self._results.values()),
         }
-        
+
         for style_name, results in self._results.items():
             if results:
                 summary["variants"][style_name] = {
@@ -565,31 +565,31 @@ class StyleExperiment:
                     "samples": 0,
                     "mean": 0.0,
                 }
-        
+
         return summary
 
     def get_winner(self, min_samples: int = 10) -> str | None:
         """
         Get the winning style if there's enough data.
-        
+
         Args:
             min_samples: Minimum samples per variant
-            
+
         Returns:
             Name of winning style or None if inconclusive
         """
         best_style: str | None = None
         best_mean = 0.0
-        
+
         for style_name, results in self._results.items():
             if len(results) < min_samples:
                 return None  # Not enough data
-                
+
             mean = sum(results) / len(results)
             if mean > best_mean:
                 best_mean = mean
                 best_style = style_name
-        
+
         return best_style
 
 
@@ -604,11 +604,11 @@ def create_styled_prompt(
 ) -> str:
     """
     Quick function to apply a style to a prompt.
-    
+
     Args:
         base_prompt: Original prompt
         style: Style preset name
-        
+
     Returns:
         Styled prompt string
     """
@@ -626,10 +626,10 @@ def list_available_styles() -> list[str]:
 def get_style_for_topic(topic: str) -> str:
     """
     Get recommended style for a topic.
-    
+
     Args:
         topic: Topic description
-        
+
     Returns:
         Recommended style name
     """
@@ -647,6 +647,7 @@ def _create_module_tests() -> "TestSuite":
     """Create unit tests for this module."""
     import sys
     from pathlib import Path
+
     sys.path.insert(0, str(Path(__file__).parent))
     from test_framework import TestSuite
 
@@ -673,7 +674,7 @@ def _create_module_tests() -> "TestSuite":
     def test_style_preset_average_engagement():
         preset = StylePreset(name="test", description="Test")
         assert preset.average_engagement == 0.0
-        
+
         preset.usage_count = 10
         preset.total_engagement = 50.0
         assert preset.average_engagement == 5.0
@@ -689,7 +690,7 @@ def _create_module_tests() -> "TestSuite":
         preset = manager.get_preset("technical_professional")
         assert preset is not None
         assert preset.name == "technical_professional"
-        
+
         missing = manager.get_preset("nonexistent")
         assert missing is None
 
@@ -713,11 +714,11 @@ def _create_module_tests() -> "TestSuite":
 
     def test_style_manager_recommend():
         manager = StyleManager()
-        
+
         # Should recommend sustainability for green topics
         rec = manager.recommend_style(["solar", "renewable", "green"])
         assert rec == "sustainability_green"
-        
+
         # Should recommend manufacturing for factory topics
         rec = manager.recommend_style(["factory", "production"])
         assert rec == "manufacturing"
@@ -727,7 +728,7 @@ def _create_module_tests() -> "TestSuite":
         custom = StylePreset(name="custom", description="Custom style")
         manager.add_preset(custom)
         assert "custom" in manager.list_presets()
-        
+
         manager.remove_preset("custom")
         assert "custom" not in manager.list_presets()
 
@@ -735,7 +736,7 @@ def _create_module_tests() -> "TestSuite":
         manager = StyleManager()
         manager.apply_style("test", style_preset="manufacturing")
         manager.record_engagement("manufacturing", 10.0)
-        
+
         preset = manager.get_preset("manufacturing")
         assert preset is not None
         assert preset.total_engagement >= 10.0
@@ -760,7 +761,7 @@ def _create_module_tests() -> "TestSuite":
         )
         experiment.record_result("style_a", 10.0)
         experiment.record_result("style_a", 20.0)
-        
+
         summary = experiment.get_summary()
         assert summary["variants"]["style_a"]["samples"] == 2
         assert summary["variants"]["style_a"]["mean"] == 15.0
@@ -781,14 +782,18 @@ def _create_module_tests() -> "TestSuite":
 
     suite.add_test("Color palette description", test_color_palette_description)
     suite.add_test("Style preset apply", test_style_preset_apply)
-    suite.add_test("Style preset average engagement", test_style_preset_average_engagement)
+    suite.add_test(
+        "Style preset average engagement", test_style_preset_average_engagement
+    )
     suite.add_test("Style manager init", test_style_manager_init)
     suite.add_test("Style manager get preset", test_style_manager_get_preset)
     suite.add_test("Style manager apply", test_style_manager_apply)
     suite.add_test("Style manager apply missing", test_style_manager_apply_missing)
     suite.add_test("Style manager recommend", test_style_manager_recommend)
     suite.add_test("Style manager add/remove", test_style_manager_add_remove)
-    suite.add_test("Style manager record engagement", test_style_manager_record_engagement)
+    suite.add_test(
+        "Style manager record engagement", test_style_manager_record_engagement
+    )
     suite.add_test("Style experiment variant", test_style_experiment_variant)
     suite.add_test("Style experiment results", test_style_experiment_results)
     suite.add_test("Create styled prompt", test_create_styled_prompt)

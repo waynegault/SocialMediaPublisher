@@ -345,7 +345,9 @@ class TrendDetector:
             )
 
         # Check for timeliness
-        if any("2024" in content or "2025" in content or "2026" in content for _ in [1]):
+        if any(
+            "2024" in content or "2025" in content or "2026" in content for _ in [1]
+        ):
             suggestions.append(
                 "Content mentions recent dates - emphasize timeliness in the post."
             )
