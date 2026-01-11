@@ -21,8 +21,13 @@
 - [x] **TD.4**: Add missing type hints (core modules: `database.py`, `main.py`, `linkedin_publisher.py`, `linkedin_profile_lookup.py`, `config.py`, `validation_server.py`, `test_framework.py`)
 - [x] **TD.5**: Improve docstrings (`ValidationServer`, `TestSuite` methods)
 
+### Architecture Improvements
+
+- [x] **TASK 4.5**: Pydantic config validation (`config.py` - `SettingsModel` with field validators, range constraints, type coercion at import time)
+
 ### Test Status
-- **155 tests passing** ✅
+
+- **163 tests passing** ✅
 
 ---
 
