@@ -13,6 +13,7 @@ from config import Config
 from database import Database, Story
 from api_client import api_client
 from originality_checker import OriginalityChecker
+from source_verifier import SourceVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class ContentVerifier:
             client=client,
             local_client=local_client,
         )
+        self.source_verifier = SourceVerifier()
 
     def verify_pending_content(
         self,
@@ -153,7 +155,22 @@ class ContentVerifier:
         Verify a single story for publication suitability.
         Returns tuple of (is_approved, reason).
         """
-        # Check originality first (if enabled)
+        # Check source credibility first (if enabled)
+        if Config.SOURCE_VERIFICATION_ENABLED:
+            try:
+                source_result = self.source_verifier.verify_story_sources(story)
+                if not source_result.is_verified:
+                    reason = f"Source verification failed: {source_result.recommendation}"
+                    logger.warning(f"  Source verification failed: {reason}")
+                    return (False, reason)
+                logger.debug(
+                    f"  Source verification passed ({source_result.source_count} sources, "
+                    f"avg credibility: {source_result.average_credibility:.0%})"
+                )
+            except Exception as e:
+                logger.warning(f"  Source verification error (continuing): {e}")
+
+        # Check originality (if enabled)
         if self.originality_checker.enabled:
             try:
                 originality_result = self.originality_checker.check_story_originality(

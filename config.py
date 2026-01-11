@@ -223,6 +223,20 @@ class SettingsModel(BaseSettings):
         default=True, alias="ORIGINALITY_CHECK_ENABLED"
     )
 
+    # --- Source Verification ---
+    min_sources_required: int = Field(
+        default=1, ge=0, le=10, alias="MIN_SOURCES_REQUIRED"
+    )
+    min_source_credibility: float = Field(
+        default=0.3, ge=0.0, le=1.0, alias="MIN_SOURCE_CREDIBILITY"
+    )
+    require_tier1_or_2_source: bool = Field(
+        default=False, alias="REQUIRE_TIER1_OR_2_SOURCE"
+    )
+    source_verification_enabled: bool = Field(
+        default=True, alias="SOURCE_VERIFICATION_ENABLED"
+    )
+
     # --- URL Archiving ---
     archive_source_urls: bool = Field(default=False, alias="ARCHIVE_SOURCE_URLS")
 
@@ -1269,6 +1283,16 @@ Return ONLY valid JSON, no explanation.""",
     )
     # Enable/disable originality checking during verification
     ORIGINALITY_CHECK_ENABLED: bool = _get_bool("ORIGINALITY_CHECK_ENABLED", True)
+
+    # --- Source Verification ---
+    # Minimum number of sources required for a story
+    MIN_SOURCES_REQUIRED: int = _get_int("MIN_SOURCES_REQUIRED", 1)
+    # Minimum average credibility score (0-1) for sources
+    MIN_SOURCE_CREDIBILITY: float = _get_float("MIN_SOURCE_CREDIBILITY", 0.3)
+    # Require at least one tier 1 or tier 2 source
+    REQUIRE_TIER1_OR_2_SOURCE: bool = _get_bool("REQUIRE_TIER1_OR_2_SOURCE", False)
+    # Enable/disable source verification during content verification
+    SOURCE_VERIFICATION_ENABLED: bool = _get_bool("SOURCE_VERIFICATION_ENABLED", True)
 
     # --- URL Archiving ---
     # Automatically archive source URLs to Wayback Machine to prevent link rot

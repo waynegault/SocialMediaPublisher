@@ -28,6 +28,7 @@ TEST_MODULES = [
     ("validation_server", "Validation Server"),
     ("find_leadership", "Find Leadership"),
     ("originality_checker", "Originality Checker"),
+    ("source_verifier", "Source Verifier"),
 ]
 
 
