@@ -1556,17 +1556,41 @@ NOT_FOUND"""
                     )
                     url_text = url_slug.replace("-", " ").lower()
 
-                    # Check name match (required) - first and last name
-                    # Check both result text and URL slug
+                    # === CRITICAL NAME VALIDATION ===
+                    # The URL slug MUST contain the person's name to be valid
+                    # This prevents matching completely wrong profiles
+                    name_in_url = True
+                    if first_name and last_name:
+                        # Both first and last name should appear in URL slug
+                        # Use word boundary matching to avoid partial matches
+                        first_pattern = r'\b' + re.escape(first_name) + r'\b'
+                        last_pattern = r'\b' + re.escape(last_name) + r'\b'
+                        first_in_url = bool(re.search(first_pattern, url_text))
+                        last_in_url = bool(re.search(last_pattern, url_text))
+                        
+                        if not first_in_url and not last_in_url:
+                            # Neither name part in URL - definitely wrong person
+                            logger.debug(f"Skipping '{linkedin_url}' - name not in URL slug: '{url_text}'")
+                            continue
+                        elif not (first_in_url and last_in_url):
+                            # Only one part matches - could be partial match, flag it
+                            name_in_url = False
+                    elif first_name:
+                        # Single word name - must be in URL
+                        first_pattern = r'\b' + re.escape(first_name) + r'\b'
+                        if not re.search(first_pattern, url_text):
+                            logger.debug(f"Skipping '{linkedin_url}' - name not in URL slug: '{url_text}'")
+                            continue
+
+                    # Secondary check: name in search result text (less reliable but helpful)
                     text_to_check = f"{result_text} {url_text}"
 
                     if first_name and last_name:
-                        if (
-                            first_name not in text_to_check
-                            or last_name not in text_to_check
-                        ):
-                            logger.debug(f"Skipping '{linkedin_url}' - name mismatch")
-                            continue
+                        # If name wasn't fully in URL, it MUST be in result text
+                        if not name_in_url:
+                            if first_name not in result_text or last_name not in result_text:
+                                logger.debug(f"Skipping '{linkedin_url}' - partial URL match but name not in result text")
+                                continue
                     elif first_name:
                         # Single word name - be more careful
                         if first_name not in text_to_check:
@@ -1580,6 +1604,11 @@ NOT_FOUND"""
                         if keyword in result_text:
                             match_score += 1
                             matched_keywords.append(keyword)
+
+                    # Strong boost if full name is in URL slug (high confidence)
+                    if name_in_url:
+                        match_score += 3
+                        matched_keywords.append("name_in_url")
 
                     # Check org match (optional based on require_org_match)
                     org_matched = False
@@ -1799,15 +1828,15 @@ NOT_FOUND"""
 
             # HIGH PRECISION THRESHOLD: Require minimum score for confidence
             # Score breakdown:
+            # - Name in URL slug: +3 (strong signal)
             # - Org match: +2
             # - Location match: +1
             # - Role type match: +1
             # - Keyword matches: +1 each
-            # Lowered thresholds - org match alone (score=2) should be sufficient
-            # Common names need just slightly more confirmation
-            MIN_CONFIDENCE_SCORE = 1  # Just name + any signal
+            # Require name_in_url (+3) or org_match (+2) + other signal
+            MIN_CONFIDENCE_SCORE = 3  # Name in URL alone is sufficient
             MIN_CONFIDENCE_SCORE_COMMON_NAME = (
-                2  # Common names need org match or 2 other signals
+                4  # Common names need name_in_url + at least one other signal
             )
 
             threshold = (
@@ -1821,16 +1850,10 @@ NOT_FOUND"""
                     f"Found profile via UC Chrome: {best_match} (score={best_score}, threshold={threshold})"
                 )
                 return best_match
-            elif best_match and best_score >= 0:
-                # Accept even marginally positive scores rather than lose valid profiles
-                logger.info(
-                    f"Accepting marginal match: {best_match} (score={best_score}, threshold was {threshold})"
-                )
-                return best_match
             elif best_match:
+                # Score didn't meet threshold - reject
                 logger.info(
-                    f"Rejecting {'common name ' if is_common_name else ''}negative-score match: "
-                    f"{best_match} (score={best_score})"
+                    f"Rejecting low-confidence match: {best_match} (score={best_score}, threshold={threshold})"
                 )
 
             logger.debug("No matching LinkedIn profile found via UC Chrome")
