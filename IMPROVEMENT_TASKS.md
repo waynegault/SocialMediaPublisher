@@ -28,10 +28,11 @@
 ### Content Quality Improvements
 
 - [x] **TASK 3.4**: Plagiarism & Originality Checking (`originality_checker.py` - word similarity, n-gram overlap detection, LLM assessment, citation formatting; integrated with `verifier.py`)
+- [x] **TASK 3.1**: Multi-Source Story Verification (`source_verifier.py` - domain credibility tiers, source count validation, academic/government detection; integrated with `verifier.py`)
 
 ### Test Status
 
-- **178 tests passing** ✅
+- **193 tests passing** ✅
 
 ---
 
