@@ -1269,7 +1269,13 @@ HTML_TEMPLATE = """
 class ValidationServer:
     """Flask-based validation server for human review of stories."""
 
-    def __init__(self, database: Database, port: int = 5000):
+    def __init__(self, database: Database, port: int = 5000) -> None:
+        """Initialize the validation server.
+        
+        Args:
+            database: Database instance for story storage.
+            port: Port number to run the server on (default: 5000).
+        """
         self.db = database
         self.port = port
         self.app = Flask(__name__)

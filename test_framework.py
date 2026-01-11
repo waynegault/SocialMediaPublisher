@@ -31,6 +31,7 @@ class SuiteResult:
     total_duration_ms: float = 0.0
 
     def add_result(self, result: TestResult) -> None:
+        """Add a test result and update counters."""
         self.results.append(result)
         self.passed += 1 if result.passed else 0
         self.failed += 0 if result.passed else 1
@@ -40,22 +41,27 @@ class SuiteResult:
 class TestSuite:
     """Structured test suite with formatted output."""
 
-    def __init__(self, name: str = "Test Suite"):
+    def __init__(self, name: str = "Test Suite") -> None:
+        """Initialize a test suite with the given name."""
         self.name = name
         self.tests: list[tuple[str, Callable[[], None]]] = []
         self._setup: Optional[Callable[[], None]] = None
         self._teardown: Optional[Callable[[], None]] = None
 
     def add_test(self, name: str, test_func: Callable[[], None]) -> None:
+        """Register a test function with a descriptive name."""
         self.tests.append((name, test_func))
 
     def set_setup(self, setup_func: Callable[[], None]) -> None:
+        """Set a function to run before each test."""
         self._setup = setup_func
 
     def set_teardown(self, teardown_func: Callable[[], None]) -> None:
+        """Set a function to run after each test."""
         self._teardown = teardown_func
 
     def run(self, verbose: bool = True) -> SuiteResult:
+        """Execute all tests and return aggregated results."""
         result = SuiteResult(suite_name=self.name)
         if verbose:
             print(f"\n{'=' * 60}\n  {self.name}\n{'=' * 60}\n")
