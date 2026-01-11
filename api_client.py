@@ -446,3 +446,113 @@ class RateLimitedAPIClient:
 
 # Global singleton instance
 api_client = RateLimitedAPIClient()
+
+
+# =============================================================================
+# Unit Tests
+# =============================================================================
+
+
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+    """Create unit tests for api_client module."""
+    from typing import TYPE_CHECKING
+
+    if TYPE_CHECKING:
+        from test_framework import TestSuite
+
+    from test_framework import TestSuite
+
+    suite = TestSuite("API Client Tests")
+
+    def test_api_client_creation():
+        """Test RateLimitedAPIClient creation."""
+        client = RateLimitedAPIClient()
+        assert client.gemini_limiter is not None
+        assert client.imagen_limiter is not None
+        assert client.linkedin_limiter is not None
+        assert client.http_limiter is not None
+
+    def test_parse_retry_after_found():
+        """Test parsing retry-after from error message."""
+        client = RateLimitedAPIClient()
+        result = client._parse_retry_after("Rate limit exceeded. Retry-After: 60")
+        assert result == 60.0
+
+    def test_parse_retry_after_not_found():
+        """Test parsing when retry-after is missing."""
+        client = RateLimitedAPIClient()
+        result = client._parse_retry_after("Some other error")
+        assert result == 30.0  # Default
+
+    def test_is_rate_limit_error_429():
+        """Test detection of 429 error."""
+        client = RateLimitedAPIClient()
+        error = Exception("HTTP 429 Too Many Requests")
+        assert client._is_rate_limit_error(error) is True
+
+    def test_is_rate_limit_error_quota():
+        """Test detection of quota error."""
+        client = RateLimitedAPIClient()
+        error = Exception("RESOURCE_EXHAUSTED: Quota exceeded")
+        assert client._is_rate_limit_error(error) is True
+
+    def test_is_rate_limit_error_not_rate_limit():
+        """Test non-rate-limit error."""
+        client = RateLimitedAPIClient()
+        error = Exception("Connection timeout")
+        assert client._is_rate_limit_error(error) is False
+
+    def test_get_all_metrics():
+        """Test getting all rate limiter metrics."""
+        client = RateLimitedAPIClient()
+        metrics = client.get_all_metrics()
+        assert "gemini" in metrics
+        assert "imagen" in metrics
+        assert "linkedin" in metrics
+        assert "http" in metrics
+
+    def test_gemini_limiter_config():
+        """Test Gemini rate limiter configuration."""
+        client = RateLimitedAPIClient()
+        assert client.gemini_limiter.fill_rate == 1.0
+
+    def test_imagen_limiter_config():
+        """Test Imagen rate limiter configuration."""
+        client = RateLimitedAPIClient()
+        assert client.imagen_limiter.fill_rate == 0.5
+
+    def test_linkedin_limiter_config():
+        """Test LinkedIn rate limiter configuration."""
+        client = RateLimitedAPIClient()
+        assert client.linkedin_limiter.fill_rate == 0.5
+
+    def test_http_limiter_config():
+        """Test HTTP rate limiter configuration."""
+        client = RateLimitedAPIClient()
+        assert client.http_limiter.fill_rate == 2.0
+
+    def test_global_api_client_exists():
+        """Test that global api_client is created."""
+        assert api_client is not None
+        assert isinstance(api_client, RateLimitedAPIClient)
+
+    def test_log_metrics_no_error():
+        """Test log_metrics doesn't raise."""
+        client = RateLimitedAPIClient()
+        client.log_metrics()  # Should not raise
+
+    suite.add_test("API client creation", test_api_client_creation)
+    suite.add_test("Parse retry-after found", test_parse_retry_after_found)
+    suite.add_test("Parse retry-after not found", test_parse_retry_after_not_found)
+    suite.add_test("Is rate limit error - 429", test_is_rate_limit_error_429)
+    suite.add_test("Is rate limit error - quota", test_is_rate_limit_error_quota)
+    suite.add_test("Is not rate limit error", test_is_rate_limit_error_not_rate_limit)
+    suite.add_test("Get all metrics", test_get_all_metrics)
+    suite.add_test("Gemini limiter config", test_gemini_limiter_config)
+    suite.add_test("Imagen limiter config", test_imagen_limiter_config)
+    suite.add_test("LinkedIn limiter config", test_linkedin_limiter_config)
+    suite.add_test("HTTP limiter config", test_http_limiter_config)
+    suite.add_test("Global api_client exists", test_global_api_client_exists)
+    suite.add_test("Log metrics no error", test_log_metrics_no_error)
+
+    return suite

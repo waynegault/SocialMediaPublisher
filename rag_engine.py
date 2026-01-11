@@ -714,3 +714,164 @@ def get_rag_engine() -> RAGEngine:
     if _rag_engine is None:
         _rag_engine = RAGEngine()
     return _rag_engine
+
+
+# =============================================================================
+# Unit Tests
+# =============================================================================
+
+
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+    """Create unit tests for rag_engine module."""
+    from typing import TYPE_CHECKING
+
+    if TYPE_CHECKING:
+        from test_framework import TestSuite
+
+    from test_framework import TestSuite
+    import tempfile
+
+    suite = TestSuite("RAG Engine Tests")
+
+    def test_document_creation():
+        """Test Document dataclass creation."""
+        doc = Document(
+            id="doc1",
+            content="Sample document content",
+            doc_type="resume",
+            metadata={"key": "value"},
+        )
+        assert doc.id == "doc1"
+        assert doc.content == "Sample document content"
+        assert doc.doc_type == "resume"
+
+    def test_retrieval_result_creation():
+        """Test RetrievalResult dataclass creation."""
+        result = RetrievalResult(query="test query")
+        assert result.query == "test query"
+        assert result.documents == []
+        assert result.scores == []
+
+    def test_retrieval_result_context():
+        """Test RetrievalResult context property."""
+        doc1 = Document(id="1", content="First doc", doc_type="test")
+        doc2 = Document(id="2", content="Second doc", doc_type="test")
+        result = RetrievalResult(query="test", documents=[doc1, doc2])
+        context = result.context
+        assert "First doc" in context
+        assert "Second doc" in context
+
+    def test_retrieval_result_top_document():
+        """Test RetrievalResult top_document property."""
+        doc = Document(id="1", content="Top doc", doc_type="test")
+        result = RetrievalResult(query="test", documents=[doc])
+        assert result.top_document is doc
+
+    def test_retrieval_result_top_document_empty():
+        """Test RetrievalResult top_document when empty."""
+        result = RetrievalResult(query="test")
+        assert result.top_document is None
+
+    def test_personal_context_creation():
+        """Test PersonalContext dataclass creation."""
+        ctx = PersonalContext(
+            name="John Doe",
+            current_title="Senior Engineer",
+            target_role="Lead Engineer",
+            years_experience=10,
+        )
+        assert ctx.name == "John Doe"
+        assert ctx.years_experience == 10
+
+    def test_personal_context_to_prompt_context():
+        """Test PersonalContext to_prompt_context method."""
+        ctx = PersonalContext(
+            name="Jane Doe",
+            current_title="Process Engineer",
+            key_skills=["Python", "Chemical Engineering"],
+        )
+        prompt = ctx.to_prompt_context()
+        assert "Jane Doe" in prompt
+        assert "Process Engineer" in prompt
+        assert "Python" in prompt
+
+    def test_personal_context_empty():
+        """Test PersonalContext with no data."""
+        ctx = PersonalContext()
+        prompt = ctx.to_prompt_context()
+        assert prompt == ""
+
+    def test_rag_engine_creation():
+        """Test RAGEngine class creation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = RAGEngine(persist_directory=tmpdir)
+            assert engine is not None
+            assert engine.persist_directory == tmpdir
+
+    def test_rag_engine_add_document():
+        """Test RAGEngine add_document method."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = RAGEngine(persist_directory=tmpdir)
+            engine.add_document(
+                doc_id="test_doc",
+                content="Test content about chemical engineering",
+                doc_type="test",
+            )
+            assert "test_doc" in engine._documents
+
+    def test_rag_engine_add_skill():
+        """Test RAGEngine add_skill method."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = RAGEngine(persist_directory=tmpdir)
+            engine.add_skill("Python", "10 years of experience", level="expert")
+            assert any("python" in k for k in engine._documents.keys())
+
+    def test_rag_engine_add_project():
+        """Test RAGEngine add_project method."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = RAGEngine(persist_directory=tmpdir)
+            engine.add_project(
+                project_name="Test Project",
+                description="A test project description",
+                technologies=["Python", "SQL"],
+            )
+            assert any("project" in k for k in engine._documents.keys())
+
+    def test_rag_engine_keyword_retrieve():
+        """Test RAGEngine keyword-based retrieval."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = RAGEngine(persist_directory=tmpdir)
+            engine.add_document("doc1", "Python programming language", "skill")
+            engine.add_document("doc2", "Java development", "skill")
+            result = engine._keyword_retrieve("Python", n_results=2, doc_types=None)
+            assert len(result.documents) > 0
+
+    def test_get_rag_engine_singleton():
+        """Test get_rag_engine returns singleton."""
+        global _rag_engine
+        _rag_engine = None  # Reset for test
+        r1 = get_rag_engine()
+        r2 = get_rag_engine()
+        assert r1 is r2
+        _rag_engine = None  # Cleanup
+
+    suite.add_test("Document creation", test_document_creation)
+    suite.add_test("RetrievalResult creation", test_retrieval_result_creation)
+    suite.add_test("RetrievalResult context", test_retrieval_result_context)
+    suite.add_test("RetrievalResult top_document", test_retrieval_result_top_document)
+    suite.add_test(
+        "RetrievalResult top_document empty", test_retrieval_result_top_document_empty
+    )
+    suite.add_test("PersonalContext creation", test_personal_context_creation)
+    suite.add_test(
+        "PersonalContext to_prompt_context", test_personal_context_to_prompt_context
+    )
+    suite.add_test("PersonalContext empty", test_personal_context_empty)
+    suite.add_test("RAGEngine creation", test_rag_engine_creation)
+    suite.add_test("RAGEngine add_document", test_rag_engine_add_document)
+    suite.add_test("RAGEngine add_skill", test_rag_engine_add_skill)
+    suite.add_test("RAGEngine add_project", test_rag_engine_add_project)
+    suite.add_test("RAGEngine keyword retrieve", test_rag_engine_keyword_retrieve)
+    suite.add_test("get_rag_engine singleton", test_get_rag_engine_singleton)
+
+    return suite

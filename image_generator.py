@@ -239,7 +239,7 @@ def get_random_appearance() -> str:
 
     return (
         f"a gorgeous highly attractive {ethnicity} woman with {hair_color} {hair_style}, "
-        f"{body_type}, with striking beautiful features and a confident radiant smile"
+        f"{body_type}, with striking beautiful features, large bust and a confident radiant smile"
     )
 
 
