@@ -34,6 +34,7 @@ TEST_MODULES = [
     ("trend_detector", "Trend Detector"),
     ("ab_testing", "A/B Testing"),
     ("cache", "Cache"),
+    ("image_quality", "Image Quality"),
 ]
 
 
