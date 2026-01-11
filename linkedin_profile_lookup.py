@@ -1641,14 +1641,42 @@ NOT_FOUND"""
         Returns:
             Tuple of (linkedin_url, slug) if found, (None, None) otherwise
         """
+        # Skip department lookup for generic academic departments that rarely have LinkedIn pages
+        # This saves 4+ API calls per department that will almost certainly fail
+        dept_lower = department.lower()
+        skip_patterns = [
+            "department of",  # Generic academic department naming
+            "graduate school of",  # Graduate programs
+            "school of",  # Generic school naming (but keep business schools)
+            "faculty of",  # Faculty naming
+            "institute of",  # Research institutes (too generic)
+            "center for",  # Research centers
+            "centre for",  # UK spelling
+            "division of",  # Academic divisions
+            "college of",  # Generic college naming
+        ]
+        
+        # Don't skip business schools, engineering schools, etc. that often have LinkedIn pages
+        keep_patterns = ["business", "management", "mba", "sloan", "gsb", "engineering"]
+        
+        should_skip = any(pattern in dept_lower for pattern in skip_patterns)
+        should_keep = any(pattern in dept_lower for pattern in keep_patterns)
+        
+        if should_skip and not should_keep:
+            logger.debug(
+                f"Skipping department lookup (unlikely to have LinkedIn page): {department}"
+            )
+            return (None, None)
+        
         logger.info(
             f"Searching for department LinkedIn page: {department} at {parent_org}"
         )
 
         # Strategy 1: Try common URL patterns directly via LinkedIn API
+        # Limit to 2 most likely patterns to reduce API calls
         slug_candidates = self._generate_department_slug_candidates(
             department, parent_org, parent_slug
-        )
+        )[:2]  # Only try top 2 candidates
 
         for candidate_slug in slug_candidates:
             result = self.lookup_organization_by_vanity_name(candidate_slug)
