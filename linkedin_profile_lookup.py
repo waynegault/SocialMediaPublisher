@@ -1167,7 +1167,7 @@ NOT_FOUND"""
         # Use site: restriction for more targeted results
         parts.append("site:linkedin.com/in")
         search_query = " ".join(parts)
-        logger.debug(f"UC Chrome Bing search: {search_query}")
+        logger.debug(f"UC Chrome Google search: {search_query}")
 
         # Common FULL names or extremely common first names that need extra signals
         # Note: We removed ethnic surnames (Wang, Zhang, Kim, Patel, etc.) because
@@ -1190,7 +1190,10 @@ NOT_FOUND"""
         }
 
         try:
-            url = f"https://www.bing.com/search?q={search_query.replace(' ', '+')}"
+            # Use Google Search (better LinkedIn results than Bing)
+            import urllib.parse
+            encoded_query = urllib.parse.quote(search_query)
+            url = f"https://www.google.com/search?q={encoded_query}"
             driver.get(url)
             time.sleep(2)  # Wait for page to load
 
@@ -1239,54 +1242,71 @@ NOT_FOUND"""
             }
             context_keywords -= stopwords
 
-            result_items = driver.find_elements(By.CSS_SELECTOR, ".b_algo")
+            # Extract LinkedIn URLs directly from page source (most reliable for Google)
+            page_source = driver.page_source
+            linkedin_urls = re.findall(
+                r'https://(?:www\.)?linkedin\.com/in/[\w\-]+/?', page_source
+            )
+            
+            # Deduplicate while preserving order
+            seen = set()
+            unique_urls = []
+            for u in linkedin_urls:
+                u_clean = u.rstrip("/")
+                if u_clean not in seen:
+                    seen.add(u_clean)
+                    unique_urls.append(u_clean)
+            
             best_match = None
             best_score = 0
 
-            for item in result_items:
+            # For each LinkedIn URL found, try to get context from the search result
+            for linkedin_url in unique_urls[:10]:  # Check up to 10 results
                 try:
-                    heading = item.find_element(By.CSS_SELECTOR, "h2")
-                    title = heading.text
-                    link = heading.find_element(By.CSS_SELECTOR, "a")
-                    href = link.get_attribute("href") or ""
-
-                    # Decode Bing redirect URL (base64 encoded)
-                    u_match = re.search(r"[&?]u=a1([^&]+)", href)
-                    if not u_match:
-                        continue
-
+                    # Find the search result containing this URL
+                    # Google results are in divs with class 'g' or we can search for the URL in any element
+                    result_text = ""
+                    
+                    # Try to find result elements containing this URL
                     try:
-                        encoded = u_match.group(1)
-                        padding = 4 - len(encoded) % 4
-                        if padding != 4:
-                            encoded += "=" * padding
-                        decoded_url = base64.urlsafe_b64decode(encoded).decode("utf-8")
+                        # Look for any element containing this URL
+                        elements = driver.find_elements(By.XPATH, f"//*[contains(@href, '{linkedin_url}')]")
+                        for elem in elements:
+                            # Get parent container text
+                            parent = elem
+                            for _ in range(5):  # Go up to 5 levels
+                                try:
+                                    parent = parent.find_element(By.XPATH, "..")
+                                    parent_text = parent.text
+                                    if len(parent_text) > len(result_text) and len(parent_text) < 1000:
+                                        result_text = parent_text
+                                except Exception:
+                                    break
                     except Exception:
-                        continue
-
-                    if "linkedin.com/in/" not in decoded_url:
-                        continue
-
-                    # Get result text for matching
-                    try:
-                        snippet_el = item.find_element(By.CSS_SELECTOR, ".b_caption p")
-                        snippet = snippet_el.text
-                    except Exception:
-                        snippet = ""
-                    result_text = f"{title} {snippet}".lower()
+                        pass
+                    
+                    result_text = result_text.lower() if result_text else ""
+                    
+                    # If no context found from search results, we can still use the URL
+                    # The URL slug often contains the person's name
+                    url_slug = linkedin_url.split("/in/")[-1] if "/in/" in linkedin_url else ""
+                    url_text = url_slug.replace("-", " ").lower()
 
                     # Check name match (required) - first and last name
+                    # Check both result text and URL slug
+                    text_to_check = f"{result_text} {url_text}"
+                    
                     if first_name and last_name:
                         if (
-                            first_name not in result_text
-                            or last_name not in result_text
+                            first_name not in text_to_check
+                            or last_name not in text_to_check
                         ):
-                            logger.debug(f"Skipping '{title[:40]}' - name mismatch")
+                            logger.debug(f"Skipping '{linkedin_url}' - name mismatch")
                             continue
                     elif first_name:
                         # Single word name - be more careful
-                        if first_name not in result_text:
-                            logger.debug(f"Skipping '{title[:40]}' - name mismatch")
+                        if first_name not in text_to_check:
+                            logger.debug(f"Skipping '{linkedin_url}' - name mismatch")
                             continue
 
                     # Calculate match score based on context keywords
@@ -1306,7 +1326,7 @@ NOT_FOUND"""
                         org_matched = org_matched or company_lower in result_text
 
                     if require_org_match and not org_matched:
-                        logger.debug(f"Skipping '{title[:40]}' - org mismatch")
+                        logger.debug(f"Skipping '{linkedin_url}' - org mismatch")
                         continue
 
                     # Boost score for org match
@@ -1486,13 +1506,13 @@ NOT_FOUND"""
                     if contradiction_penalty > 0:
                         match_score -= contradiction_penalty
                         logger.debug(
-                            f"Contradiction detected for '{title[:40]}': {contradiction_reasons}, penalty={contradiction_penalty}"
+                            f"Contradiction detected for '{linkedin_url}': {contradiction_reasons}, penalty={contradiction_penalty}"
                         )
 
                     # Skip if contradictions outweigh matches
                     if match_score < 0:
                         logger.debug(
-                            f"Skipping '{title[:40]}' - contradictions outweigh matches (score={match_score})"
+                            f"Skipping '{linkedin_url}' - contradictions outweigh matches (score={match_score})"
                         )
                         continue
 
@@ -1500,7 +1520,7 @@ NOT_FOUND"""
                     if match_score > best_score:
                         best_score = match_score
                         vanity_match = re.search(
-                            r"linkedin\.com/in/([\w\-]+)", decoded_url
+                            r"linkedin\.com/in/([\w\-]+)", linkedin_url
                         )
                         if vanity_match:
                             vanity = vanity_match.group(1)
