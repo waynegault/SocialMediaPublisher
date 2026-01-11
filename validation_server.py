@@ -1271,7 +1271,7 @@ class ValidationServer:
 
     def __init__(self, database: Database, port: int = 5000) -> None:
         """Initialize the validation server.
-        
+
         Args:
             database: Database instance for story storage.
             port: Port number to run the server on (default: 5000).
