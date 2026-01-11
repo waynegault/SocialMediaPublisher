@@ -24,7 +24,7 @@ class LinkedInPublisher:
     BASE_URL = "https://api.linkedin.com/v2"
     UPLOAD_URL = "https://api.linkedin.com/v2/assets?action=registerUpload"
 
-    def __init__(self, database: Database):
+    def __init__(self, database: Database) -> None:
         """Initialize the LinkedIn publisher."""
         self.db = database
         self._validate_credentials()

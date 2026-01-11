@@ -7,7 +7,7 @@ import shutil
 from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Generator, Optional
 from contextlib import contextmanager
 
 from config import Config
@@ -253,13 +253,13 @@ def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
 class Database:
     """Database manager for story storage and retrieval."""
 
-    def __init__(self, db_name: Optional[str] = None):
+    def __init__(self, db_name: Optional[str] = None) -> None:
         """Initialize database connection."""
         self.db_name = db_name or Config.DB_NAME
         self._init_db()
 
     @contextmanager
-    def _get_connection(self):
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Context manager for database connections."""
         conn = sqlite3.connect(self.db_name)
         conn.row_factory = sqlite3.Row
