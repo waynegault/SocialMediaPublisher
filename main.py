@@ -1406,26 +1406,76 @@ def _lookup_linkedin_profiles_for_people(
                 total_companies_found += found
                 total_companies_not_found += not_found
 
+            # Sync profiles between story_people and org_leaders
+            # (same person may appear in both lists)
+            profile_lookup = {}
+            for person in (story.story_people or []) + (story.org_leaders or []):
+                name = person.get("name", "").strip().lower()
+                company = person.get("company", "").strip().lower()
+                key = f"{name}@{company}"
+                if person.get("linkedin_profile") and key not in profile_lookup:
+                    profile_lookup[key] = {
+                        "linkedin_profile": person.get("linkedin_profile"),
+                        "linkedin_profile_type": person.get("linkedin_profile_type"),
+                        "linkedin_slug": person.get("linkedin_slug"),
+                        "linkedin_urn": person.get("linkedin_urn"),
+                    }
+
+            # Apply found profiles to any matching people who don't have them
+            for person in (story.story_people or []) + (story.org_leaders or []):
+                if not person.get("linkedin_profile"):
+                    name = person.get("name", "").strip().lower()
+                    company = person.get("company", "").strip().lower()
+                    key = f"{name}@{company}"
+                    if key in profile_lookup:
+                        person.update(profile_lookup[key])
+
+            # Rebuild all_people after sync
+            all_people = (story.story_people or []) + (story.org_leaders or [])
+
             # Track companies that weren't found
             for person in all_people:
                 company = person.get("company", "").strip()
                 if company and company not in all_company_data:
                     all_companies_not_found.add(company)
 
-            # Track people results
+            # Track people results (deduplicate by name+company)
             for person in all_people:
+                name = person.get("name", "Unknown")
+                company = person.get("company", "")
+                dedup_key = f"{name.lower().strip()}@{company.lower().strip()}"
+
                 person_info = {
-                    "name": person.get("name", "Unknown"),
-                    "company": person.get("company", ""),
+                    "name": name,
+                    "company": company,
                     "position": person.get("position", ""),
                     "linkedin_profile": person.get("linkedin_profile"),
                     "linkedin_profile_type": person.get("linkedin_profile_type"),
                     "story_id": story.id,
                 }
+
                 if person.get("linkedin_profile"):
-                    people_with_profiles.append(person_info)
+                    # Only add if not already tracked (avoid duplicates)
+                    if not any(
+                        f"{p['name'].lower().strip()}@{p['company'].lower().strip()}"
+                        == dedup_key
+                        for p in people_with_profiles
+                    ):
+                        people_with_profiles.append(person_info)
                 else:
-                    people_without_profiles.append(person_info)
+                    # Only add if not already tracked and doesn't have profile elsewhere
+                    already_has_profile = any(
+                        f"{p['name'].lower().strip()}@{p['company'].lower().strip()}"
+                        == dedup_key
+                        for p in people_with_profiles
+                    )
+                    already_in_without = any(
+                        f"{p['name'].lower().strip()}@{p['company'].lower().strip()}"
+                        == dedup_key
+                        for p in people_without_profiles
+                    )
+                    if not already_has_profile and not already_in_without:
+                        people_without_profiles.append(person_info)
 
             if story_updated:
                 # Update the story in the database
