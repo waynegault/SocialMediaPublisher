@@ -42,6 +42,7 @@ TEST_MODULES = [
     ("integration_tests", "Integration Tests"),
     ("analytics_db", "Analytics Data Warehouse"),
     ("migrations", "Database Migrations"),
+    ("events", "Event System"),
 ]
 
 
