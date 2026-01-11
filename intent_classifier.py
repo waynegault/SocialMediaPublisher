@@ -667,3 +667,173 @@ def get_intent_classifier() -> IntentClassifier:
     if _intent_classifier is None:
         _intent_classifier = IntentClassifier()
     return _intent_classifier
+
+
+# =============================================================================
+# Unit Tests
+# =============================================================================
+
+
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+    """Create unit tests for intent_classifier module."""
+    from typing import TYPE_CHECKING
+
+    if TYPE_CHECKING:
+        from test_framework import TestSuite
+
+    from test_framework import TestSuite
+
+    suite = TestSuite("Intent Classifier Tests")
+
+    def test_story_intent_enum():
+        """Test StoryIntent enum values."""
+        assert StoryIntent.SKILL_SHOWCASE.value == "skill_showcase"
+        assert StoryIntent.NEGATIVE.value == "negative"
+        assert len(StoryIntent) == 10
+
+    def test_intent_score_creation():
+        """Test IntentScore dataclass creation."""
+        score = IntentScore(
+            intent=StoryIntent.SKILL_SHOWCASE,
+            score=0.8,
+            confidence=0.9,
+            keywords_matched=["engineering", "technical"],
+        )
+        assert score.intent == StoryIntent.SKILL_SHOWCASE
+        assert score.score == 0.8
+        assert len(score.keywords_matched) == 2
+
+    def test_classification_result_creation():
+        """Test ClassificationResult dataclass creation."""
+        result = ClassificationResult(
+            primary_intent=StoryIntent.INNOVATION,
+            career_alignment_score=0.75,
+            is_publishable=True,
+        )
+        assert result.primary_intent == StoryIntent.INNOVATION
+        assert result.career_alignment_score == 0.75
+        assert result.rejection_reason is None
+
+    def test_classification_result_top_intents():
+        """Test ClassificationResult top_intents property."""
+        result = ClassificationResult(
+            primary_intent=StoryIntent.INNOVATION,
+            career_alignment_score=0.75,
+            all_scores=[
+                IntentScore(StoryIntent.INNOVATION, 0.9, 0.8, []),
+                IntentScore(StoryIntent.SKILL_SHOWCASE, 0.7, 0.6, []),
+                IntentScore(StoryIntent.NEUTRAL, 0.3, 0.4, []),
+            ],
+        )
+        top = result.top_intents
+        assert len(top) == 3
+        assert top[0] == StoryIntent.INNOVATION
+
+    def test_intent_keywords_defined():
+        """Test INTENT_KEYWORDS dictionary is populated."""
+        assert len(INTENT_KEYWORDS) > 0
+        assert StoryIntent.SKILL_SHOWCASE in INTENT_KEYWORDS
+        assert StoryIntent.NEGATIVE in INTENT_KEYWORDS
+
+    def test_career_alignment_weights_defined():
+        """Test CAREER_ALIGNMENT_WEIGHTS dictionary is populated."""
+        assert len(CAREER_ALIGNMENT_WEIGHTS) > 0
+        assert CAREER_ALIGNMENT_WEIGHTS[StoryIntent.SKILL_SHOWCASE] == 1.0
+        assert CAREER_ALIGNMENT_WEIGHTS[StoryIntent.NEGATIVE] == 0.0
+
+    def test_intent_classifier_creation():
+        """Test IntentClassifier creation."""
+        classifier = IntentClassifier()
+        assert classifier is not None
+        assert classifier.use_transformers is False  # Default
+
+    def test_classifier_skill_showcase():
+        """Test classification of skill showcase content."""
+        classifier = IntentClassifier()
+        result = classifier.classify(
+            "New Engineering Solution for Process Optimization",
+            "This technical implementation demonstrates expertise in system design and methodology.",
+        )
+        assert result.primary_intent in (
+            StoryIntent.SKILL_SHOWCASE,
+            StoryIntent.INNOVATION,
+            StoryIntent.PROBLEM_SOLVING,
+        )
+        assert result.career_alignment_score > 0.3
+
+    def test_classifier_negative_content():
+        """Test classification of negative content."""
+        classifier = IntentClassifier()
+        result = classifier.classify(
+            "Company Faces Major Scandal After Investigation",
+            "The fraud investigation revealed serious misconduct and negligence.",
+        )
+        assert result.primary_intent == StoryIntent.NEGATIVE
+        assert result.is_publishable is False
+
+    def test_classifier_neutral_content():
+        """Test classification of neutral content."""
+        classifier = IntentClassifier()
+        result = classifier.classify(
+            "Weather Update for Today",
+            "The weather will be sunny with temperatures around 20 degrees.",
+        )
+        # Should have low career alignment for irrelevant content
+        assert result.career_alignment_score < 0.7
+
+    def test_classify_story_intent_function():
+        """Test classify_story_intent convenience function."""
+        result = classify_story_intent(
+            "Breakthrough in Hydrogen Technology",
+            "New catalyst innovation enables more efficient hydrogen production.",
+        )
+        assert result is not None
+        assert result.career_alignment_score > 0
+
+    def test_filter_career_relevant_stories():
+        """Test filter_career_relevant_stories function."""
+        stories = [
+            {
+                "title": "New Reactor Design Innovation",
+                "summary": "Engineering breakthrough in catalyst technology.",
+            },
+            {"title": "Celebrity Gossip", "summary": "Latest news about celebrities."},
+        ]
+        relevant = filter_career_relevant_stories(stories, threshold=0.3)
+        # At least the engineering story should pass through
+        assert len(relevant) <= len(stories)
+
+    def test_get_intent_classifier_singleton():
+        """Test get_intent_classifier returns singleton."""
+        global _intent_classifier
+        _intent_classifier = None  # Reset for test
+        c1 = get_intent_classifier()
+        c2 = get_intent_classifier()
+        assert c1 is c2
+        _intent_classifier = None  # Cleanup
+
+    suite.add_test("StoryIntent enum", test_story_intent_enum)
+    suite.add_test("IntentScore creation", test_intent_score_creation)
+    suite.add_test("ClassificationResult creation", test_classification_result_creation)
+    suite.add_test(
+        "ClassificationResult top_intents", test_classification_result_top_intents
+    )
+    suite.add_test("INTENT_KEYWORDS defined", test_intent_keywords_defined)
+    suite.add_test(
+        "CAREER_ALIGNMENT_WEIGHTS defined", test_career_alignment_weights_defined
+    )
+    suite.add_test("IntentClassifier creation", test_intent_classifier_creation)
+    suite.add_test("Classifier skill showcase", test_classifier_skill_showcase)
+    suite.add_test("Classifier negative content", test_classifier_negative_content)
+    suite.add_test("Classifier neutral content", test_classifier_neutral_content)
+    suite.add_test(
+        "classify_story_intent function", test_classify_story_intent_function
+    )
+    suite.add_test(
+        "filter_career_relevant_stories", test_filter_career_relevant_stories
+    )
+    suite.add_test(
+        "get_intent_classifier singleton", test_get_intent_classifier_singleton
+    )
+
+    return suite

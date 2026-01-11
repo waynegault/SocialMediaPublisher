@@ -854,3 +854,168 @@ def get_ner_engine() -> NEREngine:
     if _ner_engine is None:
         _ner_engine = NEREngine()
     return _ner_engine
+
+
+# =============================================================================
+# Unit Tests
+# =============================================================================
+
+
+def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+    """Create unit tests for ner_engine module."""
+    from typing import TYPE_CHECKING
+
+    if TYPE_CHECKING:
+        from test_framework import TestSuite
+
+    from test_framework import TestSuite
+
+    suite = TestSuite("NER Engine Tests")
+
+    def test_entity_creation():
+        """Test Entity dataclass creation."""
+        entity = Entity(
+            text="BASF",
+            label="ORG",
+            start_char=0,
+            end_char=4,
+            confidence=0.9,
+        )
+        assert entity.text == "BASF"
+        assert entity.label == "ORG"
+        assert entity.normalized == "BASF"
+
+    def test_entity_normalized_default():
+        """Test Entity normalized defaults to text."""
+        entity = Entity(text="MIT", label="ORG")
+        assert entity.normalized == "MIT"
+
+    def test_person_entity_creation():
+        """Test PersonEntity dataclass creation."""
+        person = PersonEntity(
+            text="Dr. John Smith",
+            label="PERSON",
+            title="CEO",
+            affiliation="BASF",
+        )
+        assert person.text == "Dr. John Smith"
+        assert person.label == "PERSON"
+        assert person.title == "CEO"
+
+    def test_organization_entity_creation():
+        """Test OrganizationEntity dataclass creation."""
+        org = OrganizationEntity(
+            text="BASF SE",
+            label="ORG",
+            org_type="company",
+            industry="chemicals",
+        )
+        assert org.text == "BASF SE"
+        assert org.label == "ORG"
+        assert org.org_type == "company"
+
+    def test_extraction_result_creation():
+        """Test ExtractionResult dataclass creation."""
+        result = ExtractionResult(
+            text="Sample text",
+            confidence_score=0.85,
+        )
+        assert result.text == "Sample text"
+        assert result.persons == []
+        assert result.organizations == []
+
+    def test_extraction_result_mention_candidates():
+        """Test ExtractionResult mention_candidates property."""
+        person = PersonEntity(text="John", label="PERSON", confidence=0.9)
+        org = OrganizationEntity(text="BASF", label="ORG", confidence=0.8)
+        result = ExtractionResult(persons=[person], organizations=[org])
+        candidates = result.mention_candidates
+        assert len(candidates) == 2
+        assert candidates[0].confidence >= candidates[1].confidence
+
+    def test_chem_eng_terms_defined():
+        """Test CHEM_ENG_TERMS set is populated."""
+        assert len(CHEM_ENG_TERMS) > 0
+        assert "distillation" in CHEM_ENG_TERMS
+        assert "catalysis" in CHEM_ENG_TERMS
+
+    def test_company_suffixes_defined():
+        """Test COMPANY_SUFFIXES set is populated."""
+        assert len(COMPANY_SUFFIXES) > 0
+        assert "ltd" in COMPANY_SUFFIXES
+        assert "inc" in COMPANY_SUFFIXES
+
+    def test_academic_patterns_defined():
+        """Test ACADEMIC_PATTERNS set is populated."""
+        assert len(ACADEMIC_PATTERNS) > 0
+        assert "university" in ACADEMIC_PATTERNS
+        assert "institute" in ACADEMIC_PATTERNS
+
+    def test_professional_titles_defined():
+        """Test PROFESSIONAL_TITLES set is populated."""
+        assert len(PROFESSIONAL_TITLES) > 0
+        assert "ceo" in PROFESSIONAL_TITLES
+        assert "professor" in PROFESSIONAL_TITLES
+
+    def test_known_companies_defined():
+        """Test KNOWN_COMPANIES dict is populated."""
+        assert len(KNOWN_COMPANIES) > 0
+        assert "basf" in KNOWN_COMPANIES
+        assert KNOWN_COMPANIES["basf"] == "BASF SE"
+
+    def test_known_universities_defined():
+        """Test KNOWN_UNIVERSITIES dict is populated."""
+        assert len(KNOWN_UNIVERSITIES) > 0
+        assert "mit" in KNOWN_UNIVERSITIES
+        assert "Massachusetts Institute of Technology" in KNOWN_UNIVERSITIES["mit"]
+
+    def test_ner_engine_creation():
+        """Test NEREngine class creation."""
+        engine = NEREngine()
+        assert engine is not None
+        assert engine.model_name == "en_core_web_sm"
+
+    def test_ner_engine_extract_empty():
+        """Test NEREngine extract with empty text."""
+        engine = NEREngine()
+        result = engine.extract_entities("")
+        assert result.text == ""
+        assert len(result.all_entities) == 0
+
+    def test_ner_engine_extract_basic():
+        """Test NEREngine basic extraction."""
+        engine = NEREngine()
+        result = engine.extract_entities("BASF announced a new partnership with MIT.")
+        # Should find entities (depends on spaCy being installed)
+        assert result is not None
+        assert result.text == "BASF announced a new partnership with MIT."
+
+    def test_get_ner_engine_singleton():
+        """Test get_ner_engine returns singleton."""
+        global _ner_engine
+        _ner_engine = None  # Reset for test
+        e1 = get_ner_engine()
+        e2 = get_ner_engine()
+        assert e1 is e2
+        _ner_engine = None  # Cleanup
+
+    suite.add_test("Entity creation", test_entity_creation)
+    suite.add_test("Entity normalized default", test_entity_normalized_default)
+    suite.add_test("PersonEntity creation", test_person_entity_creation)
+    suite.add_test("OrganizationEntity creation", test_organization_entity_creation)
+    suite.add_test("ExtractionResult creation", test_extraction_result_creation)
+    suite.add_test(
+        "ExtractionResult mention_candidates", test_extraction_result_mention_candidates
+    )
+    suite.add_test("CHEM_ENG_TERMS defined", test_chem_eng_terms_defined)
+    suite.add_test("COMPANY_SUFFIXES defined", test_company_suffixes_defined)
+    suite.add_test("ACADEMIC_PATTERNS defined", test_academic_patterns_defined)
+    suite.add_test("PROFESSIONAL_TITLES defined", test_professional_titles_defined)
+    suite.add_test("KNOWN_COMPANIES defined", test_known_companies_defined)
+    suite.add_test("KNOWN_UNIVERSITIES defined", test_known_universities_defined)
+    suite.add_test("NEREngine creation", test_ner_engine_creation)
+    suite.add_test("NEREngine extract empty", test_ner_engine_extract_empty)
+    suite.add_test("NEREngine extract basic", test_ner_engine_extract_basic)
+    suite.add_test("get_ner_engine singleton", test_get_ner_engine_singleton)
+
+    return suite

@@ -44,6 +44,15 @@ TEST_MODULES = [
     ("migrations", "Database Migrations"),
     ("events", "Event System"),
     ("di", "Dependency Injection"),
+    ("async_utils", "Async Utilities"),
+    ("dashboard", "Dashboard"),
+    ("analytics_engine", "Analytics Engine"),
+    ("api_client", "API Client"),
+    ("intent_classifier", "Intent Classifier"),
+    ("linkedin_engagement", "LinkedIn Engagement"),
+    ("linkedin_networking", "LinkedIn Networking"),
+    ("ner_engine", "NER Engine"),
+    ("rag_engine", "RAG Engine"),
 ]
 
 
