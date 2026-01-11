@@ -875,6 +875,15 @@ NOT_FOUND"""
                 require_org_match=False,
             )
 
+        # Fallback: Try with just name + company (no department/location that might be wrong)
+        if not profile_url and (department or location):
+            logger.info(f"Retrying search for {name} with simplified query...")
+            profile_url = self._search_person_playwright(
+                name,
+                company=company,
+                require_org_match=False,
+            )
+
         if profile_url:
             logger.info(f"Found person profile: {name} -> {profile_url}")
             return profile_url
@@ -1155,8 +1164,8 @@ NOT_FOUND"""
             location_parts = location.split(",")
             if location_parts:
                 parts.append(location_parts[0].strip())
-        # Add "LinkedIn" in quotes to make it a mandatory search term
-        parts.append('"LinkedIn"')
+        # Use site: restriction for more targeted results
+        parts.append("site:linkedin.com/in")
         search_query = " ".join(parts)
         logger.debug(f"UC Chrome Bing search: {search_query}")
 
@@ -1655,19 +1664,19 @@ NOT_FOUND"""
             "division of",  # Academic divisions
             "college of",  # Generic college naming
         ]
-        
+
         # Don't skip business schools, engineering schools, etc. that often have LinkedIn pages
         keep_patterns = ["business", "management", "mba", "sloan", "gsb", "engineering"]
-        
+
         should_skip = any(pattern in dept_lower for pattern in skip_patterns)
         should_keep = any(pattern in dept_lower for pattern in keep_patterns)
-        
+
         if should_skip and not should_keep:
             logger.debug(
                 f"Skipping department lookup (unlikely to have LinkedIn page): {department}"
             )
             return (None, None)
-        
+
         logger.info(
             f"Searching for department LinkedIn page: {department} at {parent_org}"
         )
