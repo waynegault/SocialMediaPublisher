@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 class ContentEngine:
     """Main orchestrator for the content publishing pipeline."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize all components."""
         logger.info("Initializing Content Engine...")
 
@@ -2743,7 +2743,7 @@ def _test_api_keys(engine: ContentEngine) -> None:
         print("  ⚠ Some required services need attention")
 
 
-def main():
+def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
         description="Social Media Publisher - Automated news publishing to LinkedIn"

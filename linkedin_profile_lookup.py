@@ -33,13 +33,13 @@ except ImportError:
     )
 
 
-def _suppress_uc_cleanup_errors():
+def _suppress_uc_cleanup_errors() -> None:
     """Suppress Windows handle errors from UC Chrome cleanup."""
     if sys.platform == "win32":
         # Monkey-patch time.sleep in the UC module to suppress cleanup errors
         original_sleep = time.sleep
 
-        def patched_sleep(seconds):
+        def patched_sleep(seconds: float) -> None:
             try:
                 original_sleep(seconds)
             except OSError:
@@ -60,7 +60,7 @@ _suppress_uc_cleanup_errors()
 class LinkedInCompanyLookup:
     """Look up LinkedIn company pages using Gemini with Google Search grounding."""
 
-    def __init__(self, genai_client: Optional[genai.Client] = None):
+    def __init__(self, genai_client: Optional[genai.Client] = None) -> None:
         """Initialize the LinkedIn company lookup service.
 
         Args:
@@ -85,11 +85,11 @@ class LinkedInCompanyLookup:
         # Track if we've verified LinkedIn login this session
         self._linkedin_login_verified = False
 
-    def __enter__(self):
+    def __enter__(self) -> "LinkedInCompanyLookup":
         """Context manager entry - returns self."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Optional[type], exc_val: Optional[BaseException], exc_tb: Optional[Any]) -> bool:
         """Context manager exit - closes browser session."""
         self.close_browser()
         return False
@@ -281,7 +281,7 @@ class LinkedInCompanyLookup:
             logger.error(f"Auto-login failed: {e}")
             return False
 
-    def close_browser(self):
+    def close_browser(self) -> None:
         """Close the shared browser session.
 
         Call this when done with all searches to clean up resources.

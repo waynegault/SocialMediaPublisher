@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 import sys
 
 
-def _check_venv():
+def _check_venv() -> None:
     """Check if running in the correct virtual environment."""
     proj_root = Path(__file__).parent
     current_exe = Path(sys.executable).resolve()
