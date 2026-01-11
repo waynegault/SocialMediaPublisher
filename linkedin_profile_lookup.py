@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple, cast
 
 import httpx
 from google import genai  # type: ignore
@@ -1371,6 +1371,90 @@ NOT_FOUND"""
 
         return None
 
+    def _validate_profile_name(
+        self, driver: Any, profile_url: str, first_name: str, last_name: str
+    ) -> bool:
+        """Visit a LinkedIn profile page and validate that the name matches.
+
+        This is the most reliable way to verify we have the correct person,
+        as it reads the actual profile name from the page.
+
+        Args:
+            driver: Selenium WebDriver instance
+            profile_url: LinkedIn profile URL to validate
+            first_name: Expected first name (lowercase)
+            last_name: Expected last name (lowercase)
+
+        Returns:
+            True if the profile name matches, False otherwise
+        """
+        from selenium.webdriver.common.by import By
+
+        try:
+            driver.get(profile_url)
+            time.sleep(1.5)  # Wait for page to load
+
+            # Extract the profile name from the page
+            # LinkedIn profile titles are typically "FirstName LastName - Title | LinkedIn"
+            page_title = driver.title.lower() if driver.title else ""
+
+            # Also try to get the main profile name heading
+            profile_name = ""
+            for selector in [
+                "h1",
+                ".text-heading-xlarge",
+                "[data-generated-suggestion-target]",
+            ]:
+                try:
+                    name_elem = driver.find_element(By.CSS_SELECTOR, selector)
+                    if name_elem and name_elem.text:
+                        profile_name = name_elem.text.lower().strip()
+                        break
+                except Exception:
+                    continue
+
+            # Use profile name if found, otherwise fall back to page title
+            name_text = profile_name if profile_name else page_title
+
+            if not name_text:
+                logger.debug(f"Could not extract name from profile page: {profile_url}")
+                return False
+
+            # Validate: BOTH first and last name must appear in the profile name
+            # Use word boundary matching to avoid partial matches
+            if first_name and last_name:
+                first_pattern = rf"\b{re.escape(first_name)}\b"
+                last_pattern = rf"\b{re.escape(last_name)}\b"
+                first_match = bool(re.search(first_pattern, name_text))
+                last_match = bool(re.search(last_pattern, name_text))
+
+                if first_match and last_match:
+                    logger.debug(
+                        f"Profile name validated: '{name_text[:50]}' matches '{first_name} {last_name}'"
+                    )
+                    return True
+                else:
+                    logger.debug(
+                        f"Profile name mismatch: expected '{first_name} {last_name}', found '{name_text[:50]}'"
+                    )
+                    return False
+            elif first_name:
+                first_pattern = rf"\b{re.escape(first_name)}\b"
+                if re.search(first_pattern, name_text):
+                    return True
+                else:
+                    logger.debug(
+                        f"Profile name mismatch: expected '{first_name}', found '{name_text[:50]}'"
+                    )
+                    return False
+            else:
+                # No name parts to validate - accept
+                return True
+
+        except Exception as e:
+            logger.debug(f"Error validating profile name for {profile_url}: {e}")
+            return False
+
     def _search_person_playwright(
         self,
         name: str,
@@ -1514,8 +1598,8 @@ NOT_FOUND"""
                     seen.add(u_clean)
                     unique_urls.append(u_clean)
 
-            best_match = None
-            best_score = 0
+            # Track all candidates with their scores
+            candidates: List[Tuple[int, str, List[str]]] = []  # (score, url, matched_keywords)
 
             # For each LinkedIn URL found, try to get context from the search result
             for linkedin_url in unique_urls[:10]:  # Check up to 10 results
@@ -1563,23 +1647,27 @@ NOT_FOUND"""
                     if first_name and last_name:
                         # Both first and last name should appear in URL slug
                         # Use word boundary matching to avoid partial matches
-                        first_pattern = r'\b' + re.escape(first_name) + r'\b'
-                        last_pattern = r'\b' + re.escape(last_name) + r'\b'
+                        first_pattern = r"\b" + re.escape(first_name) + r"\b"
+                        last_pattern = r"\b" + re.escape(last_name) + r"\b"
                         first_in_url = bool(re.search(first_pattern, url_text))
                         last_in_url = bool(re.search(last_pattern, url_text))
-                        
+
                         if not first_in_url and not last_in_url:
                             # Neither name part in URL - definitely wrong person
-                            logger.debug(f"Skipping '{linkedin_url}' - name not in URL slug: '{url_text}'")
+                            logger.debug(
+                                f"Skipping '{linkedin_url}' - name not in URL slug: '{url_text}'"
+                            )
                             continue
                         elif not (first_in_url and last_in_url):
                             # Only one part matches - could be partial match, flag it
                             name_in_url = False
                     elif first_name:
                         # Single word name - must be in URL
-                        first_pattern = r'\b' + re.escape(first_name) + r'\b'
+                        first_pattern = r"\b" + re.escape(first_name) + r"\b"
                         if not re.search(first_pattern, url_text):
-                            logger.debug(f"Skipping '{linkedin_url}' - name not in URL slug: '{url_text}'")
+                            logger.debug(
+                                f"Skipping '{linkedin_url}' - name not in URL slug: '{url_text}'"
+                            )
                             continue
 
                     # Secondary check: name in search result text (less reliable but helpful)
@@ -1588,8 +1676,13 @@ NOT_FOUND"""
                     if first_name and last_name:
                         # If name wasn't fully in URL, it MUST be in result text
                         if not name_in_url:
-                            if first_name not in result_text or last_name not in result_text:
-                                logger.debug(f"Skipping '{linkedin_url}' - partial URL match but name not in result text")
+                            if (
+                                first_name not in result_text
+                                or last_name not in result_text
+                            ):
+                                logger.debug(
+                                    f"Skipping '{linkedin_url}' - partial URL match but name not in result text"
+                                )
                                 continue
                     elif first_name:
                         # Single word name - be more careful
@@ -1809,22 +1902,25 @@ NOT_FOUND"""
                         )
                         continue
 
-                    # Track best match by score
-                    if match_score > best_score:
-                        best_score = match_score
-                        vanity_match = re.search(
-                            r"linkedin\.com/in/([\w\-]+)", linkedin_url
+                    # Track all candidates with positive scores (not just best)
+                    # We'll validate them in order of score if needed
+                    vanity_match = re.search(
+                        r"linkedin\.com/in/([\w\-]+)", linkedin_url
+                    )
+                    if vanity_match:
+                        vanity = vanity_match.group(1)
+                        candidate_url = f"https://www.linkedin.com/in/{vanity}"
+                        candidates.append((match_score, candidate_url, matched_keywords))
+                        logger.debug(
+                            f"Candidate: {candidate_url} (score={match_score}, keywords={matched_keywords})"
                         )
-                        if vanity_match:
-                            vanity = vanity_match.group(1)
-                            best_match = f"https://www.linkedin.com/in/{vanity}"
-                            logger.debug(
-                                f"New best match: {best_match} (score={match_score}, keywords={matched_keywords})"
-                            )
 
                 except Exception as e:
                     logger.debug(f"Error processing result item: {e}")
                     continue
+
+            # Sort candidates by score (highest first)
+            candidates.sort(key=lambda x: x[0], reverse=True)
 
             # HIGH PRECISION THRESHOLD: Require minimum score for confidence
             # Score breakdown:
@@ -1845,18 +1941,29 @@ NOT_FOUND"""
                 else MIN_CONFIDENCE_SCORE
             )
 
-            if best_match and best_score >= threshold:
-                logger.info(
-                    f"Found profile via UC Chrome: {best_match} (score={best_score}, threshold={threshold})"
-                )
-                return best_match
-            elif best_match:
-                # Score didn't meet threshold - reject
-                logger.info(
-                    f"Rejecting low-confidence match: {best_match} (score={best_score}, threshold={threshold})"
-                )
+            # Try candidates in order of score until we find a valid one
+            for candidate_score, candidate_url, matched_kws in candidates:
+                if candidate_score < threshold:
+                    logger.info(
+                        f"Remaining candidates below threshold (best: {candidate_url}, score={candidate_score}, threshold={threshold})"
+                    )
+                    break
 
-            logger.debug("No matching LinkedIn profile found via UC Chrome")
+                # FINAL VALIDATION: Visit the profile page and verify the name
+                if self._validate_profile_name(driver, candidate_url, first_name, last_name):
+                    logger.info(
+                        f"Found profile via UC Chrome: {candidate_url} (score={candidate_score}, threshold={threshold})"
+                    )
+                    return candidate_url
+                else:
+                    logger.info(
+                        f"Rejecting candidate after page validation: {candidate_url} (name mismatch on actual profile), trying next..."
+                    )
+
+            if candidates:
+                logger.debug(f"No valid candidate found from {len(candidates)} candidates")
+            else:
+                logger.debug("No matching LinkedIn profile found via UC Chrome")
 
         except Exception as e:
             logger.error(f"UC Chrome search error: {e}")
