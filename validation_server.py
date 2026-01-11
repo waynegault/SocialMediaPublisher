@@ -680,6 +680,259 @@ HTML_TEMPLATE = """
             margin-bottom: 15px;
             color: #00d4ff;
         }
+
+        /* ========================================
+           TASK 8.1: Batch Operations Styles
+           ======================================== */
+        .batch-controls {
+            display: none;
+            padding: 8px 12px;
+            background: rgba(139,92,246,0.15);
+            border-radius: 8px;
+            margin-top: 8px;
+            border: 1px solid rgba(139,92,246,0.3);
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .batch-controls.visible {
+            display: flex;
+        }
+
+        .batch-controls .batch-info {
+            color: #8b5cf6;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .batch-controls .btn-batch {
+            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+            color: white;
+            padding: 6px 12px;
+            font-size: 0.85rem;
+        }
+
+        .btn-batch-mode {
+            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+            color: white;
+        }
+
+        .btn-batch-mode.active {
+            background: linear-gradient(135deg, #7c3aed, #6d28d9);
+            box-shadow: 0 0 0 2px #8b5cf6;
+        }
+
+        .story-checkbox {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            width: 24px;
+            height: 24px;
+            z-index: 20;
+            cursor: pointer;
+            display: none;
+        }
+
+        .batch-mode-active .story-checkbox {
+            display: block;
+        }
+
+        .linkedin-preview.selected {
+            border-color: #8b5cf6 !important;
+            box-shadow: 0 0 0 3px rgba(139,92,246,0.3);
+        }
+
+        /* Keyboard shortcuts help */
+        .shortcuts-help {
+            position: fixed;
+            bottom: 80px;
+            right: 30px;
+            background: rgba(26,26,46,0.95);
+            border: 1px solid rgba(0,212,255,0.3);
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 0.8rem;
+            color: #888;
+            display: none;
+            z-index: 50;
+        }
+
+        .shortcuts-help.visible {
+            display: block;
+        }
+
+        .shortcuts-help h4 {
+            color: #00d4ff;
+            margin-bottom: 8px;
+            font-size: 0.85rem;
+        }
+
+        .shortcuts-help kbd {
+            background: rgba(255,255,255,0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-right: 4px;
+            font-family: monospace;
+            color: #e0e0e0;
+        }
+
+        .shortcuts-help ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .shortcuts-help li {
+            margin-bottom: 4px;
+        }
+
+        /* ========================================
+           TASK 8.1: Mobile-Responsive Design
+           ======================================== */
+        @media (max-width: 768px) {
+            body {
+                padding: 4px;
+            }
+
+            header {
+                flex-direction: column;
+                gap: 8px;
+                padding: 8px;
+            }
+
+            header h1 {
+                font-size: 1rem;
+            }
+
+            .top-buttons {
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: center;
+                gap: 4px;
+            }
+
+            .btn {
+                padding: 8px 12px;
+                font-size: 0.85rem;
+            }
+
+            .preview-section {
+                flex-direction: column;
+            }
+
+            .preview-section.edit-mode .preview-panel {
+                flex: 1;
+                max-height: 40vh;
+            }
+
+            .edit-panel.visible {
+                flex: 1;
+                min-height: 50vh;
+            }
+
+            .details-row {
+                flex-direction: column;
+                gap: 6px;
+            }
+
+            .detail-item.fixed-width {
+                width: 100%;
+            }
+
+            .navigation {
+                flex-wrap: wrap;
+                padding: 8px;
+            }
+
+            .btn-nav {
+                padding: 8px 16px;
+                flex: 1;
+                min-width: 100px;
+            }
+
+            .linkedin-preview {
+                font-size: 0.95rem;
+            }
+
+            .linkedin-image {
+                max-height: 150px;
+            }
+
+            .toast {
+                bottom: 10px;
+                right: 10px;
+                left: 10px;
+                text-align: center;
+            }
+
+            .shortcuts-help {
+                display: none !important;
+            }
+
+            /* Swipe hint for mobile */
+            .swipe-hint {
+                display: block;
+                text-align: center;
+                color: #666;
+                font-size: 0.75rem;
+                padding: 4px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            header h1 {
+                font-size: 0.9rem;
+            }
+
+            .story-counter {
+                font-size: 0.75rem;
+            }
+
+            .btn {
+                padding: 6px 10px;
+                font-size: 0.8rem;
+            }
+
+            .story-details-section {
+                padding: 6px 8px;
+            }
+
+            .detail-label {
+                font-size: 0.65rem;
+            }
+
+            .detail-value {
+                font-size: 0.8rem;
+            }
+
+            .edit-group label {
+                font-size: 0.75rem;
+            }
+
+            .edit-group input,
+            .edit-group textarea {
+                font-size: 0.9rem;
+                padding: 6px 8px;
+            }
+        }
+
+        /* Touch-friendly targets for mobile */
+        @media (hover: none) and (pointer: coarse) {
+            .btn {
+                min-height: 44px;
+                min-width: 44px;
+            }
+
+            .btn-nav {
+                min-height: 48px;
+            }
+
+            .story-checkbox {
+                width: 32px;
+                height: 32px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -691,12 +944,22 @@ HTML_TEMPLATE = """
                 <span class="story-counter" id="storyCounter" aria-live="polite">Loading...</span>
             </div>
             <div class="top-buttons" id="topButtons" role="toolbar" aria-label="Story actions">
-                <button class="btn btn-accept" onclick="acceptStory()" aria-label="Accept this story for publication">✓ Accept</button>
-                <button class="btn btn-reject" onclick="rejectStory()" aria-label="Reject this story">✗ Reject</button>
-                <button class="btn btn-edit" onclick="toggleEdit()" aria-label="Edit story details" aria-expanded="false" id="editToggleBtn">✎ Edit</button>
+                <button class="btn btn-accept" onclick="acceptStory()" aria-label="Accept this story for publication (A)">✓ Accept</button>
+                <button class="btn btn-reject" onclick="rejectStory()" aria-label="Reject this story (R)">✗ Reject</button>
+                <button class="btn btn-edit" onclick="toggleEdit()" aria-label="Edit story details (E)" aria-expanded="false" id="editToggleBtn">✎ Edit</button>
+                <button class="btn btn-batch-mode" onclick="toggleBatchMode()" aria-label="Toggle batch selection mode (B)" id="batchModeBtn">☑ Batch</button>
                 <button class="btn btn-close" onclick="closeValidator()" aria-label="Close validator and return to menu">Close</button>
             </div>
         </header>
+
+        <!-- Batch Controls (visible when batch mode active) -->
+        <div class="batch-controls" id="batchControls" role="toolbar" aria-label="Batch operations">
+            <span class="batch-info" id="batchInfo">0 selected</span>
+            <button class="btn btn-batch btn-accept" onclick="batchAccept()" aria-label="Accept all selected stories">✓ Accept Selected</button>
+            <button class="btn btn-batch btn-reject" onclick="batchReject()" aria-label="Reject all selected stories">✗ Reject Selected</button>
+            <button class="btn btn-batch" onclick="selectAll()" aria-label="Select all pending stories">Select All Pending</button>
+            <button class="btn btn-batch btn-cancel" onclick="clearSelection()" aria-label="Clear selection">Clear Selection</button>
+        </div>
 
         <main id="main-content" class="main-content" role="main">
             <!-- Story Details Section (above preview) -->
@@ -1245,10 +1508,30 @@ HTML_TEMPLATE = """
                             toggleEdit();
                         }
                         break;
+                    case 'b':
+                    case 'B':
+                        if (!e.ctrlKey && !e.metaKey) {
+                            e.preventDefault();
+                            toggleBatchMode();
+                        }
+                        break;
+                    case ' ':  // Spacebar to toggle selection in batch mode
+                        if (isBatchMode) {
+                            e.preventDefault();
+                            toggleCurrentSelection();
+                        }
+                        break;
+                    case '?':  // Show keyboard shortcuts help
+                        e.preventDefault();
+                        toggleShortcutsHelp();
+                        break;
                     case 'Escape':
                         if (isEditMode) {
                             e.preventDefault();
                             cancelEdit();
+                        } else if (isBatchMode) {
+                            e.preventDefault();
+                            toggleBatchMode();
                         }
                         break;
                 }
@@ -1257,6 +1540,176 @@ HTML_TEMPLATE = """
                 cancelEdit();
             }
         });
+
+        // ========================================
+        // TASK 8.1: Batch Operations
+        // ========================================
+        let isBatchMode = false;
+        let selectedStoryIds = new Set();
+
+        function toggleBatchMode() {
+            isBatchMode = !isBatchMode;
+            const batchModeBtn = document.getElementById('batchModeBtn');
+            const batchControls = document.getElementById('batchControls');
+            const container = document.querySelector('.container');
+
+            batchModeBtn.classList.toggle('active', isBatchMode);
+            batchControls.classList.toggle('visible', isBatchMode);
+            container.classList.toggle('batch-mode-active', isBatchMode);
+
+            if (!isBatchMode) {
+                clearSelection();
+            }
+
+            updateBatchInfo();
+        }
+
+        function toggleCurrentSelection() {
+            if (stories.length === 0) return;
+            const storyId = stories[currentIndex].id;
+
+            if (selectedStoryIds.has(storyId)) {
+                selectedStoryIds.delete(storyId);
+            } else {
+                selectedStoryIds.add(storyId);
+            }
+
+            updateSelectionUI();
+            updateBatchInfo();
+        }
+
+        function updateSelectionUI() {
+            const preview = document.getElementById('linkedinPreview');
+            const storyId = stories[currentIndex]?.id;
+
+            if (storyId && selectedStoryIds.has(storyId)) {
+                preview.classList.add('selected');
+            } else {
+                preview.classList.remove('selected');
+            }
+        }
+
+        function updateBatchInfo() {
+            const batchInfo = document.getElementById('batchInfo');
+            batchInfo.textContent = `${selectedStoryIds.size} selected`;
+        }
+
+        function selectAll() {
+            // Select all pending stories
+            stories.forEach(story => {
+                if (story.verification_status === 'pending') {
+                    selectedStoryIds.add(story.id);
+                }
+            });
+            updateSelectionUI();
+            updateBatchInfo();
+            showToast(`Selected ${selectedStoryIds.size} pending stories`, 'success');
+        }
+
+        function clearSelection() {
+            selectedStoryIds.clear();
+            updateSelectionUI();
+            updateBatchInfo();
+        }
+
+        async function batchAccept() {
+            if (selectedStoryIds.size === 0) {
+                showToast('No stories selected', 'error');
+                return;
+            }
+
+            const count = selectedStoryIds.size;
+            let successCount = 0;
+
+            for (const storyId of selectedStoryIds) {
+                try {
+                    const response = await fetch(`/api/stories/${storyId}/status`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ verification_status: 'approved' })
+                    });
+
+                    if (response.ok) {
+                        // Update local story data
+                        const storyIndex = stories.findIndex(s => s.id === storyId);
+                        if (storyIndex >= 0) {
+                            stories[storyIndex].verification_status = 'approved';
+                        }
+                        successCount++;
+                    }
+                } catch (error) {
+                    console.error(`Failed to accept story ${storyId}:`, error);
+                }
+            }
+
+            clearSelection();
+            renderStory();
+            showToast(`Accepted ${successCount}/${count} stories`, 'success');
+        }
+
+        async function batchReject() {
+            if (selectedStoryIds.size === 0) {
+                showToast('No stories selected', 'error');
+                return;
+            }
+
+            const count = selectedStoryIds.size;
+            let successCount = 0;
+
+            for (const storyId of selectedStoryIds) {
+                try {
+                    const response = await fetch(`/api/stories/${storyId}/status`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ verification_status: 'rejected' })
+                    });
+
+                    if (response.ok) {
+                        const storyIndex = stories.findIndex(s => s.id === storyId);
+                        if (storyIndex >= 0) {
+                            stories[storyIndex].verification_status = 'rejected';
+                        }
+                        successCount++;
+                    }
+                } catch (error) {
+                    console.error(`Failed to reject story ${storyId}:`, error);
+                }
+            }
+
+            clearSelection();
+            renderStory();
+            showToast(`Rejected ${successCount}/${count} stories`, 'success');
+        }
+
+        // Keyboard shortcuts help
+        let shortcutsVisible = false;
+
+        function toggleShortcutsHelp() {
+            shortcutsVisible = !shortcutsVisible;
+            let helpEl = document.getElementById('shortcutsHelp');
+
+            if (!helpEl) {
+                helpEl = document.createElement('div');
+                helpEl.id = 'shortcutsHelp';
+                helpEl.className = 'shortcuts-help';
+                helpEl.innerHTML = `
+                    <h4>⌨️ Keyboard Shortcuts</h4>
+                    <ul>
+                        <li><kbd>A</kbd> Accept story</li>
+                        <li><kbd>R</kbd> Reject story</li>
+                        <li><kbd>E</kbd> Edit story</li>
+                        <li><kbd>B</kbd> Toggle batch mode</li>
+                        <li><kbd>←</kbd> <kbd>→</kbd> Navigate</li>
+                        <li><kbd>Space</kbd> Select (batch mode)</li>
+                        <li><kbd>Esc</kbd> Cancel/Exit mode</li>
+                        <li><kbd>?</kbd> Toggle this help</li>
+                    </ul>
+                `;
+                document.body.appendChild(helpEl);
+            }
+
+            helpEl.classList.toggle('visible', shortcutsVisible);
+        }
 
         // Initialize
         loadStories();

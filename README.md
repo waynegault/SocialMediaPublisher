@@ -43,6 +43,7 @@ For detailed architecture and component documentation, see the [Overview wiki](h
 - **LinkedIn @ Mentions**: Automatic @ mentions using verified LinkedIn usernames
 - **Promotion Messages**: AI-generated personalized job-seeking messages aligned to each story
 - **Human Validation GUI**: Web-based interface for reviewing, editing, and approving stories
+- **Web Dashboard**: Real-time monitoring dashboard with pipeline status and analytics
 - **Opportunity Messages**: Optional professional postscript about job openings
 - **Automatic Cleanup**: Removes old unused stories after a configurable
   exclusion period
@@ -52,6 +53,35 @@ For detailed architecture and component documentation, see the [Overview wiki](h
 - **Date Post-Filtering**: Filters stories by actual article publication date
 - **Preview Mode**: Preview discovered stories before saving with selective save
   capability
+
+### Advanced NLP Features
+
+- **Named Entity Recognition (NER)**: spaCy-based entity extraction for people and
+  organizations with fuzzy matching and disambiguation
+- **Intent Classification**: Career-aligned story filtering with negative content
+  detection using transformer models
+- **RAG Engine**: Retrieval-Augmented Generation for personalized content based on
+  author's experience using ChromaDB vector storage
+
+### LinkedIn Automation
+
+- **Connection Request Automation**: Personalized connection requests with rate
+  limiting (100/week) and template management
+- **Comment Engagement**: Strategic comment placement on target posts with AI
+  comment generation and spam detection
+- **Analytics Integration**: Track impressions, likes, comments, shares with
+  strategy recommendations
+- **Robust URN Resolution**: Multi-strategy profile lookup with Playwright
+  browser automation and caching
+
+### Performance & Infrastructure
+
+- **Async/Await Utilities**: Concurrent HTTP client, sync-to-async wrappers,
+  and batch processing with aiohttp
+- **Load Testing**: Comprehensive performance testing suite for rate limiters,
+  database operations, and concurrent processing
+- **Multi-Model Images**: Support for DALL-E 3, Google Imagen, and Hugging Face
+  with automatic fallback
 
 ## How It Works
 
@@ -289,17 +319,43 @@ SocialMediaPublisher/
 ├── config.py                # Configuration management
 ├── database.py              # SQLite database operations
 ├── searcher.py              # Story discovery using Gemini
-├── image_generator.py       # AI image generation (Imagen/HF)
+├── image_generator.py       # AI image generation (Imagen/DALL-E/HF)
 ├── verifier.py              # Content quality verification
 ├── scheduler.py             # Publication timing logic
 ├── linkedin_publisher.py    # LinkedIn API integration
 ├── validation_server.py     # Web-based human validation GUI (Flask)
+├── dashboard.py             # Real-time monitoring web dashboard
 ├── error_handling.py        # Circuit breaker and retry logic
 ├── rate_limiter.py          # Adaptive rate limiting
 ├── test_framework.py        # Custom unit test framework
 ├── run_tests.py             # Unit test runner
 ├── company_mention_enricher.py # Story enrichment and LinkedIn profiles
 ├── opportunity_messages.py  # Professional postscripts for posts
+│
+├── # NLP & AI Modules
+├── ner_engine.py            # Named Entity Recognition (spaCy)
+├── intent_classifier.py     # Career-aligned story filtering
+├── rag_engine.py            # RAG for personalized content (ChromaDB)
+│
+├── # LinkedIn Automation
+├── linkedin_networking.py   # Connection request automation
+├── linkedin_engagement.py   # Comment engagement automation
+├── analytics_engine.py      # LinkedIn analytics integration
+├── linkedin_profile_lookup.py # Profile URN resolution
+│
+├── # Performance & Infrastructure
+├── async_utils.py           # Async HTTP client and utilities
+├── load_tests.py            # Load testing suite
+├── di.py                    # Dependency injection container
+├── events.py                # Event bus for decoupled components
+│
+├── # Supporting Modules
+├── api_client.py            # Unified API client
+├── cache.py                 # Caching utilities
+├── migrations.py            # Database migrations
+├── monitoring.py            # Application monitoring
+├── notifications.py         # Alert notifications
+│
 ├── requirements.txt         # Python dependencies
 ├── .env.example             # Example environment configuration
 ├── generated_images/        # AI-generated story images
@@ -672,6 +728,48 @@ From the interactive menu:
 ---
 
 ## Appendix A: Chronology of Changes
+
+### Version 3.0 (January 11, 2026)
+
+- **Major NLP enhancements**:
+  - Added `ner_engine.py`: spaCy-based Named Entity Recognition for extracting
+    people and organizations with fuzzy matching and disambiguation
+  - Added `intent_classifier.py`: Career-aligned story filtering with transformer
+    models for intent classification and negative content detection
+  - Added `rag_engine.py`: Retrieval-Augmented Generation using ChromaDB for
+    personalized content based on author's experience and resume
+
+- **LinkedIn automation suite**:
+  - Added `linkedin_networking.py`: Connection request automation with
+    personalized templates and rate limiting (100/week)
+  - Added `linkedin_engagement.py`: Strategic comment engagement with AI-generated
+    comments and spam detection
+  - Added `analytics_engine.py`: Full analytics integration with strategy
+    recommendations based on content performance
+  - Enhanced `linkedin_profile_lookup.py` with RobustURNResolver using Playwright
+    browser automation and multi-strategy fallback chain
+
+- **Performance infrastructure**:
+  - Added `async_utils.py`: Async HTTP client with aiohttp, concurrent processing,
+    and sync-to-async wrappers
+  - Added `load_tests.py`: Comprehensive load testing for rate limiters, database
+    operations, and concurrent processing
+  - Added `dashboard.py`: Real-time web dashboard for pipeline monitoring with
+    analytics visualization
+
+- **Multi-model image generation**:
+  - Enhanced `image_generator.py` with DALL-E 3 support, model selection API,
+    and automatic fallback between providers (Imagen → DALL-E → HuggingFace)
+
+- **UI improvements**:
+  - Enhanced `validation_server.py` with batch operations (select all, batch
+    accept/reject), keyboard shortcuts, and mobile-responsive design
+
+- **Dependency management**:
+  - Updated `requirements.txt` to use minimum version requirements (>=) instead
+    of pinned versions to avoid dependency conflicts
+  - Added optional dependencies: spacy, chromadb, sentence-transformers,
+    transformers, aiohttp, torch
 
 ### Version 2.9 (January 9, 2026)
 

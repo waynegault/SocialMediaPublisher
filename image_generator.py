@@ -1,10 +1,20 @@
-"""AI Image generation for story illustrations."""
+"""AI Image generation for story illustrations.
+
+TASK 6.3: Multi-Model Image Generation
+- DALL-E 3 as alternative generator
+- Model selection based on prompt type
+- A/B testing support for image models
+- Auto-fallback on model failures
+"""
 
 import os
 import time
 import logging
 import random
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
+from typing import Optional
 
 from google import genai
 from google.genai import types
@@ -16,6 +26,170 @@ from api_client import api_client
 from config import Config
 from database import Database, Story
 from rate_limiter import AdaptiveRateLimiter
+
+
+# =============================================================================
+# Multi-Model Configuration (TASK 6.3)
+# =============================================================================
+
+
+class ImageModel(Enum):
+    """Available image generation models."""
+
+    GOOGLE_IMAGEN = "google_imagen"
+    OPENAI_DALLE3 = "openai_dalle3"
+    HUGGINGFACE_FLUX = "huggingface_flux"
+    HUGGINGFACE_SDXL = "huggingface_sdxl"
+    LOCAL = "local"
+
+
+@dataclass
+class ModelConfig:
+    """Configuration for an image model."""
+
+    model_id: ImageModel
+    display_name: str
+    priority: int  # Lower = higher priority
+    enabled: bool = True
+    requires_api_key: str = ""  # Config attribute name for API key
+    best_for: Optional[list[str]] = None  # Content types this model excels at
+
+    def __post_init__(self) -> None:
+        if self.best_for is None:
+            self.best_for = []
+
+
+# Model configurations with priority and capabilities
+MODEL_CONFIGS: dict[ImageModel, ModelConfig] = {
+    ImageModel.GOOGLE_IMAGEN: ModelConfig(
+        model_id=ImageModel.GOOGLE_IMAGEN,
+        display_name="Google Imagen",
+        priority=1,
+        requires_api_key="GEMINI_API_KEY",
+        best_for=["photorealistic", "people", "engineering", "industrial"],
+    ),
+    ImageModel.OPENAI_DALLE3: ModelConfig(
+        model_id=ImageModel.OPENAI_DALLE3,
+        display_name="DALL-E 3",
+        priority=2,
+        requires_api_key="OPENAI_API_KEY",
+        best_for=["artistic", "creative", "abstract", "conceptual"],
+    ),
+    ImageModel.HUGGINGFACE_FLUX: ModelConfig(
+        model_id=ImageModel.HUGGINGFACE_FLUX,
+        display_name="HuggingFace FLUX",
+        priority=3,
+        requires_api_key="",  # Works without key for free models
+        best_for=["general", "fast"],
+    ),
+    ImageModel.HUGGINGFACE_SDXL: ModelConfig(
+        model_id=ImageModel.HUGGINGFACE_SDXL,
+        display_name="HuggingFace SDXL",
+        priority=4,
+        requires_api_key="HUGGINGFACE_API_TOKEN",
+        best_for=["artistic", "stylized"],
+    ),
+    ImageModel.LOCAL: ModelConfig(
+        model_id=ImageModel.LOCAL,
+        display_name="Local Model",
+        priority=5,
+        best_for=["testing", "offline"],
+    ),
+}
+
+
+def select_model_for_prompt(prompt: str, story_category: str = "") -> ImageModel:
+    """Select the best model based on prompt content and story category.
+
+    Args:
+        prompt: The image generation prompt
+        story_category: Category of the story
+
+    Returns:
+        Best model for this prompt
+    """
+    prompt_lower = prompt.lower()
+    category_lower = story_category.lower()
+
+    # Keywords that suggest artistic/creative content
+    artistic_keywords = {
+        "abstract",
+        "artistic",
+        "creative",
+        "conceptual",
+        "symbolic",
+        "metaphor",
+    }
+
+    # Keywords that suggest photorealistic/industrial content
+    industrial_keywords = {
+        "engineering",
+        "industrial",
+        "factory",
+        "plant",
+        "equipment",
+        "reactor",
+        "pipeline",
+        "process",
+        "laboratory",
+        "research",
+    }
+
+    # Check prompt content
+    has_artistic = any(kw in prompt_lower for kw in artistic_keywords)
+    has_industrial = any(
+        kw in prompt_lower or kw in category_lower for kw in industrial_keywords
+    )
+
+    # Determine best model based on content
+    if has_artistic and not has_industrial:
+        # Prefer DALL-E 3 for artistic content
+        if _is_model_available(ImageModel.OPENAI_DALLE3):
+            return ImageModel.OPENAI_DALLE3
+
+    if has_industrial or "Technology" in story_category or "Research" in story_category:
+        # Prefer Imagen for industrial/engineering content
+        if _is_model_available(ImageModel.GOOGLE_IMAGEN):
+            return ImageModel.GOOGLE_IMAGEN
+
+    # Fall back to priority order
+    return get_best_available_model()
+
+
+def _is_model_available(model: ImageModel) -> bool:
+    """Check if a model is available based on API key configuration."""
+    config = MODEL_CONFIGS.get(model)
+    if not config or not config.enabled:
+        return False
+
+    if config.requires_api_key:
+        api_key = getattr(Config, config.requires_api_key, None)
+        return bool(api_key)
+
+    return True
+
+
+def get_best_available_model() -> ImageModel:
+    """Get the best available model based on priority and configuration."""
+    available = [
+        (model, config)
+        for model, config in MODEL_CONFIGS.items()
+        if config.enabled and _is_model_available(model)
+    ]
+
+    if not available:
+        # Fallback to HuggingFace (works without API key)
+        return ImageModel.HUGGINGFACE_FLUX
+
+    # Sort by priority
+    available.sort(key=lambda x: x[1].priority)
+    return available[0][0]
+
+
+def get_available_models() -> list[ImageModel]:
+    """Get list of all available models."""
+    return [model for model in ImageModel if _is_model_available(model)]
+
 
 # Appearance variations for generated images - ensures diverse women
 HAIR_COLORS = [
@@ -467,6 +641,181 @@ class ImageGenerator:
                 "Most local LLMs only support text. For local images, you would need a service like Stable Diffusion with an OpenAI-compatible API."
             )
 
+        return None
+
+    def _generate_dalle3_image(
+        self, story: Story, prompt: str
+    ) -> tuple[str, str] | None:
+        """Generate an image using OpenAI's DALL-E 3.
+
+        DALL-E 3 excels at artistic, creative, and conceptual imagery.
+        Returns (file_path, prompt_used) if successful, or None.
+        """
+        # Check for OpenAI API key
+        openai_key = getattr(Config, "OPENAI_API_KEY", None)
+        if not openai_key:
+            logger.debug("No OPENAI_API_KEY configured for DALL-E 3")
+            return None
+
+        logger.info(f"Attempting DALL-E 3 image generation for story {story.id}...")
+
+        try:
+            # Create OpenAI client for DALL-E
+            dalle_client = OpenAI(api_key=openai_key)
+
+            # DALL-E 3 API call
+            response = dalle_client.images.generate(
+                model="dall-e-3",
+                prompt=prompt,
+                n=1,
+                size="1024x1024",  # DALL-E 3 supports 1024x1024, 1024x1792, 1792x1024
+                quality="standard",  # "standard" or "hd"
+                style="natural",  # "natural" or "vivid"
+            )
+
+            if response.data and response.data[0].url:
+                import httpx
+                from io import BytesIO
+
+                # Download the image
+                image_url = response.data[0].url
+                image_response = httpx.get(image_url, timeout=30.0)
+                image_data = image_response.content
+
+                # Load image, add watermark, and save
+                image = Image.open(BytesIO(image_data))
+                watermarked_image = add_ai_watermark(image)
+
+                filename = f"story_{story.id}_{int(time.time())}_dalle3.png"
+                filepath = os.path.join(Config.IMAGE_DIR, filename)
+                watermarked_image.save(filepath)
+
+                # Verify the file was actually written
+                if os.path.exists(filepath):
+                    file_size = os.path.getsize(filepath)
+                    logger.info(
+                        f"Verified DALL-E 3 image saved: {filepath} ({file_size} bytes)"
+                    )
+                else:
+                    logger.error(
+                        f"DALL-E 3 image file NOT found after save: {filepath}"
+                    )
+                    return None
+
+                # DALL-E 3 may revise the prompt - log if different
+                revised_prompt = response.data[0].revised_prompt
+                if revised_prompt and revised_prompt != prompt:
+                    logger.info(f"DALL-E 3 revised prompt: {revised_prompt[:100]}...")
+
+                logger.info(f"Successfully generated DALL-E 3 image: {filepath}")
+                return (filepath, prompt)
+
+        except Exception as e:
+            logger.warning(f"DALL-E 3 image generation failed: {e}")
+
+        return None
+
+    def generate_with_model(
+        self,
+        story: Story,
+        model: ImageModel,
+        prompt: Optional[str] = None,
+    ) -> tuple[str, str] | None:
+        """Generate an image using a specific model.
+
+        Args:
+            story: Story to generate image for
+            model: Specific model to use
+            prompt: Optional custom prompt (generates from story if not provided)
+
+        Returns:
+            Tuple of (file_path, alt_text) if successful
+        """
+        if prompt is None:
+            prompt = self._build_image_prompt(story)
+
+        result = None
+
+        if model == ImageModel.GOOGLE_IMAGEN:
+            result = self._generate_image_for_story(story)
+        elif model == ImageModel.OPENAI_DALLE3:
+            result = self._generate_dalle3_image(story, prompt)
+            if result:
+                image_path, _ = result
+                alt_text = self._generate_alt_text(story, prompt)
+                return (image_path, alt_text)
+        elif model == ImageModel.HUGGINGFACE_FLUX:
+            result = self._generate_huggingface_image(story, prompt)
+            if result:
+                image_path, _ = result
+                alt_text = self._generate_alt_text(story, prompt)
+                return (image_path, alt_text)
+        elif model == ImageModel.HUGGINGFACE_SDXL:
+            # Use SDXL model variant
+            original_model = Config.HF_TTI_MODEL
+            Config.HF_TTI_MODEL = "stabilityai/stable-diffusion-xl-base-1.0"
+            result = self._generate_huggingface_image(story, prompt)
+            Config.HF_TTI_MODEL = original_model
+            if result:
+                image_path, _ = result
+                alt_text = self._generate_alt_text(story, prompt)
+                return (image_path, alt_text)
+        elif model == ImageModel.LOCAL:
+            result = self._generate_local_image(story, prompt)
+            if result:
+                image_path, _ = result
+                alt_text = self._generate_alt_text(story, prompt)
+                return (image_path, alt_text)
+
+        return result
+
+    def generate_with_auto_fallback(
+        self,
+        story: Story,
+        prompt: Optional[str] = None,
+    ) -> tuple[str, str, ImageModel] | None:
+        """Generate an image with automatic model selection and fallback.
+
+        Tries models in priority order until one succeeds.
+
+        Args:
+            story: Story to generate image for
+            prompt: Optional custom prompt
+
+        Returns:
+            Tuple of (file_path, alt_text, model_used) if successful
+        """
+        if prompt is None:
+            prompt = self._build_image_prompt(story)
+
+        # Select best model for this prompt
+        preferred_model = select_model_for_prompt(prompt, story.category)
+        models_to_try = [preferred_model]
+
+        # Add other available models as fallbacks
+        for model in get_available_models():
+            if model not in models_to_try:
+                models_to_try.append(model)
+
+        for model in models_to_try:
+            logger.info(
+                f"Trying image generation with {MODEL_CONFIGS[model].display_name}..."
+            )
+
+            try:
+                result = self.generate_with_model(story, model, prompt)
+                if result:
+                    image_path, alt_text = result
+                    logger.info(
+                        f"Successfully generated image with {MODEL_CONFIGS[model].display_name}"
+                    )
+                    return (image_path, alt_text, model)
+
+            except Exception as e:
+                logger.warning(f"{MODEL_CONFIGS[model].display_name} failed: {e}")
+                continue
+
+        logger.error("All image generation models failed")
         return None
 
     def _build_image_prompt(self, story: Story) -> str:

@@ -14,7 +14,7 @@ Example:
     container = ServiceContainer()
     container.register("database", Database)
     container.register("publisher", LinkedInPublisher, database=Ref("database"))
-    
+
     publisher = container.get("publisher")
 """
 

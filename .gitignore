@@ -54,3 +54,5 @@ content_engine.db
 /content_engine.db.backup
 /.linkedin_session
 /generated_images/
+/.playwright-mcp
+/.vscode

@@ -8,5 +8,7 @@
         "**/*.md"
     ],
     "venvPath": ".",
-    "venv": ".venv"
+    "venv": ".venv",
+    "pythonVersion": "3.13",
+    "typeCheckingMode": "standard"
 }

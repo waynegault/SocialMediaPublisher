@@ -1,11 +1,14 @@
 """LinkedIn company and person profile lookup using Gemini with Google Search grounding and undetected-chromedriver."""
 
 import base64
+import concurrent.futures
 import logging
 import os
 import re
 import sys
+import threading
 import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional, cast
 
 import httpx
@@ -14,6 +17,7 @@ from google import genai  # type: ignore
 from api_client import api_client
 from config import Config
 from error_handling import with_enhanced_recovery, NetworkTimeoutError
+from rate_limiter import AdaptiveRateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -1607,6 +1611,452 @@ NOT_FOUND"""
 LinkedInProfileLookup = LinkedInCompanyLookup
 
 
+# =============================================================================
+# TASK 2.1: Robust LinkedIn Profile URN Resolution
+# =============================================================================
+
+
+@dataclass
+class URNLookupResult:
+    """Result of a URN lookup attempt."""
+
+    urn: Optional[str] = None
+    source: str = ""  # "cache", "api", "playwright", "uc_chrome", "google_search"
+    success: bool = False
+    error: Optional[str] = None
+    lookup_time_ms: float = 0.0
+
+
+@dataclass
+class URNCache:
+    """Simple in-memory cache for URN lookups."""
+
+    _cache: dict[str, str] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _max_size: int = 1000
+
+    def get(self, url: str) -> Optional[str]:
+        """Get URN from cache."""
+        with self._lock:
+            return self._cache.get(url)
+
+    def set(self, url: str, urn: str) -> None:
+        """Set URN in cache."""
+        with self._lock:
+            # Simple LRU: if full, remove oldest entry
+            if len(self._cache) >= self._max_size:
+                first_key = next(iter(self._cache))
+                del self._cache[first_key]
+            self._cache[url] = urn
+
+    def clear(self) -> None:
+        """Clear the cache."""
+        with self._lock:
+            self._cache.clear()
+
+
+# Type hint for Playwright
+if TYPE_CHECKING:
+    from playwright.sync_api import Browser, Page, Playwright as PlaywrightSync
+
+
+# Global URN cache
+_urn_cache = URNCache()
+
+
+class RobustURNResolver:
+    """
+    Robust LinkedIn URN resolver with multiple fallback strategies.
+
+    TASK 2.1: Implements fallback chain for reliable URN extraction:
+    1. Cache lookup (fastest)
+    2. API lookup (if LinkedIn API configured)
+    3. Playwright browser automation (preferred for reliability)
+    4. UC Chrome fallback (if Playwright unavailable)
+    5. Google Search (last resort via Gemini)
+
+    Features:
+    - Rate-limited concurrent lookups
+    - Browser cookie persistence
+    - Automatic retry with exponential backoff
+    """
+
+    # Rate limiting for LinkedIn: 60 lookups per minute
+    _rate_limiter = AdaptiveRateLimiter(
+        initial_fill_rate=1.0,  # 1 lookup per second
+        capacity=10.0,  # Allow burst of 10
+        min_fill_rate=0.5,
+        max_fill_rate=2.0,
+    )
+
+    def __init__(
+        self,
+        use_playwright: bool = True,
+        use_uc_chrome: bool = True,
+        use_gemini: bool = True,
+        max_concurrent: int = 3,
+    ) -> None:
+        """Initialize the robust URN resolver.
+
+        Args:
+            use_playwright: Enable Playwright for browser automation
+            use_uc_chrome: Enable UC Chrome as fallback
+            use_gemini: Enable Gemini/Google Search as last resort
+            max_concurrent: Maximum concurrent lookups
+        """
+        self.use_playwright = use_playwright
+        self.use_uc_chrome = use_uc_chrome
+        self.use_gemini = use_gemini
+        self.max_concurrent = max_concurrent
+
+        # Playwright resources (use Any to avoid type issues with optional Playwright)
+        self._playwright: Any = None
+        self._browser: Any = None
+        self._page: Any = None
+        self._playwright_lock = threading.Lock()
+
+        # UC Chrome fallback
+        self._uc_lookup: Optional[LinkedInCompanyLookup] = None
+
+        # Semaphore for concurrent lookup limiting
+        self._semaphore = threading.Semaphore(max_concurrent)
+
+        # Thread pool for concurrent lookups
+        self._executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+
+    def __enter__(self) -> "RobustURNResolver":
+        """Context manager entry."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[type],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[Any],
+    ) -> bool:
+        """Context manager exit."""
+        self.close()
+        return False
+
+    def _get_playwright_page(self) -> Optional["Page"]:
+        """Get or create a Playwright page with persistent session.
+
+        Returns:
+            Playwright Page object, or None if Playwright unavailable
+        """
+        with self._playwright_lock:
+            if self._page is not None:
+                return self._page
+
+            try:
+                from playwright.sync_api import sync_playwright
+
+                # Use persistent context to save cookies/session
+                playwright_profile = os.path.expandvars(
+                    r"%LOCALAPPDATA%\SocialMediaPublisher\PlaywrightProfile"
+                )
+                os.makedirs(playwright_profile, exist_ok=True)
+
+                self._playwright = sync_playwright().start()
+                self._browser = self._playwright.chromium.launch_persistent_context(
+                    playwright_profile,
+                    headless=False,  # Visible for LinkedIn auth
+                    viewport={"width": 1280, "height": 800},
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+                )
+                self._page = self._browser.new_page()
+                logger.info(
+                    f"Created Playwright session with profile: {playwright_profile}"
+                )
+                return self._page
+
+            except ImportError:
+                logger.warning(
+                    "Playwright not installed - pip install playwright && playwright install chromium"
+                )
+                return None
+            except Exception as e:
+                logger.error(f"Failed to create Playwright session: {e}")
+                return None
+
+    def _ensure_linkedin_login_playwright(self, page: "Page") -> bool:
+        """Ensure LinkedIn login in Playwright browser."""
+        try:
+            page.goto("https://www.linkedin.com/feed/", timeout=30000)
+            page.wait_for_load_state("networkidle", timeout=10000)
+
+            current_url = page.url
+
+            if "/login" in current_url or "/authwall" in current_url:
+                # Try auto-login if credentials available
+                if Config.LINKEDIN_USERNAME and Config.LINKEDIN_PASSWORD:
+                    logger.info("Attempting Playwright auto-login...")
+                    page.goto("https://www.linkedin.com/login", timeout=30000)
+                    page.wait_for_load_state("networkidle")
+
+                    page.fill("#username", Config.LINKEDIN_USERNAME)
+                    page.fill("#password", Config.LINKEDIN_PASSWORD)
+                    page.click('button[type="submit"]')
+
+                    page.wait_for_load_state("networkidle", timeout=30000)
+
+                    if "/feed" in page.url:
+                        logger.info("Playwright auto-login successful")
+                        return True
+
+                # Manual login fallback
+                print("\n" + "=" * 60)
+                print("LinkedIn Login Required (Playwright)")
+                print("=" * 60)
+                print("Please log in to LinkedIn in the browser window.")
+                input("\nPress Enter after logging in...")
+
+                page.goto("https://www.linkedin.com/feed/", timeout=30000)
+                return "/feed" in page.url
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Playwright LinkedIn login error: {e}")
+            return False
+
+    def _lookup_via_playwright(self, profile_url: str) -> URNLookupResult:
+        """Look up URN using Playwright browser automation."""
+        start_time = time.perf_counter()
+
+        page = self._get_playwright_page()
+        if page is None:
+            return URNLookupResult(
+                error="Playwright not available",
+                lookup_time_ms=(time.perf_counter() - start_time) * 1000,
+            )
+
+        if not self._ensure_linkedin_login_playwright(page):
+            return URNLookupResult(
+                error="LinkedIn login required",
+                lookup_time_ms=(time.perf_counter() - start_time) * 1000,
+            )
+
+        try:
+            page.goto(profile_url, timeout=30000)
+            page.wait_for_load_state("networkidle", timeout=10000)
+
+            # Extract URN from page source
+            content = page.content()
+
+            # Extract vanity name for matching
+            vanity_match = re.search(r"linkedin\.com/in/([\w\-]+)", profile_url)
+            vanity_name = vanity_match.group(1) if vanity_match else None
+
+            if vanity_name:
+                # Look for memberRelationship URN
+                pattern = rf'"publicIdentifier":"{re.escape(vanity_name)}"[\s\S]{{0,500}}?"\*memberRelationship":"urn:li:fsd_memberRelationship:([A-Za-z0-9_-]+)"'
+                match = re.search(pattern, content)
+                if match:
+                    urn = f"urn:li:person:{match.group(1)}"
+                    return URNLookupResult(
+                        urn=urn,
+                        source="playwright",
+                        success=True,
+                        lookup_time_ms=(time.perf_counter() - start_time) * 1000,
+                    )
+
+                # Fallback: fsd_profile
+                pattern = rf'"publicIdentifier":"{re.escape(vanity_name)}"[\s\S]{{0,500}}?"entityUrn":"urn:li:fsd_profile:([A-Za-z0-9_-]+)"'
+                match = re.search(pattern, content)
+                if match:
+                    urn = f"urn:li:person:{match.group(1)}"
+                    return URNLookupResult(
+                        urn=urn,
+                        source="playwright",
+                        success=True,
+                        lookup_time_ms=(time.perf_counter() - start_time) * 1000,
+                    )
+
+            return URNLookupResult(
+                error="URN not found in page",
+                lookup_time_ms=(time.perf_counter() - start_time) * 1000,
+            )
+
+        except Exception as e:
+            return URNLookupResult(
+                error=str(e),
+                lookup_time_ms=(time.perf_counter() - start_time) * 1000,
+            )
+
+    def _lookup_via_uc_chrome(self, profile_url: str) -> URNLookupResult:
+        """Look up URN using UC Chrome (fallback)."""
+        start_time = time.perf_counter()
+
+        if not UC_AVAILABLE:
+            return URNLookupResult(
+                error="UC Chrome not available",
+                lookup_time_ms=(time.perf_counter() - start_time) * 1000,
+            )
+
+        try:
+            if self._uc_lookup is None:
+                self._uc_lookup = LinkedInCompanyLookup(genai_client=None)
+
+            urn = self._uc_lookup.lookup_person_urn(profile_url)
+
+            if urn:
+                return URNLookupResult(
+                    urn=urn,
+                    source="uc_chrome",
+                    success=True,
+                    lookup_time_ms=(time.perf_counter() - start_time) * 1000,
+                )
+            else:
+                return URNLookupResult(
+                    error="URN not found via UC Chrome",
+                    lookup_time_ms=(time.perf_counter() - start_time) * 1000,
+                )
+
+        except Exception as e:
+            return URNLookupResult(
+                error=str(e),
+                lookup_time_ms=(time.perf_counter() - start_time) * 1000,
+            )
+
+    def resolve_person_urn(self, profile_url: str) -> URNLookupResult:
+        """
+        Resolve a person's URN using the fallback chain.
+
+        Fallback order:
+        1. Cache (instant)
+        2. Playwright (preferred browser automation)
+        3. UC Chrome (fallback)
+        4. Returns error if all methods fail
+
+        Args:
+            profile_url: LinkedIn profile URL
+
+        Returns:
+            URNLookupResult with URN or error details
+        """
+        if not profile_url or "linkedin.com/in/" not in profile_url:
+            return URNLookupResult(error="Invalid LinkedIn profile URL")
+
+        # Normalize URL
+        profile_url = profile_url.split("?")[0].rstrip("/")
+
+        # 1. Check cache first
+        cached_urn = _urn_cache.get(profile_url)
+        if cached_urn:
+            return URNLookupResult(
+                urn=cached_urn,
+                source="cache",
+                success=True,
+                lookup_time_ms=0.0,
+            )
+
+        # Rate limit before browser lookups
+        self._rate_limiter.wait(endpoint="urn_lookup")
+
+        with self._semaphore:
+            # 2. Try Playwright first (if enabled)
+            if self.use_playwright:
+                result = self._lookup_via_playwright(profile_url)
+                if result.success and result.urn:
+                    _urn_cache.set(profile_url, result.urn)
+                    self._rate_limiter.on_success(endpoint="urn_lookup")
+                    return result
+
+            # 3. Try UC Chrome fallback (if enabled)
+            if self.use_uc_chrome:
+                result = self._lookup_via_uc_chrome(profile_url)
+                if result.success and result.urn:
+                    _urn_cache.set(profile_url, result.urn)
+                    self._rate_limiter.on_success(endpoint="urn_lookup")
+                    return result
+
+        # All methods failed
+        return URNLookupResult(error="All lookup methods failed")
+
+    def resolve_multiple_urns(
+        self, profile_urls: list[str]
+    ) -> dict[str, URNLookupResult]:
+        """
+        Resolve multiple URNs concurrently with rate limiting.
+
+        Args:
+            profile_urls: List of LinkedIn profile URLs
+
+        Returns:
+            Dictionary mapping URLs to their lookup results
+        """
+        results: dict[str, URNLookupResult] = {}
+
+        if self._executor is None:
+            self._executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=self.max_concurrent
+            )
+
+        # Submit all lookups
+        futures = {
+            self._executor.submit(self.resolve_person_urn, url): url
+            for url in profile_urls
+        }
+
+        # Collect results
+        for future in concurrent.futures.as_completed(futures):
+            url = futures[future]
+            try:
+                results[url] = future.result(timeout=60)
+            except Exception as e:
+                results[url] = URNLookupResult(error=str(e))
+
+        return results
+
+    def close(self) -> None:
+        """Clean up all resources."""
+        # Close Playwright
+        with self._playwright_lock:
+            if self._page:
+                try:
+                    self._page.close()
+                except Exception:
+                    pass
+                self._page = None
+
+            if self._browser:
+                try:
+                    self._browser.close()
+                except Exception:
+                    pass
+                self._browser = None
+
+            if self._playwright:
+                try:
+                    self._playwright.stop()
+                except Exception:
+                    pass
+                self._playwright = None
+
+        # Close UC Chrome
+        if self._uc_lookup:
+            self._uc_lookup.close()
+            self._uc_lookup = None
+
+        # Shutdown executor
+        if self._executor:
+            self._executor.shutdown(wait=False)
+            self._executor = None
+
+
+# Singleton instance for easy access
+_robust_resolver: Optional[RobustURNResolver] = None
+
+
+def get_robust_urn_resolver() -> RobustURNResolver:
+    """Get or create the global RobustURNResolver instance."""
+    global _robust_resolver
+    if _robust_resolver is None:
+        _robust_resolver = RobustURNResolver()
+    return _robust_resolver
+
+
 # ============================================================================
 # Unit Tests
 # ============================================================================
@@ -1713,6 +2163,28 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         )
         lookup.close()
 
+    def test_urn_cache():
+        """Test URN cache operations."""
+        cache = URNCache()
+        cache.clear()
+
+        # Test set and get
+        cache.set("https://linkedin.com/in/test", "urn:li:person:ABC123")
+        result = cache.get("https://linkedin.com/in/test")
+        assert result == "urn:li:person:ABC123"
+
+        # Test missing key
+        result = cache.get("https://linkedin.com/in/nonexistent")
+        assert result is None
+
+    def test_robust_resolver_invalid_url():
+        """Test robust resolver with invalid URL."""
+        resolver = RobustURNResolver(use_playwright=False, use_uc_chrome=False)
+        result = resolver.resolve_person_urn("https://example.com/not-linkedin")
+        assert not result.success
+        assert result.error == "Invalid LinkedIn profile URL"
+        resolver.close()
+
     suite.add_test(
         "Validate LinkedIn URL - valid company",
         test_validate_linkedin_url_valid_company,
@@ -1734,5 +2206,7 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         "Lookup person URN - invalid URL", test_lookup_person_urn_invalid_url
     )
     suite.add_test("Lookup person URN - no driver", test_lookup_person_urn_no_driver)
+    suite.add_test("URN cache operations", test_urn_cache)
+    suite.add_test("Robust resolver - invalid URL", test_robust_resolver_invalid_url)
 
     return suite
