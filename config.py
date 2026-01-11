@@ -882,6 +882,8 @@ Return ONLY valid JSON, no explanation.""",
     DEDUP_SIMILARITY_THRESHOLD: float = float(
         _get_str("DEDUP_SIMILARITY_THRESHOLD", "0.7")
     )
+    # Days to look back for published story deduplication (prevents similar content)
+    DEDUP_PUBLISHED_WINDOW_DAYS: int = _get_int("DEDUP_PUBLISHED_WINDOW_DAYS", 30)
     # Number of retries for transient API failures
     API_RETRY_COUNT: int = _get_int("API_RETRY_COUNT", 3)
     # Base delay for exponential backoff (seconds)
