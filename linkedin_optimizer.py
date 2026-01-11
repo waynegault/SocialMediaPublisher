@@ -189,7 +189,9 @@ class LinkedInOptimizer:
             suggestions=suggestions,
         )
 
-    def optimize_post(self, content: str, add_hook: bool = False) -> tuple[str, PostAnalysis]:
+    def optimize_post(
+        self, content: str, add_hook: bool = False
+    ) -> tuple[str, PostAnalysis]:
         """
         Optimize a post for LinkedIn engagement.
 
@@ -241,6 +243,7 @@ class LinkedInOptimizer:
 
         # Return first hook (in production, could use LLM to pick best)
         import random
+
         return random.choice(hooks)
 
     def create_cta(self, topic: str) -> str:
@@ -262,6 +265,7 @@ class LinkedInOptimizer:
         ]
 
         import random
+
         return random.choice(ctas)
 
     def _has_strong_hook(self, content: str) -> bool:
@@ -311,15 +315,17 @@ class LinkedInOptimizer:
         # Check for excessive hashtags
         hashtags = re.findall(r"#\w+", content)
         if len(hashtags) > 5:
-            warnings.append(f"Too many hashtags ({len(hashtags)}) - LinkedIn prefers 3-5")
+            warnings.append(
+                f"Too many hashtags ({len(hashtags)}) - LinkedIn prefers 3-5"
+            )
 
         # Check for excessive emojis
         emoji_pattern = re.compile(
             "["
-            "\U0001F600-\U0001F64F"  # emoticons
-            "\U0001F300-\U0001F5FF"  # symbols & pictographs
-            "\U0001F680-\U0001F6FF"  # transport & map symbols
-            "\U0001F1E0-\U0001F1FF"  # flags
+            "\U0001f600-\U0001f64f"  # emoticons
+            "\U0001f300-\U0001f5ff"  # symbols & pictographs
+            "\U0001f680-\U0001f6ff"  # transport & map symbols
+            "\U0001f1e0-\U0001f1ff"  # flags
             "]+",
             flags=re.UNICODE,
         )
@@ -487,7 +493,9 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
 
     def test_has_hook_starter():
         optimizer = LinkedInOptimizer()
-        content = "I just discovered something amazing about fuel cells.\n\nHere's what..."
+        content = (
+            "I just discovered something amazing about fuel cells.\n\nHere's what..."
+        )
         analysis = optimizer.analyze_post(content)
         assert analysis.has_hook is True
 
@@ -528,7 +536,9 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
 
     def test_optimize_post_formatting():
         optimizer = LinkedInOptimizer()
-        content = "This is paragraph one.     This is still paragraph one.\n\nParagraph two."
+        content = (
+            "This is paragraph one.     This is still paragraph one.\n\nParagraph two."
+        )
         optimized, analysis = optimizer.optimize_post(content)
         # Should normalize whitespace
         assert "     " not in optimized

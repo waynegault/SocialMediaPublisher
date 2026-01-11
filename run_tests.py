@@ -30,6 +30,7 @@ TEST_MODULES = [
     ("originality_checker", "Originality Checker"),
     ("source_verifier", "Source Verifier"),
     ("linkedin_optimizer", "LinkedIn Optimizer"),
+    ("monitoring", "Monitoring"),
 ]
 
 
