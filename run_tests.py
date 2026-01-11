@@ -38,6 +38,7 @@ TEST_MODULES = [
     ("image_style", "Image Style"),
     ("notifications", "Notifications"),
     ("property_tests", "Property Tests"),
+    ("cli", "CLI"),
 ]
 
 
