@@ -13,6 +13,7 @@ from google import genai  # type: ignore
 
 from api_client import api_client
 from config import Config
+from error_handling import with_enhanced_recovery, NetworkTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -1488,6 +1489,8 @@ NOT_FOUND"""
         LinkedIn embeds the member URN in the profile page source code.
         This method loads the profile page and extracts the URN.
 
+        Uses retry logic with exponential backoff for reliability.
+
         Args:
             profile_url: LinkedIn profile URL (e.g., https://www.linkedin.com/in/username)
 
@@ -1497,6 +1500,22 @@ NOT_FOUND"""
         if not profile_url or "linkedin.com/in/" not in profile_url:
             return None
 
+        # Retry the actual lookup with exponential backoff
+        try:
+            return self._lookup_person_urn_with_retry(profile_url)
+        except Exception as e:
+            logger.error(f"All retry attempts failed for {profile_url}: {e}")
+            return None
+
+    @with_enhanced_recovery(
+        max_attempts=3,
+        base_delay=5.0,
+        retryable_exceptions=(
+            Exception,
+        ),  # Broad retry for network/browser issues
+    )
+    def _lookup_person_urn_with_retry(self, profile_url: str) -> Optional[str]:
+        """Internal method with retry logic for URN lookup."""
         driver = self._get_uc_driver()
         if driver is None:
             logger.warning("Cannot lookup person URN - browser driver not available")
@@ -1669,6 +1688,25 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
             assert lookup is not None
         # Should close without error
 
+    def test_lookup_person_urn_invalid_url():
+        """Test that invalid URLs return None without error."""
+        lookup = LinkedInCompanyLookup(genai_client=None)
+        # Test with invalid URL
+        result = lookup.lookup_person_urn("https://example.com/not-linkedin")
+        assert result is None
+        # Test with empty URL
+        result = lookup.lookup_person_urn("")
+        assert result is None
+        lookup.close()
+
+    def test_lookup_person_urn_no_driver():
+        """Test that lookup returns None when no browser driver available."""
+        lookup = LinkedInCompanyLookup(genai_client=None)
+        # Without UC driver, should return None gracefully
+        result = lookup.lookup_person_urn("https://www.linkedin.com/in/testuser")
+        assert result is None
+        lookup.close()
+
     suite.add_test(
         "Validate LinkedIn URL - valid company",
         test_validate_linkedin_url_valid_company,
@@ -1686,5 +1724,7 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     suite.add_test("Extract person URL from text", test_extract_person_url)
     suite.add_test("Lookup class initialization", test_lookup_class_init)
     suite.add_test("Context manager works", test_context_manager)
+    suite.add_test("Lookup person URN - invalid URL", test_lookup_person_urn_invalid_url)
+    suite.add_test("Lookup person URN - no driver", test_lookup_person_urn_no_driver)
 
     return suite

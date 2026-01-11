@@ -258,6 +258,65 @@ class LinkedInPublisher:
 
         return "\n".join(text_parts)
 
+    def preview_post(self, story: Story) -> dict:
+        """
+        Generate a preview of what will be published to LinkedIn.
+
+        Returns a dictionary with:
+        - text: The formatted post text
+        - char_count: Total character count
+        - has_image: Whether the story has an image
+        - image_path: Path to image (if any)
+        - warnings: List of potential issues
+        - stats: Post statistics (word count, hashtag count, mention count)
+
+        This helps users review content before publishing.
+        """
+        text = self._format_post_text(story)
+        char_count = len(text)
+
+        # LinkedIn optimal post length is 1200-1500 characters
+        warnings: list[str] = []
+        if char_count < 100:
+            warnings.append(f"Post is very short ({char_count} chars). Consider adding more content.")
+        elif char_count > 3000:
+            warnings.append(f"Post is very long ({char_count} chars). LinkedIn may truncate it.")
+        elif char_count > 1500:
+            warnings.append(f"Post is longer than optimal ({char_count} chars). Ideal: 1200-1500.")
+
+        # Check for image
+        has_image = bool(story.image_path and Path(story.image_path).exists())
+        if not has_image:
+            warnings.append("No image attached. Posts with images get 2x more engagement.")
+
+        # Check hashtags
+        hashtag_count = len(story.hashtags) if story.hashtags else 0
+        if hashtag_count == 0:
+            warnings.append("No hashtags. Consider adding 1-3 relevant hashtags.")
+        elif hashtag_count > 5:
+            warnings.append(f"Too many hashtags ({hashtag_count}). LinkedIn recommends max 3-5.")
+
+        # Check for mentions
+        mention_count = 0
+        if story.story_people:
+            mention_count += sum(1 for p in story.story_people if p.get("linkedin_urn"))
+        if story.org_leaders:
+            mention_count += sum(1 for p in story.org_leaders if p.get("linkedin_urn"))
+
+        # Word count
+        word_count = len(text.split())
+
+        return {
+            "text": text,
+            "char_count": char_count,
+            "word_count": word_count,
+            "has_image": has_image,
+            "image_path": story.image_path if has_image else None,
+            "hashtag_count": hashtag_count,
+            "mention_count": mention_count,
+            "warnings": warnings,
+        }
+
     def _get_mentions_from_people_list(self, people_list: list[dict]) -> list[dict]:
         """
         Generate mentions list from a list of people dicts.
@@ -1124,6 +1183,61 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
+    def test_preview_post():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            # Story with good content
+            story = Story(
+                title="Test Story About Amazing AI Breakthrough in Healthcare",
+                summary="This is a comprehensive test summary for the story that discusses " * 5,
+                source_links=["https://example.com"],
+                quality_score=8,
+                hashtags=["#AI", "#Healthcare", "#Technology"],
+                image_path="test_image.jpg",
+            )
+            preview = publisher.preview_post(story)
+            assert "text" in preview
+            assert "char_count" in preview
+            assert preview["char_count"] > 0
+            assert "word_count" in preview
+            assert preview["word_count"] > 0
+            assert "has_image" in preview
+            # Image won't exist, so has_image should be False
+            assert preview["has_image"] is False
+            assert "hashtag_count" in preview
+            assert preview["hashtag_count"] == 3
+            assert "warnings" in preview
+            assert isinstance(preview["warnings"], list)
+        finally:
+            os.unlink(db_path)
+
+    def test_preview_post_warnings():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            publisher = LinkedInPublisher(db)
+            # Story with issues that should generate warnings
+            story = Story(
+                title="Test",
+                summary="Short",
+                source_links=[],
+                quality_score=5,
+                hashtags=[],  # No hashtags
+                image_path=None,  # No image
+            )
+            preview = publisher.preview_post(story)
+            assert "warnings" in preview
+            # Should have warnings about short post, no hashtags, and no image
+            assert len(preview["warnings"]) > 0
+            assert preview["has_image"] is False
+            assert preview["hashtag_count"] == 0
+        finally:
+            os.unlink(db_path)
+
     suite.add_test("Publisher init", test_publisher_init)
     suite.add_test("Get headers", test_get_headers)
     suite.add_test("Format post text", test_format_post_text)
@@ -1141,5 +1255,7 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     suite.add_test("Verify post exists - no token", test_verify_post_exists_no_token)
     suite.add_test("Fetch analytics - no post ID", test_fetch_post_analytics_no_post_id)
     suite.add_test("Refresh analytics - empty", test_refresh_all_analytics_empty)
+    suite.add_test("Preview post", test_preview_post)
+    suite.add_test("Preview post - warnings", test_preview_post_warnings)
 
     return suite
