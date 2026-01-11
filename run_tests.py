@@ -33,6 +33,7 @@ TEST_MODULES = [
     ("monitoring", "Monitoring"),
     ("trend_detector", "Trend Detector"),
     ("ab_testing", "A/B Testing"),
+    ("cache", "Cache"),
 ]
 
 
