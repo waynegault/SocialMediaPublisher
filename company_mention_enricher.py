@@ -50,21 +50,22 @@ def validate_linkedin_url(url: str, strict: bool = False) -> bool:
 
     # Extract the username/slug from the URL
     import re
+
     match = re.search(r"linkedin\.com/in/([\w\-]+)", url)
     if not match:
         return False
-    
+
     slug = match.group(1)
-    
+
     # Basic format validation - reject obviously invalid slugs
     if len(slug) < 2 or len(slug) > 100:
         return False
-    
+
     # Reject common error page slugs
     invalid_slugs = {"login", "authwall", "error", "404", "unavailable", "uas"}
     if slug.lower() in invalid_slugs:
         return False
-    
+
     # If not strict mode, accept the URL based on format alone
     if not strict:
         return True
@@ -1092,17 +1093,21 @@ Return ONLY valid JSON, no explanation."""
                     driver.get(url)
                     time.sleep(1.5)
                     page_text = driver.page_source.lower()
-                    
+
                     # Check if both first and last name appear on the profile page
                     if first_name and last_name:
                         if first_name in page_text and last_name in page_text:
                             logger.debug(f"Found validated LinkedIn URL: {url}")
                             return url
                         else:
-                            logger.debug(f"Skipping {url} - name mismatch (expected {first_name} {last_name})")
+                            logger.debug(
+                                f"Skipping {url} - name mismatch (expected {first_name} {last_name})"
+                            )
                     elif first_name:
                         if first_name in page_text:
-                            logger.debug(f"Found LinkedIn URL (first name match): {url}")
+                            logger.debug(
+                                f"Found LinkedIn URL (first name match): {url}"
+                            )
                             return url
                     else:
                         # No name parts to validate, accept first result

@@ -1155,7 +1155,8 @@ NOT_FOUND"""
             location_parts = location.split(",")
             if location_parts:
                 parts.append(location_parts[0].strip())
-        parts.append("LinkedIn")
+        # Add "LinkedIn" in quotes to make it a mandatory search term
+        parts.append('"LinkedIn"')
         search_query = " ".join(parts)
         logger.debug(f"UC Chrome Bing search: {search_query}")
 
@@ -1847,7 +1848,9 @@ NOT_FOUND"""
             # HIERARCHY LEVEL 2: Try to find department-specific page
             # ============================================================
             # Use actual department field first; only parse from position as fallback
-            dept_for_lookup = department if department else self._extract_department_name(position)
+            dept_for_lookup = (
+                department if department else self._extract_department_name(position)
+            )
 
             if dept_for_lookup:
                 dept_cache_key = f"{dept_for_lookup}@{company}"
