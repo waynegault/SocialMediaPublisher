@@ -872,8 +872,8 @@ def _check_and_fix_missing_images(engine: ContentEngine) -> int:
     """
     Check all stories with image_path set and verify the files exist.
 
-    - If file missing and story < 14 days old: clear image_path (will be regenerated)
-    - If file missing and story >= 14 days old: clear image_path (too old to regenerate)
+    - If file missing and story is recent: clear image_path (will be regenerated)
+    - If file missing and story is too old: clear image_path (too old to regenerate)
 
     Returns the number of stories that were updated.
     """
@@ -881,7 +881,7 @@ def _check_and_fix_missing_images(engine: ContentEngine) -> int:
     if not stories_with_images:
         return 0
 
-    cutoff_date = datetime.now() - timedelta(days=14)
+    cutoff_date = datetime.now() - timedelta(days=Config.IMAGE_REGEN_CUTOFF_DAYS)
     updated_count = 0
     regenerate_count = 0
     expired_count = 0

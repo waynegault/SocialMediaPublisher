@@ -275,19 +275,24 @@ class LinkedInPublisher:
         text = self._format_post_text(story)
         char_count = len(text)
 
-        # LinkedIn optimal post length is 1200-1500 characters
+        # Use configurable thresholds for post length warnings
+        min_chars = Config.LINKEDIN_POST_MIN_CHARS
+        optimal_chars = Config.LINKEDIN_POST_OPTIMAL_CHARS
+        max_chars = Config.LINKEDIN_POST_MAX_CHARS
+        max_hashtags = Config.LINKEDIN_MAX_HASHTAGS
+
         warnings: list[str] = []
-        if char_count < 100:
+        if char_count < min_chars:
             warnings.append(
                 f"Post is very short ({char_count} chars). Consider adding more content."
             )
-        elif char_count > 3000:
+        elif char_count > max_chars:
             warnings.append(
                 f"Post is very long ({char_count} chars). LinkedIn may truncate it."
             )
-        elif char_count > 1500:
+        elif char_count > optimal_chars:
             warnings.append(
-                f"Post is longer than optimal ({char_count} chars). Ideal: 1200-1500."
+                f"Post is longer than optimal ({char_count} chars). Ideal: 1200-{optimal_chars}."
             )
 
         # Check for image
@@ -301,9 +306,9 @@ class LinkedInPublisher:
         hashtag_count = len(story.hashtags) if story.hashtags else 0
         if hashtag_count == 0:
             warnings.append("No hashtags. Consider adding 1-3 relevant hashtags.")
-        elif hashtag_count > 5:
+        elif hashtag_count > max_hashtags:
             warnings.append(
-                f"Too many hashtags ({hashtag_count}). LinkedIn recommends max 3-5."
+                f"Too many hashtags ({hashtag_count}). LinkedIn recommends max 3-{max_hashtags}."
             )
 
         # Check for mentions
