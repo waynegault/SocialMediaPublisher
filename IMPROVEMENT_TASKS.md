@@ -41,9 +41,13 @@
 
 - [x] **TASK 5.3**: Caching Layer (`cache.py` - LRU memory cache with TTL, SQLite persistent cache, two-level cache system, @cached decorator, key generation utilities)
 
+### Image Generation
+
+- [x] **TASK 6.1**: Image Quality Assessment (`image_quality.py` - resolution/sharpness/contrast metrics, artifact detection, LinkedIn aspect ratio scoring, regeneration recommendations)
+
 ### Test Status
 
-- **269 tests passing** ✅
+- **284 tests passing** ✅
 
 ---
 
