@@ -760,6 +760,7 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         v1 = manager.get_variant_for_content(test_id, "content_123")
         v2 = manager.get_variant_for_content(test_id, "content_123")
         assert v1 is not None
+        assert v2 is not None
         assert v1.id == v2.id
 
     def test_get_variant_different_content():
