@@ -925,6 +925,10 @@ Return ONLY valid JSON, no explanation.""",
     # Maximum bonus points from calibration (prevents inflation)
     QUALITY_MAX_CALIBRATION_BONUS: int = _get_int("QUALITY_MAX_CALIBRATION_BONUS", 2)
 
+    # --- URL Archiving ---
+    # Automatically archive source URLs to Wayback Machine to prevent link rot
+    ARCHIVE_SOURCE_URLS: bool = _get_bool("ARCHIVE_SOURCE_URLS", False)
+
     # --- Publication Settings ---
     MAX_STORIES_PER_DAY: int = _get_int("MAX_STORIES_PER_DAY", 4)
     START_PUB_TIME: str = _get_str("START_PUB_TIME", "08:00")

@@ -277,6 +277,94 @@ def calibrate_quality_score(
     return calibrated
 
 
+def archive_url_wayback(url: str, timeout: int = 10) -> str | None:
+    """
+    Submit a URL to the Wayback Machine for archiving.
+
+    This helps preserve source URLs in case they become unavailable later.
+    The Wayback Machine will crawl and archive the page asynchronously.
+
+    Args:
+        url: The URL to archive
+        timeout: Request timeout in seconds
+
+    Returns:
+        The archived URL if successful, None otherwise
+    """
+    if not url:
+        return None
+
+    # Skip non-HTTP URLs
+    if not url.startswith(("http://", "https://")):
+        return None
+
+    wayback_save_url = f"https://web.archive.org/save/{url}"
+
+    try:
+        # Send a HEAD request to trigger archiving
+        # We don't need to wait for the full page to load
+        response = requests.head(
+            wayback_save_url,
+            timeout=timeout,
+            allow_redirects=True,
+            headers={"User-Agent": "SocialMediaPublisher/1.0 (URL Archiver)"},
+        )
+
+        if response.status_code in (200, 302, 303):
+            # Extract the archived URL from response headers if available
+            archived_url = response.headers.get("Content-Location")
+            if archived_url:
+                logger.info(f"URL archived: {url} -> {archived_url}")
+                return archived_url
+            else:
+                # Return the wayback URL pattern
+                logger.info(f"URL submitted for archiving: {url}")
+                return f"https://web.archive.org/web/{url}"
+
+        logger.debug(
+            f"Wayback archive returned status {response.status_code} for {url}"
+        )
+        return None
+
+    except requests.exceptions.Timeout:
+        logger.debug(f"Wayback archive timeout for {url}")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.debug(f"Wayback archive failed for {url}: {e}")
+        return None
+
+
+def archive_urls_batch(
+    urls: list[str], max_concurrent: int = 3
+) -> dict[str, str | None]:
+    """
+    Archive multiple URLs to the Wayback Machine.
+
+    Processes URLs sequentially to avoid overwhelming the service.
+
+    Args:
+        urls: List of URLs to archive
+        max_concurrent: Maximum number of concurrent archives (not used currently)
+
+    Returns:
+        Dictionary mapping original URLs to archived URLs (or None if failed)
+    """
+    results: dict[str, str | None] = {}
+
+    for url in urls:
+        if not url or url in results:
+            continue
+
+        archived = archive_url_wayback(url)
+        results[url] = archived
+
+        # Small delay to be nice to the Wayback Machine service
+        if archived:
+            time.sleep(0.5)
+
+    return results
+
+
 def extract_url_keywords(url: str) -> set[str]:
     """
     Extract meaningful keywords from a URL path.
@@ -1417,6 +1505,16 @@ class StorySearcher:
                     f"(Score: {quality_score}, Category: {category})"
                 )
 
+                # Archive source URLs to Wayback Machine (optional, runs in background)
+                if Config.ARCHIVE_SOURCE_URLS and sources:
+                    try:
+                        archived = archive_urls_batch(sources[:3])  # Limit to first 3 URLs
+                        archived_count = sum(1 for v in archived.values() if v)
+                        if archived_count > 0:
+                            logger.info(f"Archived {archived_count}/{len(sources)} URLs for story")
+                    except Exception as e:
+                        logger.debug(f"URL archiving failed: {e}")
+
             except Exception as e:
                 logger.error(f"Failed to save story: {e}")
                 continue
@@ -1996,6 +2094,27 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         # Should be capped at 10
         assert result <= 10
 
+    def test_archive_url_wayback_invalid():
+        # Test with invalid inputs
+        result = archive_url_wayback("")
+        assert result is None
+        result = archive_url_wayback("not-a-url")
+        assert result is None
+        result = archive_url_wayback("ftp://example.com")
+        assert result is None
+
+    def test_archive_urls_batch_empty():
+        # Test with empty list
+        results = archive_urls_batch([])
+        assert results == {}
+
+    def test_archive_urls_batch_dedup():
+        # Test that duplicates are handled
+        urls = ["https://example.com", "https://example.com", ""]
+        results = archive_urls_batch(urls)
+        # Should have at most 1 unique valid URL
+        assert len([k for k in results.keys() if k]) <= 1
+
     suite.add_test(
         "Calculate similarity - identical", test_calculate_similarity_identical
     )
@@ -2036,5 +2155,9 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         test_calibrate_quality_score_with_reputable_source,
     )
     suite.add_test("Calibrate score - max cap", test_calibrate_quality_score_max_cap)
+    # URL archiving tests
+    suite.add_test("Archive URL - invalid", test_archive_url_wayback_invalid)
+    suite.add_test("Archive URLs batch - empty", test_archive_urls_batch_empty)
+    suite.add_test("Archive URLs batch - dedup", test_archive_urls_batch_dedup)
 
     return suite
