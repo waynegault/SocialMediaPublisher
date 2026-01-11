@@ -16,6 +16,7 @@ import requests
 import re
 
 from api_client import api_client
+from text_utils import strip_markdown_code_block
 from config import Config
 from database import Database, Story
 
@@ -28,9 +29,9 @@ logger = logging.getLogger(__name__)
 NO_COMPANY_MENTION = "NO_COMPANY_MENTION"
 
 
-def validate_linkedin_url(url: str, strict: bool = False) -> bool:
+def validate_linkedin_profile_url(url: str, strict: bool = False) -> bool:
     """
-    Validate that a LinkedIn URL appears to be a valid profile URL.
+    Validate that a LinkedIn personal profile URL appears to be valid.
 
     By default (strict=False), only validates URL format since LinkedIn blocks
     unauthenticated HEAD/GET requests. Full validation happens later when
@@ -349,12 +350,7 @@ Return ONLY valid JSON, no explanation."""
                 # Fall back to non-grounded extraction
                 return self._extract_orgs_and_people_fallback(story)
 
-            response_text = response.text.strip()
-
-            # Clean up response - sometimes AI adds markdown code blocks
-            if response_text.startswith("```"):
-                response_text = re.sub(r"^```\w*\n?", "", response_text)
-                response_text = re.sub(r"\n?```$", "", response_text)
+            response_text = strip_markdown_code_block(response.text)
 
             data = json.loads(response_text)
             orgs = data.get("organizations", [])
@@ -399,10 +395,7 @@ Return ONLY valid JSON, no explanation."""
                 return None
 
             # Clean up response - sometimes AI adds markdown code blocks
-            response_text = response_text.strip()
-            if response_text.startswith("```"):
-                response_text = re.sub(r"^```\w*\n?", "", response_text)
-                response_text = re.sub(r"\n?```$", "", response_text)
+            response_text = strip_markdown_code_block(response_text)
 
             data = json.loads(response_text)
             return {
@@ -542,10 +535,7 @@ Return ONLY valid JSON, no explanation."""
                 return []
 
             # Clean up response
-            response_text = response_text.strip()
-            if response_text.startswith("```"):
-                response_text = re.sub(r"^```\w*\n?", "", response_text)
-                response_text = re.sub(r"\n?```$", "", response_text)
+            response_text = strip_markdown_code_block(response_text)
 
             data = json.loads(response_text)
             leaders = data.get("leaders", [])
@@ -693,7 +683,7 @@ Return ONLY valid JSON, no explanation."""
                 url = profile.get("linkedin_url", "")
                 if url and "linkedin.com/in/" in url:
                     # Validate the URL actually returns a valid profile
-                    if validate_linkedin_url(url):
+                    if validate_linkedin_profile_url(url):
                         # Extract username from URL
                         username = (
                             url.split("linkedin.com/in/")[-1].rstrip("/").split("?")[0]
@@ -1441,10 +1431,7 @@ Return ONLY valid JSON, no explanation."""
 
             # Parse JSON response
             # Clean up response - sometimes AI adds markdown code blocks
-            response_text = response_text.strip()
-            if response_text.startswith("```"):
-                response_text = re.sub(r"^```\w*\n?", "", response_text)
-                response_text = re.sub(r"\n?```$", "", response_text)
+            response_text = strip_markdown_code_block(response_text)
 
             data = json.loads(response_text)
             individuals = data.get("individuals", [])
