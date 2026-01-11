@@ -31,7 +31,7 @@ from typing import Any, Callable
 class JSONFormatter(logging.Formatter):
     """
     Format log records as JSON for structured logging.
-    
+
     Produces machine-readable logs suitable for log aggregation
     systems like ELK, Loki, or CloudWatch.
     """
@@ -39,18 +39,35 @@ class JSONFormatter(logging.Formatter):
     def __init__(self, include_extras: bool = True):
         """
         Initialize the JSON formatter.
-        
+
         Args:
             include_extras: Whether to include extra fields from the record
         """
         super().__init__()
         self.include_extras = include_extras
         self._skip_fields = {
-            'name', 'msg', 'args', 'created', 'filename', 'funcName',
-            'levelname', 'levelno', 'lineno', 'module', 'msecs',
-            'pathname', 'process', 'processName', 'relativeCreated',
-            'stack_info', 'exc_info', 'exc_text', 'thread', 'threadName',
-            'taskName', 'message',
+            "name",
+            "msg",
+            "args",
+            "created",
+            "filename",
+            "funcName",
+            "levelname",
+            "levelno",
+            "lineno",
+            "module",
+            "msecs",
+            "pathname",
+            "process",
+            "processName",
+            "relativeCreated",
+            "stack_info",
+            "exc_info",
+            "exc_text",
+            "thread",
+            "threadName",
+            "taskName",
+            "message",
         }
 
     def format(self, record: logging.LogRecord) -> str:
@@ -74,7 +91,7 @@ class JSONFormatter(logging.Formatter):
         # Add extra fields
         if self.include_extras:
             for key, value in record.__dict__.items():
-                if key not in self._skip_fields and not key.startswith('_'):
+                if key not in self._skip_fields and not key.startswith("_"):
                     try:
                         # Ensure value is JSON serializable
                         json.dumps(value)
@@ -88,22 +105,22 @@ class JSONFormatter(logging.Formatter):
 class ColoredFormatter(logging.Formatter):
     """
     Colored console formatter for development environments.
-    
+
     Uses ANSI color codes for visual log level differentiation.
     """
 
     COLORS = {
-        'DEBUG': '\033[36m',     # Cyan
-        'INFO': '\033[32m',      # Green
-        'WARNING': '\033[33m',   # Yellow
-        'ERROR': '\033[31m',     # Red
-        'CRITICAL': '\033[35m',  # Magenta
+        "DEBUG": "\033[36m",  # Cyan
+        "INFO": "\033[32m",  # Green
+        "WARNING": "\033[33m",  # Yellow
+        "ERROR": "\033[31m",  # Red
+        "CRITICAL": "\033[35m",  # Magenta
     }
-    RESET = '\033[0m'
+    RESET = "\033[0m"
 
     def format(self, record: logging.LogRecord) -> str:
         """Format with color codes."""
-        color = self.COLORS.get(record.levelname, '')
+        color = self.COLORS.get(record.levelname, "")
         formatted = super().format(record)
         return f"{color}{formatted}{self.RESET}"
 
@@ -116,7 +133,7 @@ def setup_logging(
 ) -> None:
     """
     Configure application logging.
-    
+
     Args:
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         json_format: Use JSON structured logging
@@ -137,13 +154,13 @@ def setup_logging(
     if json_format:
         console_handler.setFormatter(JSONFormatter())
     elif console_colors:
-        console_handler.setFormatter(ColoredFormatter(
-            '%(asctime)s | %(levelname)-8s | %(name)s | %(message)s'
-        ))
+        console_handler.setFormatter(
+            ColoredFormatter("%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
+        )
     else:
-        console_handler.setFormatter(logging.Formatter(
-            '%(asctime)s | %(levelname)-8s | %(name)s | %(message)s'
-        ))
+        console_handler.setFormatter(
+            logging.Formatter("%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
+        )
 
     root_logger.addHandler(console_handler)
 
@@ -158,10 +175,10 @@ def setup_logging(
 def get_logger(name: str) -> logging.Logger:
     """
     Get a configured logger instance.
-    
+
     Args:
         name: Logger name (typically __name__)
-    
+
     Returns:
         Configured logger instance
     """
@@ -176,7 +193,7 @@ def get_logger(name: str) -> logging.Logger:
 @dataclass
 class MetricValue:
     """Stores a single metric value with metadata."""
-    
+
     value: float
     timestamp: float = field(default_factory=time.time)
     labels: dict[str, str] = field(default_factory=dict)
@@ -185,11 +202,11 @@ class MetricValue:
 @dataclass
 class MetricStats:
     """Statistics for a metric over time."""
-    
+
     count: int = 0
     total: float = 0.0
-    min_value: float = float('inf')
-    max_value: float = float('-inf')
+    min_value: float = float("inf")
+    max_value: float = float("-inf")
     last_value: float = 0.0
     last_timestamp: float = 0.0
 
@@ -211,7 +228,7 @@ class MetricStats:
 class MetricsCollector:
     """
     Thread-safe metrics collector for application monitoring.
-    
+
     Supports counters, gauges, and histograms. Metrics can be
     exported in Prometheus-compatible format.
     """
@@ -241,10 +258,12 @@ class MetricsCollector:
         self._data_lock = threading.Lock()
         self._initialized = True
 
-    def increment(self, name: str, value: int = 1, labels: dict[str, str] | None = None) -> None:
+    def increment(
+        self, name: str, value: int = 1, labels: dict[str, str] | None = None
+    ) -> None:
         """
         Increment a counter metric.
-        
+
         Args:
             name: Metric name
             value: Amount to increment by
@@ -256,10 +275,12 @@ class MetricsCollector:
             if labels:
                 self._labels[key] = labels
 
-    def gauge(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
+    def gauge(
+        self, name: str, value: float, labels: dict[str, str] | None = None
+    ) -> None:
         """
         Set a gauge metric value.
-        
+
         Args:
             name: Metric name
             value: Current value
@@ -271,10 +292,12 @@ class MetricsCollector:
             if labels:
                 self._labels[key] = labels
 
-    def histogram(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
+    def histogram(
+        self, name: str, value: float, labels: dict[str, str] | None = None
+    ) -> None:
         """
         Record a histogram/distribution metric value.
-        
+
         Args:
             name: Metric name
             value: Observed value
@@ -286,10 +309,12 @@ class MetricsCollector:
             if labels:
                 self._labels[key] = labels
 
-    def timing(self, name: str, duration_seconds: float, labels: dict[str, str] | None = None) -> None:
+    def timing(
+        self, name: str, duration_seconds: float, labels: dict[str, str] | None = None
+    ) -> None:
         """
         Record a timing metric.
-        
+
         Args:
             name: Metric name
             duration_seconds: Duration in seconds
@@ -316,16 +341,20 @@ class MetricsCollector:
         with self._data_lock:
             return self._gauges.get(key, 0.0)
 
-    def get_histogram_stats(self, name: str, labels: dict[str, str] | None = None) -> MetricStats | None:
+    def get_histogram_stats(
+        self, name: str, labels: dict[str, str] | None = None
+    ) -> MetricStats | None:
         """Get histogram statistics."""
         key = self._build_key(name, labels)
         with self._data_lock:
             return self._histograms.get(key)
 
-    def get_timing_stats(self, name: str, labels: dict[str, str] | None = None) -> dict[str, float]:
+    def get_timing_stats(
+        self, name: str, labels: dict[str, str] | None = None
+    ) -> dict[str, float]:
         """
         Get timing statistics.
-        
+
         Returns:
             Dictionary with count, mean, min, max, p50, p95, p99
         """
@@ -344,14 +373,18 @@ class MetricsCollector:
                 "min": sorted_timings[0],
                 "max": sorted_timings[-1],
                 "p50": sorted_timings[int(count * 0.5)],
-                "p95": sorted_timings[int(count * 0.95)] if count >= 20 else sorted_timings[-1],
-                "p99": sorted_timings[int(count * 0.99)] if count >= 100 else sorted_timings[-1],
+                "p95": sorted_timings[int(count * 0.95)]
+                if count >= 20
+                else sorted_timings[-1],
+                "p99": sorted_timings[int(count * 0.99)]
+                if count >= 100
+                else sorted_timings[-1],
             }
 
     def get_all_metrics(self) -> dict[str, Any]:
         """
         Get all collected metrics.
-        
+
         Returns:
             Dictionary of all metrics organized by type
         """
@@ -370,8 +403,7 @@ class MetricsCollector:
                     for k, v in self._histograms.items()
                 },
                 "timings": {
-                    k: self.get_timing_stats(k) or {}
-                    for k in self._timings.keys()
+                    k: self.get_timing_stats(k) or {} for k in self._timings.keys()
                 },
             }
 
@@ -387,7 +419,7 @@ class MetricsCollector:
     def export_prometheus(self) -> str:
         """
         Export metrics in Prometheus text format.
-        
+
         Returns:
             Prometheus-compatible metrics string
         """
@@ -441,16 +473,17 @@ metrics = MetricsCollector()
 def timed(metric_name: str | None = None, labels: dict[str, str] | None = None):
     """
     Decorator to measure function execution time.
-    
+
     Args:
         metric_name: Optional metric name (defaults to function name)
         labels: Optional labels for the metric
-    
+
     Example:
         @timed("api_call")
         def fetch_data():
             ...
     """
+
     def decorator(func: Callable) -> Callable:
         name = metric_name or f"{func.__module__}.{func.__name__}"
 
@@ -469,22 +502,24 @@ def timed(metric_name: str | None = None, labels: dict[str, str] | None = None):
                 metrics.timing(f"{name}_duration_seconds", duration, labels=labels)
 
         return wrapper
+
     return decorator
 
 
 def counted(metric_name: str | None = None, labels: dict[str, str] | None = None):
     """
     Decorator to count function calls.
-    
+
     Args:
         metric_name: Optional metric name (defaults to function name)
         labels: Optional labels for the metric
-    
+
     Example:
         @counted("story_processed")
         def process_story(story):
             ...
     """
+
     def decorator(func: Callable) -> Callable:
         name = metric_name or f"{func.__module__}.{func.__name__}_calls"
 
@@ -494,6 +529,7 @@ def counted(metric_name: str | None = None, labels: dict[str, str] | None = None
             return func(*args, **kwargs)
 
         return wrapper
+
     return decorator
 
 
@@ -505,7 +541,7 @@ def counted(metric_name: str | None = None, labels: dict[str, str] | None = None
 @dataclass
 class Event:
     """Represents a tracked event."""
-    
+
     name: str
     timestamp: float
     data: dict[str, Any]
@@ -515,14 +551,14 @@ class Event:
 class EventTracker:
     """
     Track application events for analytics and debugging.
-    
+
     Events are stored in memory with a configurable buffer size.
     """
 
     def __init__(self, max_events: int = 10000):
         """
         Initialize the event tracker.
-        
+
         Args:
             max_events: Maximum number of events to keep in memory
         """
@@ -539,7 +575,7 @@ class EventTracker:
     ) -> None:
         """
         Track an event.
-        
+
         Args:
             event_name: Name of the event
             data: Optional event data
@@ -556,7 +592,7 @@ class EventTracker:
             self._events.append(event)
             # Trim old events if over limit
             if len(self._events) > self._max_events:
-                self._events = self._events[-self._max_events:]
+                self._events = self._events[-self._max_events :]
 
         # Also log the event
         self._logger.debug(
@@ -575,12 +611,12 @@ class EventTracker:
     ) -> list[Event]:
         """
         Get tracked events.
-        
+
         Args:
             event_name: Filter by event name
             since: Only events after this timestamp
             limit: Maximum number of events to return
-        
+
         Returns:
             List of matching events
         """
@@ -598,10 +634,10 @@ class EventTracker:
     def get_event_counts(self, since: float | None = None) -> dict[str, int]:
         """
         Get event counts by name.
-        
+
         Args:
             since: Only count events after this timestamp
-        
+
         Returns:
             Dictionary mapping event names to counts
         """
@@ -640,7 +676,7 @@ def log_and_track(
 ) -> None:
     """
     Log a message and track it as an event.
-    
+
     Args:
         event_name: Event name for tracking
         message: Log message
@@ -656,7 +692,7 @@ def log_and_track(
 def get_health_status() -> dict[str, Any]:
     """
     Get application health status including key metrics.
-    
+
     Returns:
         Dictionary with health information
     """
@@ -704,7 +740,7 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert "timestamp" in parsed
 
     def test_colored_formatter():
-        formatter = ColoredFormatter('%(levelname)s - %(message)s')
+        formatter = ColoredFormatter("%(levelname)s - %(message)s")
         record = logging.LogRecord(
             name="test",
             level=logging.ERROR,
