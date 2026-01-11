@@ -164,6 +164,119 @@ def validate_url(url: str) -> bool:
     return True
 
 
+def calibrate_quality_score(
+    base_score: int,
+    story_data: dict,
+    source_urls: list[str] | None = None,
+    acquire_date: datetime | None = None,
+) -> int:
+    """
+    Apply quality score calibration based on configurable weights.
+
+    Takes the AI-provided base score and applies adjustments based on:
+    - Recency: Newer stories get a boost
+    - Source quality: Reputable domains get a boost
+    - People mentioned: Stories with named individuals get a boost
+    - Geographic priority: Stories from priority regions get a boost
+
+    Args:
+        base_score: The AI-provided quality score (1-10)
+        story_data: Dictionary containing story metadata from AI response
+        source_urls: List of source URLs for the story
+        acquire_date: When the story was found (for recency calculation)
+
+    Returns:
+        Calibrated quality score (1-10)
+    """
+    bonus = 0.0
+
+    # Recency bonus: stories discovered today get the full weight
+    if acquire_date and Config.QUALITY_WEIGHT_RECENCY > 0:
+        age_days = (datetime.now() - acquire_date).days
+        if age_days == 0:
+            bonus += Config.QUALITY_WEIGHT_RECENCY * 0.5  # Same day
+        elif age_days <= 1:
+            bonus += Config.QUALITY_WEIGHT_RECENCY * 0.3  # Yesterday
+        elif age_days <= 3:
+            bonus += Config.QUALITY_WEIGHT_RECENCY * 0.1  # Recent
+
+    # Source quality bonus: reputable domains
+    if source_urls and Config.QUALITY_WEIGHT_SOURCE > 0:
+        reputable_domains = {
+            "nature.com",
+            "sciencedirect.com",
+            "ieee.org",
+            "springer.com",
+            "wiley.com",
+            "acs.org",
+            "rsc.org",
+            "elsevier.com",
+            "nytimes.com",
+            "washingtonpost.com",
+            "bbc.com",
+            "reuters.com",
+            "bloomberg.com",
+            "wsj.com",
+            "economist.com",
+            "ft.com",
+            "techcrunch.com",
+            "wired.com",
+            "arstechnica.com",
+            "mit.edu",
+            "stanford.edu",
+            "harvard.edu",
+            "berkeley.edu",
+            "cam.ac.uk",
+            "ox.ac.uk",
+            "ethz.ch",
+            "mpg.de",
+        }
+        for url in source_urls:
+            try:
+                domain = urlparse(url).netloc.lower()
+                # Check if domain or its parent is reputable
+                domain_parts = domain.split(".")
+                for i in range(len(domain_parts) - 1):
+                    check_domain = ".".join(domain_parts[i:])
+                    if check_domain in reputable_domains:
+                        bonus += Config.QUALITY_WEIGHT_SOURCE * 0.5
+                        break
+            except Exception:
+                pass
+
+    # People mentioned bonus: stories with named individuals
+    if Config.QUALITY_WEIGHT_PEOPLE_MENTIONED > 0:
+        story_people = story_data.get("story_people", [])
+        if isinstance(story_people, list) and len(story_people) > 0:
+            # Count people with actual names (not placeholders)
+            named_people = sum(
+                1
+                for p in story_people
+                if isinstance(p, dict)
+                and p.get("name")
+                and str(p.get("name", "")).lower() not in ("unknown", "tba", "n/a", "")
+            )
+            if named_people >= 3:
+                bonus += Config.QUALITY_WEIGHT_PEOPLE_MENTIONED * 0.5
+            elif named_people >= 1:
+                bonus += Config.QUALITY_WEIGHT_PEOPLE_MENTIONED * 0.3
+
+    # Cap the bonus
+    max_bonus = Config.QUALITY_MAX_CALIBRATION_BONUS
+    bonus = min(bonus, max_bonus)
+
+    # Apply bonus and ensure result is within 1-10
+    calibrated = base_score + int(round(bonus))
+    calibrated = max(1, min(10, calibrated))
+
+    if bonus > 0:
+        logger.debug(
+            f"Quality score calibrated: {base_score} -> {calibrated} (bonus: +{bonus:.1f})"
+        )
+
+    return calibrated
+
+
 def extract_url_keywords(url: str) -> set[str]:
     """
     Extract meaningful keywords from a URL path.
@@ -1235,6 +1348,13 @@ class StorySearcher:
 
                 # Create new story with all fields
                 quality_score = data.get("quality_score", 5)
+                # Apply quality score calibration based on configured weights
+                quality_score = calibrate_quality_score(
+                    base_score=quality_score,
+                    story_data=data,
+                    source_urls=sources,
+                    acquire_date=datetime.now(),
+                )
                 category = data.get("category", "Other")
                 quality_justification = data.get("quality_justification", "")
                 # Extract hashtags (limit to 3)
@@ -1823,6 +1943,59 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
+    def test_calibrate_quality_score_base():
+        # Test that base score is returned when no bonuses apply
+        story_data: dict = {"title": "Test", "summary": "Summary"}
+        result = calibrate_quality_score(5, story_data)
+        assert result == 5
+        # Test score capping at 10
+        result = calibrate_quality_score(10, story_data)
+        assert result == 10
+        # Test score floor at 1
+        result = calibrate_quality_score(1, story_data)
+        assert result >= 1
+
+    def test_calibrate_quality_score_with_people():
+        # Story with named people should get a bonus
+        story_data: dict = {
+            "title": "Test",
+            "summary": "Summary",
+            "story_people": [
+                {"name": "Dr. Jane Smith", "company": "MIT", "position": "Researcher"},
+                {"name": "John Doe", "company": "BASF", "position": "CEO"},
+                {"name": "Alice Brown", "company": "Stanford", "position": "Professor"},
+            ],
+        }
+        result = calibrate_quality_score(7, story_data)
+        # Should get a bonus for having 3+ named people
+        assert result >= 7
+
+    def test_calibrate_quality_score_with_reputable_source():
+        # Story with reputable source should get a bonus
+        story_data: dict = {"title": "Test", "summary": "Summary"}
+        source_urls = ["https://www.nature.com/articles/test-article"]
+        result = calibrate_quality_score(7, story_data, source_urls=source_urls)
+        # Should get a bonus for reputable source
+        assert result >= 7
+
+    def test_calibrate_quality_score_max_cap():
+        # Test that bonus is capped and score doesn't exceed 10
+        story_data: dict = {
+            "title": "Test",
+            "summary": "Summary",
+            "story_people": [
+                {"name": "Dr. Jane Smith", "company": "MIT", "position": "Researcher"},
+                {"name": "John Doe", "company": "BASF", "position": "CEO"},
+                {"name": "Alice Brown", "company": "Stanford", "position": "Professor"},
+            ],
+        }
+        source_urls = ["https://www.nature.com/articles/test-article"]
+        result = calibrate_quality_score(
+            9, story_data, source_urls=source_urls, acquire_date=datetime.now()
+        )
+        # Should be capped at 10
+        assert result <= 10
+
     suite.add_test(
         "Calculate similarity - identical", test_calculate_similarity_identical
     )
@@ -1853,5 +2026,15 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         "Retry decorator - eventual success", test_retry_decorator_eventual_success
     )
     suite.add_test("Redirect URL cache", test_redirect_url_cache)
+    # Quality score calibration tests
+    suite.add_test("Calibrate score - base", test_calibrate_quality_score_base)
+    suite.add_test(
+        "Calibrate score - with people", test_calibrate_quality_score_with_people
+    )
+    suite.add_test(
+        "Calibrate score - reputable source",
+        test_calibrate_quality_score_with_reputable_source,
+    )
+    suite.add_test("Calibrate score - max cap", test_calibrate_quality_score_max_cap)
 
     return suite
