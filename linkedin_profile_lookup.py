@@ -89,7 +89,12 @@ class LinkedInCompanyLookup:
         """Context manager entry - returns self."""
         return self
 
-    def __exit__(self, exc_type: Optional[type], exc_val: Optional[BaseException], exc_tb: Optional[Any]) -> bool:
+    def __exit__(
+        self,
+        exc_type: Optional[type],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[Any],
+    ) -> bool:
         """Context manager exit - closes browser session."""
         self.close_browser()
         return False
