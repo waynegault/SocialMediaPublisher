@@ -30,8 +30,13 @@ TEST_MODULES = [
 ]
 
 
-def main():
-    """Collect and run all module tests."""
+def main_with_failures() -> tuple[int, list[tuple[str, str]]]:
+    """Collect and run all module tests.
+
+    Returns:
+        Tuple of (exit_code, list of (suite_name, test_name) for failures)
+    """
+    # Note: venv check is handled by config.py at import time
     suites = []
 
     # Suppress logging during test imports and execution (up to ERROR level)
@@ -49,11 +54,17 @@ def main():
 
         if not suites:
             print("No test suites found!")
-            return 1
+            return 1, []
 
         print(f"\nRunning {len(suites)} test suites...\n")
-        success = run_all_suites(suites, verbose=True)
-    return 0 if success else 1
+        success, failed_tests = run_all_suites(suites, verbose=True)
+    return (0, []) if success else (1, failed_tests)
+
+
+def main() -> int:
+    """Entry point that returns exit code only."""
+    exit_code, _ = main_with_failures()
+    return exit_code
 
 
 if __name__ == "__main__":

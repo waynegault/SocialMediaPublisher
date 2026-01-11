@@ -650,8 +650,8 @@ HTML_TEMPLATE = """
                 </div>
 
                 <div class="edit-group">
-                    <label for="editMentions">LinkedIn Mentions (comma-separated handles)</label>
-                    <input type="text" id="editMentions" placeholder="e.g., @company, @person">
+                    <label for="editMentions">LinkedIn Mentions (auto-generated from profiles)</label>
+                    <input type="text" id="editMentions" readonly disabled placeholder="Run 'LinkedIn Profile Enrichment' to populate">
                 </div>
 
                 <div class="edit-group">
@@ -777,9 +777,10 @@ HTML_TEMPLATE = """
                 </div>
             `;
 
-            // Build mentions string
-            const mentions = (story.linkedin_handles || [])
-                .map(h => '@' + (h.handle || h.name))
+            // Build mentions string from relevant_people with URNs
+            const mentions = (story.relevant_people || [])
+                .filter(p => p.linkedin_urn || p.linkedin_profile)
+                .map(p => '@' + p.name)
                 .join(' ');
 
             // Build hashtags string
@@ -839,8 +840,9 @@ HTML_TEMPLATE = """
             document.getElementById('editTitle').value = story.title || '';
             document.getElementById('editSummary').value = story.summary || '';
             document.getElementById('editHashtags').value = (story.hashtags || []).join(', ');
-            document.getElementById('editMentions').value = (story.linkedin_handles || [])
-                .map(h => h.handle || h.name).join(', ');
+            document.getElementById('editMentions').value = (story.relevant_people || [])
+                .filter(p => p.linkedin_urn || p.linkedin_profile)
+                .map(p => '@' + p.name).join(', ');
             document.getElementById('editPromotion').value = story.promotion || '';
 
             if (story.scheduled_time) {
@@ -954,8 +956,6 @@ HTML_TEMPLATE = """
                 summary: document.getElementById('editSummary').value,
                 hashtags: document.getElementById('editHashtags').value
                     .split(',').map(t => t.trim()).filter(t => t),
-                linkedin_handles: document.getElementById('editMentions').value
-                    .split(',').map(h => ({ handle: h.trim(), name: h.trim() })).filter(h => h.handle),
                 promotion: document.getElementById('editPromotion').value,
                 scheduled_time: document.getElementById('editScheduledTime').value || null
             };
@@ -1204,8 +1204,6 @@ class ValidationServer:
                     story.summary = data["summary"]
                 if "hashtags" in data:
                     story.hashtags = data["hashtags"]
-                if "linkedin_handles" in data:
-                    story.linkedin_handles = data["linkedin_handles"]
                 if "promotion" in data:
                     story.promotion = data["promotion"]
                 if "scheduled_time" in data:
@@ -1286,6 +1284,20 @@ class ValidationServer:
                     )
                 else:
                     logger.warning(f"Image not found: {image_file}")
+                    # Extract story ID from filename and clear image_path in database
+                    import re
+
+                    match = re.search(r"story_(\d+)_", image_file.name)
+                    if match:
+                        story_id = int(match.group(1))
+                        story = self.db.get_story(story_id)
+                        if story and story.image_path:
+                            logger.info(
+                                f"Clearing missing image_path for story {story_id}"
+                            )
+                            story.image_path = None
+                            story.image_alt_text = None
+                            self.db.update_story(story)
                 return "", 404
             except Exception as e:
                 logger.warning(f"Failed to serve image {image_path}: {e}")
@@ -1329,11 +1341,12 @@ class ValidationServer:
             "category": safe_get(row, "category", "Other"),
             "hashtags": parse_json_field(safe_get(row, "hashtags")),
             "image_path": safe_get(row, "image_path"),
+            "image_alt_text": safe_get(row, "image_alt_text"),
             "verification_status": safe_get(row, "verification_status", "pending"),
             "verification_reason": safe_get(row, "verification_reason"),
             "scheduled_time": safe_get(row, "scheduled_time"),
             "publish_status": safe_get(row, "publish_status", "unpublished"),
-            "linkedin_handles": parse_json_field(safe_get(row, "linkedin_handles")),
+            "relevant_people": parse_json_field(safe_get(row, "relevant_people")),
             "promotion": safe_get(row, "promotion"),
         }
 

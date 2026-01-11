@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Optional, cast
 import httpx
 from google import genai  # type: ignore
 
+from api_client import api_client
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,9 @@ class LinkedInCompanyLookup:
         # Shared browser session for UC Chrome searches (reused across multiple searches)
         self._uc_driver: Optional[Any] = None
 
+        # Track if we've verified LinkedIn login this session
+        self._linkedin_login_verified = False
+
     def __enter__(self):
         """Context manager entry - returns self."""
         return self
@@ -126,6 +130,15 @@ class LinkedInCompanyLookup:
             options.add_argument("--disable-infobars")
             options.add_argument("--disable-popup-blocking")
 
+            # Use a dedicated profile directory for automation
+            # This persists LinkedIn login between runs without conflicting with main Chrome
+            automation_profile = os.path.expandvars(
+                r"%LOCALAPPDATA%\SocialMediaPublisher\ChromeProfile"
+            )
+            os.makedirs(automation_profile, exist_ok=True)
+            options.add_argument(f"--user-data-dir={automation_profile}")
+            logger.info(f"Using automation profile at {automation_profile}")
+
             # Consistent user agent (random user agents are red flags)
             user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
             options.add_argument(f"--user-agent={user_agent}")
@@ -142,6 +155,125 @@ class LinkedInCompanyLookup:
         except Exception as e:
             logger.error(f"Failed to create UC Chrome driver: {e}")
             return None
+
+    def _ensure_linkedin_login(self, driver) -> bool:
+        """Ensure user is logged in to LinkedIn, attempting auto-login if credentials available.
+
+        Returns:
+            True if logged in, False if user cancelled or login failed
+        """
+        if self._linkedin_login_verified:
+            return True
+
+        # Navigate to LinkedIn to check login status
+        try:
+            driver.get("https://www.linkedin.com/feed/")
+            time.sleep(3)
+
+            current_url = driver.current_url
+
+            # If redirected to login page, need to log in
+            if (
+                "/login" in current_url
+                or "/authwall" in current_url
+                or "/checkpoint" in current_url
+            ):
+                # Try automatic login if credentials are configured
+                if Config.LINKEDIN_USERNAME and Config.LINKEDIN_PASSWORD:
+                    logger.info("Attempting automatic LinkedIn login...")
+                    if self._auto_login(driver):
+                        self._linkedin_login_verified = True
+                        logger.info("Automatic LinkedIn login successful")
+                        return True
+                    else:
+                        logger.warning("Automatic login failed, falling back to manual")
+
+                # Fall back to manual login
+                print("\n" + "=" * 60)
+                print("LinkedIn Login Required")
+                print("=" * 60)
+                print("A browser window has opened. Please log in to LinkedIn.")
+                print("This is required to extract @mention URNs from profiles.")
+                print("Your session will be saved for future runs.")
+                print(
+                    "\nTip: Add LINKEDIN_USERNAME and LINKEDIN_PASSWORD to .env for auto-login."
+                )
+                print("\nAfter logging in, press Enter to continue...")
+                input()
+
+                # Check if login succeeded
+                time.sleep(2)
+                current_url = driver.current_url
+                if "/login" in current_url or "/authwall" in current_url:
+                    print("Login not detected. Please try again.")
+                    return False
+
+            self._linkedin_login_verified = True
+            logger.info("LinkedIn login verified")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error checking LinkedIn login: {e}")
+            return False
+
+    def _auto_login(self, driver) -> bool:
+        """Attempt automatic login using credentials from config.
+
+        Returns:
+            True if login successful, False otherwise
+        """
+        try:
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+
+            # Navigate to login page
+            driver.get("https://www.linkedin.com/login")
+            time.sleep(2)
+
+            # Wait for and fill username field
+            username_field = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.ID, "username"))
+            )
+            username_field.clear()
+            username_field.send_keys(Config.LINKEDIN_USERNAME)
+
+            # Fill password field
+            password_field = driver.find_element(By.ID, "password")
+            password_field.clear()
+            password_field.send_keys(Config.LINKEDIN_PASSWORD)
+
+            # Click sign in button
+            sign_in_button = driver.find_element(
+                By.CSS_SELECTOR, "button[type='submit']"
+            )
+            sign_in_button.click()
+
+            # Wait for redirect (successful login redirects away from /login)
+            time.sleep(5)
+
+            current_url = driver.current_url
+
+            # Check for security checkpoint (2FA, CAPTCHA, etc.)
+            if "/checkpoint" in current_url:
+                print("\n" + "=" * 60)
+                print("LinkedIn Security Checkpoint Detected")
+                print("=" * 60)
+                print("Please complete the security verification in the browser.")
+                print("\nPress Enter after completing verification...")
+                input()
+                time.sleep(2)
+                current_url = driver.current_url
+
+            # Success if we're no longer on login/authwall page
+            if "/login" not in current_url and "/authwall" not in current_url:
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Auto-login failed: {e}")
+            return False
 
     def close_browser(self):
         """Close the shared browser session.
@@ -336,13 +468,15 @@ If you cannot find it, respond with:
 NOT_FOUND"""
 
         try:
-            response = self.client.models.generate_content(
+            response = api_client.gemini_generate(
+                client=self.client,
                 model=Config.MODEL_TEXT,
                 contents=prompt,
                 config={
                     "tools": [{"google_search": {}}],
                     "max_output_tokens": 64,
                 },
+                endpoint="org_id_lookup",
             )
 
             if not response.text:
@@ -580,13 +714,15 @@ If NOT found or only department pages exist, respond with exactly:
 NOT_FOUND"""
 
         try:
-            response = self.client.models.generate_content(
+            response = api_client.gemini_generate(
+                client=self.client,
                 model=Config.MODEL_TEXT,
                 contents=prompt,
                 config={
                     "tools": [{"google_search": {}}],
                     "max_output_tokens": 256,
                 },
+                endpoint="company_search",
             )
 
             if not response.text:
@@ -734,13 +870,15 @@ If you cannot find their personal LinkedIn profile, respond exactly:
 NOT_FOUND"""
 
         try:
-            response = self.client.models.generate_content(
+            response = api_client.gemini_generate(
+                client=self.client,
                 model=Config.MODEL_TEXT,
                 contents=prompt,
                 config={
                     "tools": [{"google_search": {}}],
                     "max_output_tokens": 256,
                 },
+                endpoint="person_search",
             )
 
             if not response.text:
@@ -1125,13 +1263,15 @@ If you cannot find a department-specific page (only the parent org exists), resp
 NOT_FOUND"""
 
         try:
-            response = self.client.models.generate_content(
+            response = api_client.gemini_generate(
+                client=self.client,
                 model=Config.MODEL_TEXT,
                 contents=prompt,
                 config={
                     "tools": [{"google_search": {}}],
                     "max_output_tokens": 256,
                 },
+                endpoint="department_search",
             )
 
             if not response.text:
@@ -1335,6 +1475,98 @@ NOT_FOUND"""
         # Return company_data with just (url, slug) for backwards compatibility
         return_data = {k: (v[0], v[1]) for k, v in company_data.items()}
         return (companies_found, companies_not_found, return_data)
+
+    def lookup_person_urn(self, profile_url: str) -> Optional[str]:
+        """
+        Look up a person's URN from their LinkedIn profile URL.
+
+        LinkedIn embeds the member URN in the profile page source code.
+        This method loads the profile page and extracts the URN.
+
+        Args:
+            profile_url: LinkedIn profile URL (e.g., https://www.linkedin.com/in/username)
+
+        Returns:
+            Person URN (e.g., "urn:li:person:ABC123XYZ") if found, None otherwise
+        """
+        if not profile_url or "linkedin.com/in/" not in profile_url:
+            return None
+
+        driver = self._get_uc_driver()
+        if driver is None:
+            logger.warning("Cannot lookup person URN - browser driver not available")
+            return None
+
+        # Ensure user is logged in to LinkedIn (required to see URNs)
+        if not self._ensure_linkedin_login(driver):
+            logger.warning("LinkedIn login required for URN extraction")
+            return None
+
+        logger.debug(f"Looking up person URN for: {profile_url}")
+
+        try:
+            driver.get(profile_url)
+            time.sleep(4)  # Wait for page to fully load
+
+            # Extract the vanity name from URL to help identify the correct profile
+            vanity_match = re.search(r"linkedin\.com/in/([\w\-]+)", profile_url)
+            vanity_name = vanity_match.group(1) if vanity_match else None
+
+            # LinkedIn embeds the member URN in several places in the page source
+            # We need to find the URN that belongs to the PROFILE OWNER, not the viewer
+
+            page_source = driver.page_source
+
+            if vanity_name:
+                # BEST PATTERN: Look for memberRelationship URN after the target's publicIdentifier
+                # Format: "publicIdentifier":"username",...,"*memberRelationship":"urn:li:fsd_memberRelationship:ID"
+                # Use [\s\S] instead of [^{}] to handle nested braces in JSON
+                member_rel_pattern = rf'"publicIdentifier":"{re.escape(vanity_name)}"[\s\S]{{0,500}}?"\*memberRelationship":"urn:li:fsd_memberRelationship:([A-Za-z0-9_-]+)"'
+                member_match = re.search(member_rel_pattern, page_source)
+                if member_match:
+                    profile_id = member_match.group(1)
+                    urn = f"urn:li:person:{profile_id}"
+                    logger.info(f"Found person URN (memberRelationship): {urn}")
+                    return urn
+
+                # Alternative: Look for fsd_profile after publicIdentifier
+                profile_block_pattern = rf'"publicIdentifier":"{re.escape(vanity_name)}"[\s\S]{{0,500}}?"entityUrn":"urn:li:fsd_profile:([A-Za-z0-9_-]+)"'
+                profile_match = re.search(profile_block_pattern, page_source)
+                if profile_match:
+                    profile_id = profile_match.group(1)
+                    urn = f"urn:li:person:{profile_id}"
+                    logger.info(f"Found person URN (matched publicIdentifier): {urn}")
+                    return urn
+
+                # Alternative: Look for miniProfile with matching publicIdentifier
+                mini_pattern = rf'"publicIdentifier":"{re.escape(vanity_name)}"[\s\S]{{0,500}}?"urn":"urn:li:fs_miniProfile:([A-Za-z0-9_-]+)"'
+                mini_match = re.search(mini_pattern, page_source)
+                if mini_match:
+                    profile_id = mini_match.group(1)
+                    urn = f"urn:li:person:{profile_id}"
+                    logger.info(f"Found person URN (miniProfile with publicId): {urn}")
+                    return urn
+
+            # Fallback: Look for the first fsd_profile in a profile context
+            # Search specifically in profile-related JSON blocks
+            profile_data_match = re.search(
+                r'"Profile"[^}]*"entityUrn":"(urn:li:fsd_profile:[A-Za-z0-9_-]+)"',
+                page_source,
+            )
+            if profile_data_match:
+                profile_id = profile_data_match.group(1).split(":")[-1]
+                urn = f"urn:li:person:{profile_id}"
+                logger.info(f"Found person URN (Profile entity): {urn}")
+                return urn
+
+            logger.warning(f"Could not extract URN from profile: {profile_url}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error looking up person URN for {profile_url}: {e}")
+            # Reset browser if it crashed
+            self._uc_driver = None
+            return None
 
     def close(self) -> None:
         """Clean up HTTP client and browser resources."""

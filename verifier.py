@@ -11,6 +11,7 @@ from PIL import Image
 
 from config import Config
 from database import Database, Story
+from api_client import api_client
 
 logger = logging.getLogger(__name__)
 
@@ -216,8 +217,11 @@ class ContentVerifier:
 
             # Fallback to Gemini
             image = Image.open(str(image_path))
-            response = self.client.models.generate_content(
-                model=Config.MODEL_VERIFICATION, contents=[prompt, image]
+            response = api_client.gemini_generate(
+                client=self.client,
+                model=Config.MODEL_VERIFICATION,
+                contents=[prompt, image],
+                endpoint="image_verify",
             )
             if not response.text:
                 logger.warning("Empty response from Gemini during image verification")
@@ -249,8 +253,11 @@ class ContentVerifier:
                 )
 
         # Fallback to Gemini
-        response = self.client.models.generate_content(
-            model=Config.MODEL_VERIFICATION, contents=prompt
+        response = api_client.gemini_generate(
+            client=self.client,
+            model=Config.MODEL_VERIFICATION,
+            contents=prompt,
+            endpoint="text_verify",
         )
         if not response.text:
             logger.warning("Empty response from Gemini during text verification")
@@ -270,14 +277,8 @@ class ContentVerifier:
             linkedin_profiles_found = sum(
                 1
                 for p in story.relevant_people
-                if p.get("linkedin_profile")
-                and str(p.get("linkedin_profile", "")).strip()
-            )
-
-        # Also count from linkedin_handles if available
-        if story.linkedin_handles:
-            linkedin_profiles_found = max(
-                linkedin_profiles_found, len(story.linkedin_handles)
+                if (p.get("linkedin_urn") or p.get("linkedin_profile"))
+                and str(p.get("linkedin_urn") or p.get("linkedin_profile", "")).strip()
             )
 
         # Get promotion message (or placeholder if not set)
@@ -312,12 +313,9 @@ class ContentVerifier:
             linkedin_count = sum(
                 1
                 for p in story.relevant_people
-                if p.get("linkedin_profile")
-                and str(p.get("linkedin_profile", "")).strip()
+                if (p.get("linkedin_urn") or p.get("linkedin_profile"))
+                and str(p.get("linkedin_urn") or p.get("linkedin_profile", "")).strip()
             )
-
-        if story.linkedin_handles:
-            linkedin_count = max(linkedin_count, len(story.linkedin_handles))
 
         # Validation rules for sufficient people and LinkedIn profile coverage
         if relevant_count == 0:

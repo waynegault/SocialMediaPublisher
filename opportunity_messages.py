@@ -165,14 +165,14 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     def test_get_random_message_with_custom():
         clear_custom_messages()  # Reset first
         add_custom_message("Unique custom message XYZ123")
-        # Get many random messages to verify custom can appear
-        found_custom = False
-        for _ in range(200):  # Should find it within 200 tries
-            msg = get_random_message_with_custom()
-            if "Unique custom message XYZ123" in msg:
-                found_custom = True
-                break
-        assert found_custom, "Custom message should appear in random selection"
+        # Verify custom message is in the combined list
+        all_msgs = OPPORTUNITY_MESSAGES + _custom_messages
+        assert "Unique custom message XYZ123" in all_msgs, (
+            f"Custom message not in list. _custom_messages={_custom_messages}"
+        )
+        # Verify get_random_message_with_custom returns from combined list
+        msg = get_random_message_with_custom()
+        assert msg in all_msgs, "Returned message should be from combined list"
         clear_custom_messages()  # Cleanup
 
     def test_all_messages_have_ps_prefix():

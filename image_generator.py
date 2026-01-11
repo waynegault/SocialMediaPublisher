@@ -12,15 +12,16 @@ from openai import OpenAI
 from huggingface_hub import InferenceClient  # type: ignore
 from PIL import Image, ImageDraw, ImageFont
 
+from api_client import api_client
 from config import Config
 from database import Database, Story
+from rate_limiter import AdaptiveRateLimiter
 
 # Appearance variations for generated images - ensures diverse women
 HAIR_COLORS = [
     "platinum blonde",
     "honey blonde",
     "strawberry blonde",
-    "auburn",
     "chestnut brown",
     "dark brown",
     "jet black",
@@ -34,6 +35,7 @@ HAIR_STYLES = [
     "elegant updo",
     "loose curls",
     "professional bob",
+    "spikey on top and shaved at the back and side",
 ]
 ETHNICITIES = [
     "Caucasian",
@@ -48,6 +50,7 @@ BODY_DESCRIPTORS = [
     "slim and curvaceous",
     "slender with an athletic figure",
     "petite and shapely",
+    "large chested",
 ]
 
 logger = logging.getLogger(__name__)
@@ -61,8 +64,8 @@ def get_random_appearance() -> str:
     body_type = random.choice(BODY_DESCRIPTORS)
 
     return (
-        f"a gorgeous {ethnicity} woman with {hair_color} {hair_style}, "
-        f"{body_type}, with striking features and a confident radiant smile"
+        f"a gorgeous highly attractive {ethnicity} woman with {hair_color} {hair_style}, "
+        f"{body_type}, with striking beautiful features and a confident radiant smile"
     )
 
 
@@ -128,6 +131,15 @@ def add_ai_watermark(image: Image.Image) -> Image.Image:
 class ImageGenerator:
     """Generate images for stories using Google's Imagen model."""
 
+    # Shared rate limiter for Imagen API (conservative limits for image generation)
+    _rate_limiter = AdaptiveRateLimiter(
+        initial_fill_rate=0.5,  # Start at 1 request per 2 seconds
+        min_fill_rate=0.1,  # Minimum: 1 request per 10 seconds
+        max_fill_rate=2.0,  # Maximum: 2 requests per second
+        success_threshold=3,  # Increase rate after 3 successes
+        rate_limiter_429_backoff=0.5,  # Aggressive backoff on 429: halve the rate
+    )
+
     def __init__(
         self,
         database: Database,
@@ -159,29 +171,93 @@ class ImageGenerator:
         logger.info(f"Generating images for {len(stories)} stories...")
 
         success_count = 0
+
         for i, story in enumerate(stories):
             try:
-                # Small delay between generations to be respectful of API rate limits
-                if i > 0:
-                    time.sleep(1)
+                # Use adaptive rate limiter to manage request timing
+                wait_time = self._rate_limiter.wait(endpoint="imagen")
+                if wait_time > 0.5:
+                    logger.info(f"Rate limiter: waited {wait_time:.1f}s before request")
 
                 logger.info(
                     f"[{i + 1}/{len(stories)}] Generating image for: {story.title}"
                 )
-                result = self._generate_image_for_story(story)
+                result = self._generate_image_for_story_with_retry(story)
                 if result:
                     image_path, alt_text = result
                     story.image_path = image_path
                     story.image_alt_text = alt_text
                     self.db.update_story(story)
                     success_count += 1
+                    self._rate_limiter.on_success(endpoint="imagen")
                     logger.info(f"✓ Saved: {image_path}")
             except Exception as e:
+                error_msg = str(e)
+                if (
+                    "429" in error_msg
+                    or "RESOURCE_EXHAUSTED" in error_msg
+                    or "quota" in error_msg.lower()
+                ):
+                    # Parse retry-after header if available (usually in the error message)
+                    retry_after = self._parse_retry_after(error_msg)
+                    self._rate_limiter.on_429_error(
+                        endpoint="imagen", retry_after=retry_after
+                    )
                 logger.error(f"✗ Failed to generate image for story {story.id}: {e}")
                 continue
 
+        # Log rate limiter metrics
+        metrics = self._rate_limiter.get_metrics()
+        logger.info(
+            f"Rate limiter stats: {metrics.total_requests} requests, "
+            f"{metrics.error_429_count} 429s, current rate: {metrics.current_fill_rate:.2f} req/s"
+        )
+
         logger.info(f"Successfully generated {success_count}/{len(stories)} images")
         return success_count
+
+    def _parse_retry_after(self, error_msg: str) -> float:
+        """Extract retry-after value from error message if present."""
+        import re
+
+        # Look for patterns like "retry after 30 seconds" or "retry-after: 30"
+        match = re.search(r"retry[- ]?after[:\s]+(\d+)", error_msg.lower())
+        if match:
+            return float(match.group(1))
+        # Default penalty for 429: 30 seconds
+        return 30.0
+
+    def _generate_image_for_story_with_retry(
+        self, story: Story, max_retries: int = 3
+    ) -> tuple[str, str] | None:
+        """Generate an image with retry logic for rate limits."""
+        for attempt in range(max_retries):
+            try:
+                result = self._generate_image_for_story(story)
+                if result:
+                    return result
+                # If result is None but no exception, don't retry
+                return None
+            except RuntimeError as e:
+                error_msg = str(e)
+                if "quota" in error_msg.lower() or "429" in error_msg:
+                    if attempt < max_retries - 1:
+                        # Notify rate limiter and let it handle the backoff timing
+                        retry_after = self._parse_retry_after(error_msg)
+                        self._rate_limiter.on_429_error(
+                            endpoint="imagen", retry_after=retry_after
+                        )
+                        # Wait according to rate limiter before retry
+                        wait_time = self._rate_limiter.wait(endpoint="imagen")
+                        logger.warning(
+                            f"Rate limited, waited {wait_time:.1f}s for retry {attempt + 2}/{max_retries}..."
+                        )
+                        continue
+                raise
+            except Exception:
+                # Don't retry other errors
+                raise
+        return None
 
     def _generate_image_for_story(self, story: Story) -> tuple[str, str] | None:
         """Generate an image for a single story. Returns (file_path, alt_text) if successful."""
@@ -205,7 +281,8 @@ class ImageGenerator:
             # Use Imagen model for image generation
             logger.info(f"Using Imagen model: {Config.MODEL_IMAGE}")
             logger.debug(f"Prompt ({len(prompt.split())} words): {prompt[:200]}...")
-            response = self.client.models.generate_images(
+            response = api_client.imagen_generate(
+                client=self.client,
                 model=Config.MODEL_IMAGE,
                 prompt=prompt,
                 config=types.GenerateImagesConfig(
@@ -421,8 +498,11 @@ Do NOT deviate from this appearance description. Include these exact physical tr
                 logger.info(
                     f"Using Gemini to refine image prompt (appearance: {random_appearance[:50]}...)"
                 )
-                response = self.client.models.generate_content(
-                    model=Config.MODEL_TEXT, contents=refinement_prompt
+                response = api_client.gemini_generate(
+                    client=self.client,
+                    model=Config.MODEL_TEXT,
+                    contents=refinement_prompt,
+                    endpoint="prompt_refinement",
                 )
                 refined = response.text
 
@@ -501,8 +581,11 @@ Return ONLY the alt text, nothing else."""
                 alt_text = response.choices[0].message.content
             else:
                 logger.debug("Using Gemini to generate alt text")
-                response = self.client.models.generate_content(
-                    model=Config.MODEL_TEXT, contents=alt_text_prompt
+                response = api_client.gemini_generate(
+                    client=self.client,
+                    model=Config.MODEL_TEXT,
+                    contents=alt_text_prompt,
+                    endpoint="alt_text",
                 )
                 alt_text = response.text
 
@@ -642,8 +725,9 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
             # We're testing that it doesn't crash unexpectedly
             try:
                 result = gen._generate_huggingface_image(story, "test prompt")
-                # If it returns, it should be None (no token) or a path
-                assert result is None or isinstance(result, str)
+                # If it returns, it should be None (no token) or a tuple (path, prompt)
+                # Note: FLUX.1-schnell is free and works without token
+                assert result is None or isinstance(result, tuple)
             except Exception as e:
                 # Expected if HuggingFace is not available
                 assert (
