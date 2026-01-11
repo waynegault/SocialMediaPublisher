@@ -193,8 +193,12 @@ def test_similarity_symmetry(n_examples: int = 100) -> PropertyTestResult:
     failures = []
 
     for _ in range(n_examples):
-        text1 = "".join(random.choices(string.ascii_letters + " ", k=random.randint(1, 50)))
-        text2 = "".join(random.choices(string.ascii_letters + " ", k=random.randint(1, 50)))
+        text1 = "".join(
+            random.choices(string.ascii_letters + " ", k=random.randint(1, 50))
+        )
+        text2 = "".join(
+            random.choices(string.ascii_letters + " ", k=random.randint(1, 50))
+        )
 
         sim1 = calculate_similarity(text1, text2)
         sim2 = calculate_similarity(text2, text1)
@@ -226,8 +230,12 @@ def test_similarity_bounds(n_examples: int = 100) -> PropertyTestResult:
     failures = []
 
     for _ in range(n_examples):
-        text1 = "".join(random.choices(string.ascii_letters + " ", k=random.randint(0, 50)))
-        text2 = "".join(random.choices(string.ascii_letters + " ", k=random.randint(0, 50)))
+        text1 = "".join(
+            random.choices(string.ascii_letters + " ", k=random.randint(0, 50))
+        )
+        text2 = "".join(
+            random.choices(string.ascii_letters + " ", k=random.randint(0, 50))
+        )
 
         similarity = calculate_similarity(text1, text2)
 
@@ -309,7 +317,9 @@ def _generate_random_json_data(depth: int = 0) -> Any:
         return [_generate_random_json_data(depth + 1) for _ in range(length)]
     else:
         count = random.randint(0, 5)
-        keys = ["".join(random.choices(string.ascii_lowercase, k=5)) for _ in range(count)]
+        keys = [
+            "".join(random.choices(string.ascii_lowercase, k=5)) for _ in range(count)
+        ]
         return {k: _generate_random_json_data(depth + 1) for k in keys}
 
 
@@ -457,7 +467,9 @@ def test_url_normalize_idempotent(n_examples: int = 100) -> PropertyTestResult:
     for _ in range(n_examples):
         # Generate URL-like strings
         protocol = random.choice(["http://", "https://"])
-        domain = "".join(random.choices(string.ascii_lowercase, k=random.randint(3, 15)))
+        domain = "".join(
+            random.choices(string.ascii_lowercase, k=random.randint(3, 15))
+        )
         path = "/" + "/".join(
             "".join(random.choices(string.ascii_lowercase, k=random.randint(1, 10)))
             for _ in range(random.randint(0, 3))
@@ -681,7 +693,9 @@ def _create_module_tests() -> "TestSuite":
     suite.add_test("Similarity bounds property", test_similarity_bounds_property)
     suite.add_test("JSON roundtrip property", test_json_roundtrip_property)
     suite.add_test("Truncate length property", test_truncate_length_property)
-    suite.add_test("Truncate preserves short property", test_truncate_preserves_short_property)
+    suite.add_test(
+        "Truncate preserves short property", test_truncate_preserves_short_property
+    )
     suite.add_test("Normalize idempotent property", test_normalize_idempotent_property)
     suite.add_test("Sanitize control property", test_sanitize_control_property)
     suite.add_test("URL normalize property", test_url_normalize_property)

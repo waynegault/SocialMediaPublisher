@@ -39,6 +39,7 @@ TEST_MODULES = [
     ("notifications", "Notifications"),
     ("property_tests", "Property Tests"),
     ("cli", "CLI"),
+    ("integration_tests", "Integration Tests"),
 ]
 
 
