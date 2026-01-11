@@ -175,6 +175,44 @@ HTML_TEMPLATE = """
             border: 1px solid #666;
         }
 
+        /* Tooltip styles for button hover explanations */
+        .btn[title] {
+            position: relative;
+        }
+
+        .btn[title]:hover::after {
+            content: attr(title);
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: normal;
+            white-space: nowrap;
+            max-width: 300px;
+            white-space: normal;
+            text-align: center;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            pointer-events: none;
+        }
+
+        .btn[title]:hover::before {
+            content: '';
+            position: absolute;
+            bottom: calc(100% + 2px);
+            left: 50%;
+            transform: translateX(-50%);
+            border: 6px solid transparent;
+            border-top-color: #333;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
         .main-content {
             display: flex;
             flex-direction: column;
@@ -254,13 +292,13 @@ HTML_TEMPLATE = """
         }
 
         .linkedin-preview.story-accepted::before {
-            content: '✓ ACCEPTED';
+            content: '✓ HUMAN ACCEPTED';
             background: #4caf50;
             color: white;
         }
 
         .linkedin-preview.story-rejected::before {
-            content: '✗ REJECTED';
+            content: '✗ HUMAN REJECTED';
             background: #f44336;
             color: white;
         }
@@ -571,15 +609,18 @@ HTML_TEMPLATE = """
         }
 
         .details-row {
-            display: flex;
-            flex-wrap: nowrap;
-            gap: 8px 16px;
-            align-items: flex-start;
+            display: grid;
+            grid-template-columns: 200px 1fr;
+            gap: 16px;
+            align-items: center;
+            min-height: 36px;
         }
 
         .detail-item.fixed-width {
             width: 200px;
             flex-shrink: 0;
+            display: flex;
+            align-items: center;
         }
 
         .detail-item {
@@ -682,65 +723,22 @@ HTML_TEMPLATE = """
         }
 
         /* ========================================
-           TASK 8.1: Batch Operations Styles
+           Publish Button Styles
            ======================================== */
-        .batch-controls {
-            display: none;
-            padding: 8px 12px;
-            background: rgba(139,92,246,0.15);
-            border-radius: 8px;
-            margin-top: 8px;
-            border: 1px solid rgba(139,92,246,0.3);
-            gap: 10px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-
-        .batch-controls.visible {
-            display: flex;
-        }
-
-        .batch-controls .batch-info {
-            color: #8b5cf6;
-            font-size: 0.9rem;
-            font-weight: 500;
-        }
-
-        .batch-controls .btn-batch {
-            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
-            color: white;
-            padding: 6px 12px;
-            font-size: 0.85rem;
-        }
-
-        .btn-batch-mode {
-            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+        .btn-publish {
+            background: linear-gradient(135deg, #10b981, #059669);
             color: white;
         }
 
-        .btn-batch-mode.active {
-            background: linear-gradient(135deg, #7c3aed, #6d28d9);
-            box-shadow: 0 0 0 2px #8b5cf6;
+        .btn-publish:hover {
+            background: linear-gradient(135deg, #059669, #047857);
+            transform: translateY(-1px);
         }
 
-        .story-checkbox {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            width: 24px;
-            height: 24px;
-            z-index: 20;
-            cursor: pointer;
-            display: none;
-        }
-
-        .batch-mode-active .story-checkbox {
-            display: block;
-        }
-
-        .linkedin-preview.selected {
-            border-color: #8b5cf6 !important;
-            box-shadow: 0 0 0 3px rgba(139,92,246,0.3);
+        .btn-publish:disabled {
+            background: linear-gradient(135deg, #6b7280, #4b5563);
+            cursor: not-allowed;
+            opacity: 0.6;
         }
 
         /* Keyboard shortcuts help */
@@ -944,22 +942,15 @@ HTML_TEMPLATE = """
                 <span class="story-counter" id="storyCounter" aria-live="polite">Loading...</span>
             </div>
             <div class="top-buttons" id="topButtons" role="toolbar" aria-label="Story actions">
-                <button class="btn btn-accept" onclick="acceptStory()" aria-label="Accept this story for publication (A)">✓ Accept</button>
-                <button class="btn btn-reject" onclick="rejectStory()" aria-label="Reject this story (R)">✗ Reject</button>
-                <button class="btn btn-edit" onclick="toggleEdit()" aria-label="Edit story details (E)" aria-expanded="false" id="editToggleBtn">✎ Edit</button>
-                <button class="btn btn-batch-mode" onclick="toggleBatchMode()" aria-label="Toggle batch selection mode (B)" id="batchModeBtn">☑ Batch</button>
-                <button class="btn btn-close" onclick="closeValidator()" aria-label="Close validator and return to menu">Close</button>
+                <button class="btn btn-accept" onclick="acceptStory()" aria-label="Accept this story for publication (A)" title="Mark this story as APPROVED for publication. Use after reviewing the content, image, and promotion message. Keyboard: A">✓ Accept</button>
+                <button class="btn btn-reject" onclick="rejectStory()" aria-label="Reject this story (R)" title="Mark this story as REJECTED. It will not be published. Use for low-quality or irrelevant content. Keyboard: R">✗ Reject</button>
+                <button class="btn btn-publish" onclick="publishStory()" aria-label="Publish this story to LinkedIn (P)" id="publishBtn" title="Publish this approved story to LinkedIn immediately. Story must be approved first. Keyboard: P">🚀 Publish</button>
+                <button class="btn btn-edit" onclick="toggleEdit()" aria-label="Edit story details (E)" aria-expanded="false" id="editToggleBtn" title="Open the edit panel to modify the title, summary, hashtags, or promotion message. Keyboard: E">✎ Edit</button>
+                <button class="btn btn-close" onclick="closeValidator()" aria-label="Close validator and return to menu" title="Close this review interface and return to the main menu. All changes are saved automatically.">Close</button>
             </div>
         </header>
 
-        <!-- Batch Controls (visible when batch mode active) -->
-        <div class="batch-controls" id="batchControls" role="toolbar" aria-label="Batch operations">
-            <span class="batch-info" id="batchInfo">0 selected</span>
-            <button class="btn btn-batch btn-accept" onclick="batchAccept()" aria-label="Accept all selected stories">✓ Accept Selected</button>
-            <button class="btn btn-batch btn-reject" onclick="batchReject()" aria-label="Reject all selected stories">✗ Reject Selected</button>
-            <button class="btn btn-batch" onclick="selectAll()" aria-label="Select all pending stories">Select All Pending</button>
-            <button class="btn btn-batch btn-cancel" onclick="clearSelection()" aria-label="Clear selection">Clear Selection</button>
-        </div>
+
 
         <main id="main-content" class="main-content" role="main">
             <!-- Story Details Section (above preview) -->
@@ -1004,9 +995,15 @@ HTML_TEMPLATE = """
                     <input type="text" id="editHashtags" placeholder="e.g., #Engineering, #Innovation">
                 </div>
 
-                <div class="edit-group">
-                    <label for="editMentions">LinkedIn Mentions (auto-generated from profiles)</label>
-                    <input type="text" id="editMentions" readonly disabled placeholder="Run 'LinkedIn Profile Enrichment' to populate">
+                <div class="edit-group-row" style="display: flex; gap: 10px; align-items: stretch;">
+                    <div class="edit-group" style="flex: 1; display: flex; flex-direction: column;">
+                        <label for="editStoryPeople">Story People @mentions</label>
+                        <textarea id="editStoryPeople" readonly disabled placeholder="People mentioned in story" style="flex: 1; min-height: 60px; resize: none;"></textarea>
+                    </div>
+                    <div class="edit-group" style="flex: 1; display: flex; flex-direction: column;">
+                        <label for="editOrgLeaders">Org Leaders @mentions</label>
+                        <textarea id="editOrgLeaders" readonly disabled placeholder="Institution leaders" style="flex: 1; min-height: 60px; resize: none;"></textarea>
+                    </div>
                 </div>
 
                 <div class="edit-group">
@@ -1015,17 +1012,17 @@ HTML_TEMPLATE = """
                 </div>
 
                 <div class="edit-buttons">
-                    <button class="btn btn-save" onclick="saveEdits()" aria-label="Save all changes">Save Changes</button>
-                    <button class="btn btn-cancel" onclick="cancelEdit()" aria-label="Cancel editing and discard changes">Cancel</button>
+                    <button class="btn btn-save" onclick="saveEdits()" aria-label="Save all changes" title="Save all your edits to the database. The story will remain in 'pending' status until you Accept or Reject it.">Save Changes</button>
+                    <button class="btn btn-cancel" onclick="cancelEdit()" aria-label="Cancel editing and discard changes" title="Discard all changes and close the edit panel without saving.">Cancel</button>
                 </div>
             </div>
             </div>
         </main>
 
         <nav class="navigation" role="navigation" aria-label="Story navigation">
-            <button class="btn btn-nav" id="prevBtn" onclick="navigate(-1)" aria-label="Go to previous story">← Previous</button>
+            <button class="btn btn-nav" id="prevBtn" onclick="navigate(-1)" aria-label="Go to previous story" title="Go to the previous story in the queue. Keyboard: Left Arrow">← Previous</button>
             <span id="navInfo" role="status" aria-live="polite" style="color: #b0b0b0; align-self: center;">- / -</span>
-            <button class="btn btn-nav" id="nextBtn" onclick="navigate(1)" aria-label="Go to next story">Next →</button>
+            <button class="btn btn-nav" id="nextBtn" onclick="navigate(1)" aria-label="Go to next story" title="Go to the next story in the queue. Keyboard: Right Arrow">Next →</button>
         </nav>
     </div>
 
@@ -1067,32 +1064,44 @@ HTML_TEMPLATE = """
             const story = stories[currentIndex];
             const preview = document.getElementById('linkedinPreview');
 
-            // Apply visual feedback class based on verification status
+            // Apply visual feedback class based on HUMAN verification status only
+            // AI approval does NOT equal human approval - show neutral until human decides
             preview.classList.remove('story-accepted', 'story-rejected');
-            if (story.verification_status === 'approved') {
+            // Check if human has verified (indicated by verification_reason containing "Manually")
+            const humanVerified = story.verification_reason && story.verification_reason.includes('Manually');
+            if (humanVerified && story.verification_status === 'approved') {
                 preview.classList.add('story-accepted');
-            } else if (story.verification_status === 'rejected') {
+            } else if (humanVerified && story.verification_status === 'rejected') {
                 preview.classList.add('story-rejected');
             }
 
-            // Status badge
+            // Status badge - show "pending human approval" unless human has verified
             let statusClass = 'status-pending';
-            let statusText = story.verification_status;
+            let statusText = 'pending human approval';
             if (story.publish_status === 'published') {
                 statusClass = 'status-published';
                 statusText = 'published';
             } else if (story.publish_status === 'scheduled') {
                 statusClass = 'status-scheduled';
                 statusText = 'scheduled';
-            } else if (story.verification_status === 'approved') {
-                statusClass = 'status-approved';
-            } else if (story.verification_status === 'rejected') {
-                statusClass = 'status-rejected';
+            } else if (humanVerified) {
+                // Only show approved/rejected if human has verified
+                if (story.verification_status === 'approved') {
+                    statusClass = 'status-approved';
+                    statusText = 'human approved';
+                } else if (story.verification_status === 'rejected') {
+                    statusClass = 'status-rejected';
+                    statusText = 'human rejected';
+                }
             }
 
-            // Build status displays
-            const verificationBadgeClass = story.verification_status === 'approved' ? 'status-approved' :
+            // Build status displays - distinguish between AI and human verification
+            const aiVerificationClass = story.verification_status === 'approved' ? 'status-approved' :
                 story.verification_status === 'rejected' ? 'status-rejected' : 'status-pending';
+            const aiVerificationText = humanVerified ?
+                (story.verification_status === 'approved' ? 'approved (pre-human)' :
+                 story.verification_status === 'rejected' ? 'rejected (pre-human)' : 'pending') :
+                (story.verification_status || 'pending');
             const publishBadgeClass = story.publish_status === 'published' ? 'status-published' :
                 story.publish_status === 'scheduled' ? 'status-scheduled' : 'status-pending';
 
@@ -1123,21 +1132,22 @@ HTML_TEMPLATE = """
                         </div>
                         <div class="details-row">
                             <div class="detail-item fixed-width">
-                                <span class="detail-label">AI Verification</span>
-                                <span class="detail-value"><span class="status-badge ${verificationBadgeClass}">${story.verification_status || 'pending'}</span></span>
+                                <span class="detail-label">AI Recommendation</span>
+                                <span class="detail-value"><span class="status-badge ${aiVerificationClass}">${aiVerificationText}</span></span>
                             </div>
-                            ${story.verification_reason ? `
                             <div class="detail-item flex-grow">
-                                <span class="detail-label">Verification Reason</span>
+                                ${story.verification_reason && !humanVerified ? `
+                                <span class="detail-label">AI Reason</span>
                                 <span class="detail-value reason">${escapeHtml(story.verification_reason)}</span>
-                            </div>` : ''}
+                                ` : ''}
+                            </div>
                         </div>
                         <div class="details-row">
                             <div class="detail-item fixed-width">
                                 <span class="detail-label">Publish Status</span>
                                 <span class="detail-value"><span class="status-badge ${publishBadgeClass}">${story.publish_status || 'unpublished'}</span></span>
                             </div>
-                            <div class="detail-item">
+                            <div class="detail-item flex-grow">
                                 <span class="detail-label">Scheduled Time</span>
                                 <span class="detail-value">${story.scheduled_time ? new Date(story.scheduled_time).toLocaleString() : 'Not scheduled'}</span>
                             </div>
@@ -1152,10 +1162,12 @@ HTML_TEMPLATE = """
                 .map(p => '@' + p.name)
                 .join(' ');
 
-            // Build mentions string from org_leaders (institution leaders) with URNs
+            // Build mentions string from org_leaders (institution leaders) - show all for reference
             const orgLeaderMentions = (story.org_leaders || [])
-                .filter(p => p.linkedin_urn || p.linkedin_profile)
-                .map(p => '@' + p.name)
+                .map(p => {
+                    const hasLinkedIn = p.linkedin_urn || p.linkedin_profile;
+                    return hasLinkedIn ? '@' + p.name : p.name;
+                })
                 .join(' ');
 
             // Build hashtags string
@@ -1221,6 +1233,9 @@ HTML_TEMPLATE = """
             document.getElementById('storyCounter').textContent =
                 `Story ${currentIndex + 1} of ${stories.length} (ID: ${story.id})`;
 
+            // Update publish button state
+            updatePublishButton();
+
             // Populate edit fields
             populateEditFields(story);
         }
@@ -1229,12 +1244,18 @@ HTML_TEMPLATE = """
             document.getElementById('editTitle').value = story.title || '';
             document.getElementById('editSummary').value = story.summary || '';
             document.getElementById('editHashtags').value = (story.hashtags || []).join(', ');
-            // Combine story_people and org_leaders for edit display
-            const allMentions = [
-                ...(story.story_people || []).filter(p => p.linkedin_urn || p.linkedin_profile).map(p => '@' + p.name),
-                ...(story.org_leaders || []).filter(p => p.linkedin_urn || p.linkedin_profile).map(p => '@' + p.name)
-            ];
-            document.getElementById('editMentions').value = allMentions.join(', ');
+            // Populate story_people mentions (people directly mentioned in story)
+            const storyPeopleMentions = (story.story_people || [])
+                .filter(p => p.linkedin_urn || p.linkedin_profile)
+                .map(p => '@' + p.name);
+            document.getElementById('editStoryPeople').value = storyPeopleMentions.join(', ');
+            // Populate org_leaders mentions (institution leaders) - show all, mark those without LinkedIn
+            const orgLeaderMentions = (story.org_leaders || [])
+                .map(p => {
+                    const hasLinkedIn = p.linkedin_urn || p.linkedin_profile;
+                    return hasLinkedIn ? '@' + p.name : p.name + ' (no LinkedIn)';
+                });
+            document.getElementById('editOrgLeaders').value = orgLeaderMentions.join(', ');
             document.getElementById('editPromotion').value = story.promotion || '';
 
             if (story.scheduled_time) {
@@ -1508,17 +1529,11 @@ HTML_TEMPLATE = """
                             toggleEdit();
                         }
                         break;
-                    case 'b':
-                    case 'B':
+                    case 'p':
+                    case 'P':
                         if (!e.ctrlKey && !e.metaKey) {
                             e.preventDefault();
-                            toggleBatchMode();
-                        }
-                        break;
-                    case ' ':  // Spacebar to toggle selection in batch mode
-                        if (isBatchMode) {
-                            e.preventDefault();
-                            toggleCurrentSelection();
+                            publishStory();
                         }
                         break;
                     case '?':  // Show keyboard shortcuts help
@@ -1529,9 +1544,6 @@ HTML_TEMPLATE = """
                         if (isEditMode) {
                             e.preventDefault();
                             cancelEdit();
-                        } else if (isBatchMode) {
-                            e.preventDefault();
-                            toggleBatchMode();
                         }
                         break;
                 }
@@ -1542,143 +1554,89 @@ HTML_TEMPLATE = """
         });
 
         // ========================================
-        // TASK 8.1: Batch Operations
+        // Publish Story Function
         // ========================================
-        let isBatchMode = false;
-        let selectedStoryIds = new Set();
-
-        function toggleBatchMode() {
-            isBatchMode = !isBatchMode;
-            const batchModeBtn = document.getElementById('batchModeBtn');
-            const batchControls = document.getElementById('batchControls');
-            const container = document.querySelector('.container');
-
-            batchModeBtn.classList.toggle('active', isBatchMode);
-            batchControls.classList.toggle('visible', isBatchMode);
-            container.classList.toggle('batch-mode-active', isBatchMode);
-
-            if (!isBatchMode) {
-                clearSelection();
-            }
-
-            updateBatchInfo();
-        }
-
-        function toggleCurrentSelection() {
+        async function publishStory() {
             if (stories.length === 0) return;
-            const storyId = stories[currentIndex].id;
 
-            if (selectedStoryIds.has(storyId)) {
-                selectedStoryIds.delete(storyId);
-            } else {
-                selectedStoryIds.add(storyId);
-            }
+            const story = stories[currentIndex];
 
-            updateSelectionUI();
-            updateBatchInfo();
-        }
-
-        function updateSelectionUI() {
-            const preview = document.getElementById('linkedinPreview');
-            const storyId = stories[currentIndex]?.id;
-
-            if (storyId && selectedStoryIds.has(storyId)) {
-                preview.classList.add('selected');
-            } else {
-                preview.classList.remove('selected');
-            }
-        }
-
-        function updateBatchInfo() {
-            const batchInfo = document.getElementById('batchInfo');
-            batchInfo.textContent = `${selectedStoryIds.size} selected`;
-        }
-
-        function selectAll() {
-            // Select all pending stories
-            stories.forEach(story => {
-                if (story.verification_status === 'pending') {
-                    selectedStoryIds.add(story.id);
-                }
-            });
-            updateSelectionUI();
-            updateBatchInfo();
-            showToast(`Selected ${selectedStoryIds.size} pending stories`, 'success');
-        }
-
-        function clearSelection() {
-            selectedStoryIds.clear();
-            updateSelectionUI();
-            updateBatchInfo();
-        }
-
-        async function batchAccept() {
-            if (selectedStoryIds.size === 0) {
-                showToast('No stories selected', 'error');
+            // Check if story is approved
+            if (story.verification_status !== 'approved') {
+                showToast('Story must be approved before publishing', 'error');
                 return;
             }
 
-            const count = selectedStoryIds.size;
-            let successCount = 0;
-
-            for (const storyId of selectedStoryIds) {
-                try {
-                    const response = await fetch(`/api/stories/${storyId}/status`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ verification_status: 'approved' })
-                    });
-
-                    if (response.ok) {
-                        // Update local story data
-                        const storyIndex = stories.findIndex(s => s.id === storyId);
-                        if (storyIndex >= 0) {
-                            stories[storyIndex].verification_status = 'approved';
-                        }
-                        successCount++;
-                    }
-                } catch (error) {
-                    console.error(`Failed to accept story ${storyId}:`, error);
-                }
-            }
-
-            clearSelection();
-            renderStory();
-            showToast(`Accepted ${successCount}/${count} stories`, 'success');
-        }
-
-        async function batchReject() {
-            if (selectedStoryIds.size === 0) {
-                showToast('No stories selected', 'error');
+            // Check if already published
+            if (story.publish_status === 'published') {
+                showToast('Story is already published', 'error');
                 return;
             }
 
-            const count = selectedStoryIds.size;
-            let successCount = 0;
-
-            for (const storyId of selectedStoryIds) {
-                try {
-                    const response = await fetch(`/api/stories/${storyId}/status`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ verification_status: 'rejected' })
-                    });
-
-                    if (response.ok) {
-                        const storyIndex = stories.findIndex(s => s.id === storyId);
-                        if (storyIndex >= 0) {
-                            stories[storyIndex].verification_status = 'rejected';
-                        }
-                        successCount++;
-                    }
-                } catch (error) {
-                    console.error(`Failed to reject story ${storyId}:`, error);
-                }
+            // Confirm publish
+            if (!confirm(`Publish this story to LinkedIn now?\\n\\n"${story.title}"`)) {
+                return;
             }
 
-            clearSelection();
-            renderStory();
-            showToast(`Rejected ${successCount}/${count} stories`, 'success');
+            const publishBtn = document.getElementById('publishBtn');
+            publishBtn.disabled = true;
+            publishBtn.textContent = '⏳ Publishing...';
+
+            try {
+                const response = await fetch(`/api/stories/${story.id}/publish`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Update local story data
+                    story.publish_status = 'published';
+                    story.linkedin_post_url = data.linkedin_post_url;
+                    story.linkedin_post_id = data.linkedin_post_id;
+
+                    renderStory();
+                    showToast('Story published to LinkedIn!', 'success');
+
+                    if (data.linkedin_post_url) {
+                        // Offer to open the post
+                        if (confirm('Story published! Open the post on LinkedIn?')) {
+                            window.open(data.linkedin_post_url, '_blank');
+                        }
+                    }
+                } else {
+                    showToast(data.error || 'Failed to publish story', 'error');
+                }
+            } catch (error) {
+                console.error('Publish error:', error);
+                showToast('Failed to publish: ' + error.message, 'error');
+            } finally {
+                publishBtn.disabled = false;
+                publishBtn.textContent = '🚀 Publish';
+            }
+        }
+
+        // Update publish button state based on current story
+        function updatePublishButton() {
+            const publishBtn = document.getElementById('publishBtn');
+            if (!publishBtn || stories.length === 0) return;
+
+            const story = stories[currentIndex];
+            const canPublish = story.verification_status === 'approved' &&
+                             story.publish_status !== 'published';
+
+            publishBtn.disabled = !canPublish;
+
+            if (story.publish_status === 'published') {
+                publishBtn.textContent = '✓ Published';
+            } else if (story.verification_status !== 'approved') {
+                publishBtn.textContent = '🚀 Publish';
+                publishBtn.title = 'Story must be approved before publishing';
+            } else {
+                publishBtn.textContent = '🚀 Publish';
+                publishBtn.title = 'Publish this approved story to LinkedIn immediately';
+            }
         }
 
         // Keyboard shortcuts help
@@ -1697,11 +1655,10 @@ HTML_TEMPLATE = """
                     <ul>
                         <li><kbd>A</kbd> Accept story</li>
                         <li><kbd>R</kbd> Reject story</li>
+                        <li><kbd>P</kbd> Publish story</li>
                         <li><kbd>E</kbd> Edit story</li>
-                        <li><kbd>B</kbd> Toggle batch mode</li>
                         <li><kbd>←</kbd> <kbd>→</kbd> Navigate</li>
-                        <li><kbd>Space</kbd> Select (batch mode)</li>
-                        <li><kbd>Esc</kbd> Cancel/Exit mode</li>
+                        <li><kbd>Esc</kbd> Cancel edit</li>
                         <li><kbd>?</kbd> Toggle this help</li>
                     </ul>
                 `;
@@ -1842,6 +1799,51 @@ class ValidationServer:
                 return jsonify(story.to_dict())
             except Exception as e:
                 logger.exception(f"Failed to reject story {story_id}")
+                return jsonify({"error": str(e)}), 500
+
+        @self.app.route("/api/stories/<int:story_id>/publish", methods=["POST"])
+        def publish_story(story_id: int):
+            """Publish a story to LinkedIn immediately."""
+            try:
+                story = self.db.get_story(story_id)
+                if not story:
+                    return jsonify({"error": "Story not found"}), 404
+
+                # Verify story is approved
+                if story.verification_status != "approved":
+                    return jsonify(
+                        {"error": "Story must be approved before publishing"}
+                    ), 400
+
+                # Verify story is not already published
+                if story.publish_status == "published":
+                    return jsonify({"error": "Story is already published"}), 400
+
+                # Import and use linkedin_publisher
+                from linkedin_publisher import LinkedInPublisher
+
+                publisher = LinkedInPublisher(self.db)
+                post_id = publisher.publish_immediately(story)
+
+                if post_id:
+                    # Refresh story from database to get updated fields
+                    story = self.db.get_story(story_id)
+                    if story:
+                        result = story.to_dict()
+                        result["success"] = True
+                        return jsonify(result)
+                    else:
+                        return jsonify(
+                            {
+                                "success": True,
+                                "linkedin_post_id": post_id,
+                            }
+                        )
+                else:
+                    return jsonify({"error": "Failed to publish to LinkedIn"}), 500
+
+            except Exception as e:
+                logger.exception(f"Failed to publish story {story_id}")
                 return jsonify({"error": str(e)}), 500
 
         @self.app.route("/favicon.ico")

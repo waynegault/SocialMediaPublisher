@@ -246,11 +246,11 @@ class ContentEngine:
         import random
 
         style_examples = [
-            "MEng Process & Chemical Engineering | Know someone hiring in this space? I'd love an intro! Follow me for more insights.",
-            "This resonates with my chemical engineering background. Know of opportunities? DM me or tag someone who should connect!",
-            "Follow for more process engineering insights! If you know of roles in this area, I'd appreciate a connection.",
-            "Strathclyde-trained engineer exploring opportunities in this sector. Hit follow & let me know if you hear of openings!",
-            "Passionate about sustainable processes. Know someone working in this space? Tag them below or send me a message!",
+            "This catalyst development aligns perfectly with my MEng in Process Engineering. I'm actively seeking roles in catalysis R&D — please feel free to tag a hiring manager or reach out directly!",
+            "Hydrogen production is exactly where I want to contribute. As an MEng Chemical Engineer actively job hunting, I'd be grateful if you could connect me with anyone who's hiring!",
+            "Carbon capture is central to my career goals. I'm currently seeking process engineering roles — if you're hiring or know someone who is, I'd love to hear from you!",
+            "This breakthrough resonates with my sustainable chemistry interests. As an MEng engineer actively interviewing, I'd welcome the opportunity to connect with hiring managers!",
+            "Process scale-up is my specialty. I'm actively job hunting for roles like this — I'd really appreciate any introductions to recruiters or hiring managers in this field!",
         ]
 
         # Get stories that need a promotion message
@@ -284,27 +284,37 @@ class ContentEngine:
             title = row["title"]
             summary = row["summary"] or ""
 
-            prompt = f"""Generate a professional LinkedIn message with a clear call-to-action that connects to this story's topic.
+            prompt = f"""Generate a DIRECT, ACTION-ORIENTED job-seeking message for LinkedIn that connects to this specific story.
 
 STORY:
 Title: {title}
 Summary: {summary[:500]}
 
-REQUIREMENTS:
-1. Write in FIRST PERSON (use "I", "my", "I'm")
-2. Reference the specific technology, company, industry, or theme from the story
-3. Briefly mention MEng Process & Chemical Engineering background
-4. Include ONE clear call-to-action from this list:
-   - Ask followers to tag someone who should connect with you
-   - Invite people to DM you about opportunities
-   - Ask if anyone knows of openings in this area
-   - Encourage people to follow for more insights
-   - Ask for introductions to contacts in this space
-5. Maintain professional confidence - show expertise and genuine interest
-6. Keep it to 1-2 sentences, max 250 characters
-7. Do NOT include emojis
+YOUR GOAL: You are a chemical engineer actively seeking employment. This message must:
+1. Directly connect YOUR job search to the SPECIFIC technology/topic in this story
+2. Make it crystal clear you are ACTIVELY JOB HUNTING (use phrases like "actively seeking", "job hunting", "interviewing", "looking for roles")
+3. Include a DIRECT call-to-action asking people to help (tag hiring managers, DM you, connect, refer you)
 
-STYLE EXAMPLES (match this tone and include CTA):
+REQUIREMENTS:
+1. Write in FIRST PERSON ("I", "my", "I'm")
+2. MUST reference the specific technology, company, or topic from THIS story (not generic)
+3. Mention MEng Process & Chemical Engineering background
+4. MUST include ONE polite, first-person call-to-action:
+   - "I'd really appreciate it if you could tag a hiring manager!"
+   - "Please feel free to DM me if you're hiring!"
+   - "I'd welcome introductions to recruiters in this space!"
+   - "If you know of any openings, I'd love to hear from you!"
+   - "I'd be grateful for any connections to people hiring in this field!"
+5. Sound confident and eager, NOT passive or note-like
+6. Keep it to 1-2 punchy sentences, max 250 characters
+7. No emojis
+
+BAD EXAMPLES (too passive/vague - DO NOT write like this):
+- "Interesting developments in the field." (no job ask)
+- "This is relevant to my background." (no CTA)
+- "I find this topic fascinating." (sounds like a note)
+
+GOOD EXAMPLES (direct job-seeking with clear CTA):
 {examples_text}
 
 OUTPUT: Write ONLY the promotion message, nothing else."""
@@ -615,7 +625,7 @@ def _test_search(engine: ContentEngine) -> None:
         print(f"Searching for stories since: {start_date}")
 
         # Step 1: Search for stories
-        print("\n[Step 1/4] Searching for stories...")
+        print("\n[Step 1/6] Searching for stories...")
         new_count = engine.searcher.search_and_process()
         print(f"  → Found and saved {new_count} new stories")
 
@@ -633,17 +643,27 @@ def _test_search(engine: ContentEngine) -> None:
                 for row in sorted(rows, key=lambda r: r[2], reverse=True):
                     print(f"  - [{row[0]}] {row[1][:60]}... (Score: {row[2]})")
 
-        # Step 2: Find LinkedIn profiles for all people needing them
-        print("\n[Step 2/4] Finding LinkedIn profiles...")
+        # Step 2: Find organization leaders (CEOs, heads of labs, recruitment managers, etc.)
+        print(
+            "\n[Step 2/6] Finding organization leaders (CEOs, lab heads, recruiters)..."
+        )
+        _run_org_leaders_enrichment_silent(engine)
+
+        # Step 3: Find LinkedIn profiles for all people needing them
+        print("\n[Step 3/6] Finding LinkedIn profiles...")
         _run_profile_lookup_silent(engine)
 
-        # Step 3: Extract URNs for @mentions
-        print("\n[Step 3/4] Extracting LinkedIn URNs for @mentions...")
+        # Step 4: Extract URNs for @mentions
+        print("\n[Step 4/6] Extracting LinkedIn URNs for @mentions...")
         _run_urn_extraction_silent(engine)
 
-        # Step 4: Assign promotion messages
-        print("\n[Step 4/4] Assigning promotion messages...")
+        # Step 5: Assign promotion messages
+        print("\n[Step 5/6] Assigning promotion messages...")
         _run_promotion_assignment_silent(engine)
+
+        # Step 6: Mark stories as enriched
+        print("\n[Step 6/6] Marking stories as enriched...")
+        _mark_stories_enriched(engine)
 
         # Show summary
         print("\n" + "=" * 60)
@@ -777,6 +797,123 @@ def _run_promotion_assignment_silent(engine: ContentEngine) -> int:
         print(f"  → Error: {e}")
         logger.exception("Promotion assignment failed")
         return 0
+
+
+def _run_org_leaders_enrichment_silent(engine: ContentEngine) -> int:
+    """Find org leaders (CEOs, heads of labs, recruiters) for organizations. Returns count enriched."""
+    import json as json_module
+
+    # Get stories with organizations but no org_leaders
+    with engine.db._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, title, organizations, org_leaders FROM stories
+            WHERE organizations IS NOT NULL
+            AND organizations != '[]'
+            AND (org_leaders IS NULL OR org_leaders = '[]')
+        """)
+        rows = cursor.fetchall()
+
+    if not rows:
+        print("  → All stories already have organization leaders")
+        return 0
+
+    print(f"  → Finding leaders for {len(rows)} stories with organizations...")
+
+    enriched = 0
+    for row in rows:
+        story_id = row["id"]
+        orgs = json_module.loads(row["organizations"]) if row["organizations"] else []
+
+        if not orgs:
+            continue
+
+        all_leaders = []
+        for org in orgs:
+            try:
+                leaders = engine.enricher._get_org_leaders(org)
+                if leaders:
+                    all_leaders.extend(leaders)
+                    print(f"    ✓ {org}: Found {len(leaders)} leaders")
+                else:
+                    print(f"    ⏭ {org}: No leaders found")
+            except Exception as e:
+                logger.debug(f"Error getting leaders for {org}: {e}")
+                continue
+
+        if all_leaders:
+            # Look up LinkedIn profiles for org_leaders (same as story_people)
+            people_for_lookup = [
+                {
+                    "name": leader.get("name", ""),
+                    "title": leader.get("title", ""),
+                    "affiliation": leader.get("organization", ""),
+                }
+                for leader in all_leaders
+                if leader.get("name")
+            ]
+
+            if people_for_lookup:
+                try:
+                    linkedin_profiles = engine.enricher._find_linkedin_profiles_batch(
+                        people_for_lookup
+                    )
+
+                    # Update org_leaders with found LinkedIn profiles
+                    if linkedin_profiles:
+                        profiles_by_name = {
+                            p.get("name", "").lower(): p for p in linkedin_profiles
+                        }
+                        profiles_found = 0
+                        for leader in all_leaders:
+                            name_lower = leader.get("name", "").lower()
+                            if name_lower in profiles_by_name:
+                                profile = profiles_by_name[name_lower]
+                                leader["linkedin_profile"] = profile.get(
+                                    "linkedin_url", ""
+                                )
+                                profiles_found += 1
+                        if profiles_found > 0:
+                            print(
+                                f"    ✓ Found {profiles_found} LinkedIn profiles for leaders"
+                            )
+                except Exception as e:
+                    logger.debug(f"Error looking up LinkedIn profiles: {e}")
+
+            # Update story with org_leaders
+            with engine.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE stories SET org_leaders = ? WHERE id = ?",
+                    (json_module.dumps(all_leaders), story_id),
+                )
+            enriched += 1
+
+    print(f"  → Updated {enriched}/{len(rows)} stories with organization leaders")
+    return enriched
+
+
+def _mark_stories_enriched(engine: ContentEngine) -> int:
+    """Mark stories as enriched after all enrichment steps complete. Returns count updated."""
+    with engine.db._get_connection() as conn:
+        cursor = conn.cursor()
+        # Mark stories as enriched if they have story_people or org_leaders
+        cursor.execute("""
+            UPDATE stories
+            SET enrichment_status = 'enriched'
+            WHERE enrichment_status = 'pending'
+            AND (
+                (story_people IS NOT NULL AND story_people != '[]')
+                OR (org_leaders IS NOT NULL AND org_leaders != '[]')
+            )
+        """)
+        updated = cursor.rowcount
+
+    if updated > 0:
+        print(f"  → Marked {updated} stories as enriched")
+    else:
+        print("  → No stories needed status update")
+    return updated
 
 
 def _test_image_generation(engine: ContentEngine) -> None:
@@ -1456,7 +1593,9 @@ def _show_enrichment_summary(engine: ContentEngine) -> None:
         cursor.execute("""
             SELECT
                 COUNT(*) as total,
-                SUM(CASE WHEN (story_people IS NOT NULL AND story_people != '[]') OR (org_leaders IS NOT NULL AND org_leaders != '[]') THEN 1 ELSE 0 END) as with_people,
+                SUM(CASE WHEN (story_people IS NOT NULL AND story_people != '[]') THEN 1 ELSE 0 END) as with_story_people,
+                SUM(CASE WHEN (org_leaders IS NOT NULL AND org_leaders != '[]') THEN 1 ELSE 0 END) as with_org_leaders,
+                SUM(CASE WHEN (organizations IS NOT NULL AND organizations != '[]') THEN 1 ELSE 0 END) as with_organizations,
                 SUM(CASE WHEN promotion IS NOT NULL AND promotion != '' THEN 1 ELSE 0 END) as with_promotion,
                 SUM(CASE WHEN image_path IS NOT NULL AND image_path != '' THEN 1 ELSE 0 END) as with_image,
                 SUM(CASE WHEN verification_status = 'approved' THEN 1 ELSE 0 END) as approved
@@ -1464,7 +1603,9 @@ def _show_enrichment_summary(engine: ContentEngine) -> None:
         """)
         stats = cursor.fetchone()
         total = stats["total"] or 0
-        with_people = stats["with_people"] or 0
+        with_story_people = stats["with_story_people"] or 0
+        with_org_leaders = stats["with_org_leaders"] or 0
+        with_organizations = stats["with_organizations"] or 0
         with_promotion = stats["with_promotion"] or 0
         with_image = stats["with_image"] or 0
         approved = stats["approved"] or 0
@@ -1475,7 +1616,8 @@ def _show_enrichment_summary(engine: ContentEngine) -> None:
             WHERE (story_people IS NOT NULL AND story_people != '[]')
                OR (org_leaders IS NOT NULL AND org_leaders != '[]')
         """)
-        total_people = 0
+        total_story_people = 0
+        total_org_leaders = 0
         with_profiles = 0
         with_urns = 0
         for row in cursor.fetchall():
@@ -1485,22 +1627,27 @@ def _show_enrichment_summary(engine: ContentEngine) -> None:
             org_leaders = (
                 json_module.loads(row["org_leaders"]) if row["org_leaders"] else []
             )
+            total_story_people += len(story_people)
+            total_org_leaders += len(org_leaders)
             for p in story_people + org_leaders:
-                total_people += 1
                 if p.get("linkedin_profile"):
                     with_profiles += 1
                 if p.get("linkedin_urn"):
                     with_urns += 1
 
+        total_people = total_story_people + total_org_leaders
+
     # Display summary
     print(f"\nStories: {total} total")
-    print(f"  • With people: {with_people}")
+    print(f"  • With organizations: {with_organizations}")
+    print(f"  • With story people: {with_story_people} ({total_story_people} people)")
+    print(f"  • With org leaders: {with_org_leaders} ({total_org_leaders} leaders)")
     print(f"  • With promotion message: {with_promotion}")
     print(f"  • With image: {with_image}")
     print(f"  • Approved: {approved}")
 
     if total_people > 0:
-        print(f"\nLinkedIn Enrichment: {total_people} people identified")
+        print(f"\nLinkedIn Enrichment: {total_people} people/leaders identified")
         print(
             f"  • With LinkedIn profiles: {with_profiles} ({100 * with_profiles // total_people}%)"
         )
@@ -1510,8 +1657,10 @@ def _show_enrichment_summary(engine: ContentEngine) -> None:
 
     # Show what's missing/next steps
     missing = []
-    if with_people < total:
-        missing.append(f"{total - with_people} stories need people extraction")
+    if with_organizations > with_org_leaders:
+        missing.append(
+            f"{with_organizations - with_org_leaders} stories with orgs need leader lookup"
+        )
     if with_profiles < total_people:
         missing.append(f"{total_people - with_profiles} people need LinkedIn profiles")
     if with_urns < with_profiles:

@@ -1487,7 +1487,7 @@ class StorySearcher:
                 # These are people directly mentioned in the story
                 story_people_raw = data.get("story_people", [])
                 if isinstance(story_people_raw, list):
-                    # Validate and normalize each person entry
+                    # Validate and normalize each person entry with enhanced fields
                     validated_people = []
                     for person in story_people_raw:
                         if isinstance(person, dict) and person.get("name"):
@@ -1496,6 +1496,16 @@ class StorySearcher:
                                     "name": str(person.get("name", "")).strip(),
                                     "company": str(person.get("company", "")).strip(),
                                     "position": str(person.get("position", "")).strip(),
+                                    "department": str(
+                                        person.get("department", "")
+                                    ).strip(),
+                                    "location": str(person.get("location", "")).strip(),
+                                    "role_type": str(person.get("role_type", ""))
+                                    .strip()
+                                    .lower(),
+                                    "research_area": str(
+                                        person.get("research_area", "")
+                                    ).strip(),
                                     "linkedin_profile": str(
                                         person.get("linkedin_profile", "")
                                     ).strip(),

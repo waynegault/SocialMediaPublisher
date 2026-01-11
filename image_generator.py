@@ -11,11 +11,13 @@ import os
 import time
 import logging
 import random
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Optional
 
+import httpx
 from google import genai
 from google.genai import types
 from openai import OpenAI
@@ -238,8 +240,8 @@ def get_random_appearance() -> str:
     body_type = random.choice(BODY_DESCRIPTORS)
 
     return (
-        f"a gorgeous highly attractive {ethnicity} woman with {hair_color} {hair_style}, "
-        f"{body_type}, with striking beautiful features, large bust and a confident radiant smile"
+        f"a highly attractive {ethnicity} woman with model level good looks with {hair_color} {hair_style}, "
+        f"{body_type}, with striking beautiful features, large shapely bust and a confident radiant smile"
     )
 
 
@@ -455,27 +457,43 @@ class ImageGenerator:
                 # HuggingFace failed, fall back to Imagen
                 logger.info("HuggingFace unavailable, falling back to Google Imagen...")
 
-            # Use Imagen model for image generation
+            # Use Imagen model for image generation with retry on safety filter blocks
             logger.info(f"Using Imagen model: {Config.MODEL_IMAGE}")
             logger.debug(f"Prompt ({len(prompt.split())} words): {prompt[:200]}...")
-            response = api_client.imagen_generate(
-                client=self.client,
-                model=Config.MODEL_IMAGE,
-                prompt=prompt,
-                config=types.GenerateImagesConfig(
-                    number_of_images=1,  # pyright: ignore[reportCallIssue]
-                    # API requires "block_low_and_above"
-                    safety_filter_level=types.SafetyFilterLevel.BLOCK_LOW_AND_ABOVE,  # pyright: ignore[reportCallIssue]
-                    person_generation=types.PersonGeneration.ALLOW_ADULT,  # pyright: ignore[reportCallIssue]
-                    aspect_ratio=Config.IMAGE_ASPECT_RATIO,  # pyright: ignore[reportCallIssue]
-                    image_size=Config.IMAGE_SIZE,  # pyright: ignore[reportCallIssue] - "2K" for higher quality
-                    # Note: negative_prompt is NOT supported by Imagen API (only works with HuggingFace)
-                ),
-            )
 
-            if not response.generated_images or not response.generated_images[0].image:
-                logger.warning(f"No image generated for story {story.id}")
-                return None
+            max_retries = 3
+            for attempt in range(max_retries):
+                response = api_client.imagen_generate(
+                    client=self.client,
+                    model=Config.MODEL_IMAGE,
+                    prompt=prompt,
+                    config=types.GenerateImagesConfig(
+                        number_of_images=1,  # pyright: ignore[reportCallIssue]
+                        # API requires "block_low_and_above"
+                        safety_filter_level=types.SafetyFilterLevel.BLOCK_LOW_AND_ABOVE,  # pyright: ignore[reportCallIssue]
+                        person_generation=types.PersonGeneration.ALLOW_ADULT,  # pyright: ignore[reportCallIssue]
+                        aspect_ratio=Config.IMAGE_ASPECT_RATIO,  # pyright: ignore[reportCallIssue]
+                        image_size=Config.IMAGE_SIZE,  # pyright: ignore[reportCallIssue] - "2K" for higher quality
+                        # Note: negative_prompt is NOT supported by Imagen API (only works with HuggingFace)
+                    ),
+                )
+
+                if response.generated_images and response.generated_images[0].image:
+                    break  # Success, exit retry loop
+
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"No image generated for story {story.id} (attempt {attempt + 1}/{max_retries}) - "
+                        f"Google's safety filters may have blocked. Retrying..."
+                    )
+                    time.sleep(1)  # Brief pause before retry
+                else:
+                    logger.warning(
+                        f"No image generated for story {story.id} after {max_retries} attempts - "
+                        f"Google's safety filters blocked the request. "
+                        f"Prompt was: {prompt[:150]}..."
+                    )
+                    return None
 
             # Get image data and apply watermark
             image_data = response.generated_images[0].image.image_bytes
@@ -818,10 +836,307 @@ class ImageGenerator:
         logger.error("All image generation models failed")
         return None
 
+    def _analyze_source_image(self, image_url: str) -> str:
+        """Use multimodal AI to analyze a source article image and describe what it shows.
+
+        This provides rich visual context for generating more accurate images.
+        """
+        try:
+            # Download the image
+            response = httpx.get(
+                image_url,
+                timeout=10.0,
+                follow_redirects=True,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                },
+            )
+
+            if response.status_code != 200:
+                return ""
+
+            # Check content type
+            content_type = response.headers.get("content-type", "")
+            if not any(
+                img_type in content_type.lower()
+                for img_type in ["image/jpeg", "image/png", "image/webp", "image/gif"]
+            ):
+                return ""
+
+            # Check image size (skip tiny images)
+            if len(response.content) < 5000:  # Skip images < 5KB (likely icons)
+                return ""
+
+            # Load image with PIL
+            from io import BytesIO
+
+            img = Image.open(BytesIO(response.content))
+
+            # Skip small images (icons, buttons)
+            if img.width < 200 or img.height < 200:
+                return ""
+
+            # Use Gemini to analyze the image
+            analysis_prompt = """Analyze this image from a technical/engineering news article.
+Describe in 2-3 sentences:
+1. What specific equipment, technology, or facility is shown (be precise - e.g., "PEM electrolyzer stack", "distillation column", "CRISPR gene editing setup")
+2. The setting/environment (laboratory, industrial plant, pilot facility, control room, etc.)
+3. Any distinctive visual elements (colors, scale, materials, instrumentation)
+
+Focus on technical accuracy. Be specific about equipment types, not generic.
+If this appears to be a stock photo or generic image, say "GENERIC STOCK IMAGE".
+Keep response under 100 words."""
+
+            response = api_client.gemini_generate(
+                client=self.client,
+                model=Config.MODEL_TEXT,
+                contents=[analysis_prompt, img],
+                endpoint="image_analysis",
+            )
+
+            if response and response.text:
+                analysis = response.text.strip()
+                # Skip if it's identified as generic
+                if "GENERIC STOCK IMAGE" in analysis.upper():
+                    return ""
+                logger.info(f"Analyzed source image: {analysis[:100]}...")
+                return analysis
+
+        except Exception as e:
+            logger.debug(f"Failed to analyze source image {image_url}: {e}")
+
+        return ""
+
+    def _extract_technical_terms(self, text: str) -> list[str]:
+        """Extract specific technical/engineering terms from article text."""
+        # Chemical engineering and industrial equipment patterns
+        equipment_patterns = [
+            r"\b(?:PEM|alkaline|SOEC)\s+electrolyz(?:er|is)",
+            r"\b(?:CSTR|PFR|batch)\s+reactor\b",
+            r"\b(?:packed|tray|bubble.cap)\s+(?:column|tower)\b",
+            r"\b(?:membrane|RO|UF|NF)\s+(?:system|unit|module)\b",
+            r"\b(?:heat|shell.and.tube|plate)\s+exchanger\b",
+            r"\b(?:centrifugal|positive.displacement|peristaltic)\s+pump\b",
+            r"\b(?:fluidized|fixed)\s+bed\s+(?:reactor|system)\b",
+            r"\b(?:SCADA|DCS|PLC)\s+(?:system|control)\b",
+            r"\b(?:GC|HPLC|mass.spec|NMR|IR)\s+(?:system|analysis)\b",
+            r"\b(?:bioreactor|fermenter|bioprocessing)\b",
+            r"\b(?:crystalliz|evaporat|distill|extract|absorb|adsorb)(?:er|or|ion)\b",
+            r"\b(?:compressor|turbine|generator|motor)\b",
+            r"\b(?:catalyst|catalytic)\s+(?:bed|system|reactor)\b",
+            r"\b(?:storage|pressure|cryogenic)\s+(?:tank|vessel)\b",
+            r"\b(?:pilot|demo|commercial)\s+(?:plant|facility|scale)\b",
+            r"\b(?:control|monitor)(?:ing)?\s+(?:panel|room|system)\b",
+            r"\b(?:safety|relief|check|control)\s+valve\b",
+            r"\b(?:carbon|CO2)\s+capture\b",
+            r"\b(?:hydrogen|ammonia|methanol)\s+(?:production|synthesis|plant)\b",
+            r"\b(?:solar|wind|battery|fuel.cell)\s+(?:system|array|plant)\b",
+        ]
+
+        terms = []
+        text_lower = text.lower()
+
+        for pattern in equipment_patterns:
+            matches = re.findall(pattern, text_lower, re.IGNORECASE)
+            terms.extend(matches)
+
+        # Deduplicate while preserving order
+        seen = set()
+        unique_terms = []
+        for term in terms:
+            term_clean = term.strip().lower()
+            if term_clean not in seen:
+                seen.add(term_clean)
+                unique_terms.append(term)
+
+        return unique_terms[:5]  # Return top 5 terms
+
+    def _fetch_source_content(self, story: Story) -> dict:
+        """Fetch content and images from source URLs to inform image generation.
+
+        Returns a dict with:
+            - 'text': Extracted article text (first 2000 chars)
+            - 'images': List of image URLs found in the article
+            - 'image_descriptions': Descriptions from alt text or captions
+            - 'ai_image_analysis': AI-generated descriptions of source images
+            - 'technical_terms': Extracted equipment/technology terms
+        """
+        result = {
+            "text": "",
+            "images": [],
+            "image_descriptions": [],
+            "ai_image_analysis": [],
+            "technical_terms": [],
+        }
+
+        if not story.source_links:
+            return result
+
+        # Try to fetch from first source link
+        source_url = story.source_links[0] if story.source_links else None
+        if not source_url:
+            return result
+
+        try:
+            logger.debug(f"Fetching source content from: {source_url}")
+            response = httpx.get(
+                source_url,
+                timeout=15.0,
+                follow_redirects=True,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                },
+            )
+
+            if response.status_code != 200:
+                logger.debug(f"Source fetch failed with status {response.status_code}")
+                return result
+
+            html = response.text
+            base_url = source_url.rsplit("/", 1)[0]  # For resolving relative URLs
+
+            # Extract main text content (simple extraction without BeautifulSoup)
+            # Remove script and style tags
+            html_clean = re.sub(
+                r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE
+            )
+            html_clean = re.sub(
+                r"<style[^>]*>.*?</style>",
+                "",
+                html_clean,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
+
+            # Extract text from paragraph tags
+            paragraphs = re.findall(
+                r"<p[^>]*>(.*?)</p>", html_clean, flags=re.DOTALL | re.IGNORECASE
+            )
+            text_content = " ".join(paragraphs)
+            # Strip HTML tags from paragraphs
+            text_content = re.sub(r"<[^>]+>", " ", text_content)
+            # Clean up whitespace
+            text_content = re.sub(r"\s+", " ", text_content).strip()
+            result["text"] = text_content[:2000]  # Limit to 2000 chars
+
+            # Extract technical terms from text
+            result["technical_terms"] = self._extract_technical_terms(text_content)
+            if result["technical_terms"]:
+                logger.info(f"Extracted technical terms: {result['technical_terms']}")
+
+            # Extract image URLs and their alt text
+            img_pattern = r'<img[^>]+src=["\']([^"\'>]+)["\'][^>]*>'
+            img_matches = re.findall(img_pattern, html, flags=re.IGNORECASE)
+
+            # Filter for likely content images (not icons, logos, etc.)
+            content_images = []
+            for img_url in img_matches[:10]:  # Check first 10 images
+                # Skip tiny images, icons, tracking pixels
+                if any(
+                    skip in img_url.lower()
+                    for skip in [
+                        "icon",
+                        "logo",
+                        "pixel",
+                        "tracking",
+                        "avatar",
+                        "1x1",
+                        "spacer",
+                        "thumbnail",
+                        "social",
+                        "share",
+                        "button",
+                    ]
+                ):
+                    continue
+
+                # Resolve relative URLs
+                if img_url.startswith("//"):
+                    img_url = "https:" + img_url
+                elif img_url.startswith("/"):
+                    # Extract domain from source_url
+                    from urllib.parse import urlparse
+
+                    parsed = urlparse(source_url)
+                    img_url = f"{parsed.scheme}://{parsed.netloc}{img_url}"
+                elif not img_url.startswith("http"):
+                    img_url = f"{base_url}/{img_url}"
+
+                content_images.append(img_url)
+                if len(content_images) >= 3:  # Limit to 3 content images
+                    break
+
+            result["images"] = content_images
+
+            # Extract alt text from images
+            alt_pattern = r'<img[^>]+alt=["\']([^"\'>]+)["\'][^>]*>'
+            alt_matches = re.findall(alt_pattern, html, flags=re.IGNORECASE)
+            result["image_descriptions"] = [
+                alt for alt in alt_matches if len(alt) > 10
+            ][:3]
+
+            # Use AI to analyze actual source images (limit to first 2 for speed)
+            for img_url in content_images[:2]:
+                analysis = self._analyze_source_image(img_url)
+                if analysis:
+                    result["ai_image_analysis"].append(analysis)
+
+            logger.info(
+                f"Extracted {len(result['text'])} chars, {len(result['images'])} images, "
+                f"{len(result['ai_image_analysis'])} AI analyses from source"
+            )
+
+        except Exception as e:
+            logger.debug(f"Failed to fetch source content: {e}")
+
+        return result
+
     def _build_image_prompt(self, story: Story) -> str:
         """Build a prompt for image generation using an LLM for refinement."""
         # Generate random appearance for this image to ensure variety
         random_appearance = get_random_appearance()
+
+        # Fetch source content for richer context
+        source_context = self._fetch_source_content(story)
+
+        # Build comprehensive source context section
+        source_section = ""
+        has_context = (
+            source_context["text"]
+            or source_context["image_descriptions"]
+            or source_context["ai_image_analysis"]
+            or source_context["technical_terms"]
+        )
+
+        if has_context:
+            source_section = "\n\n=== CRITICAL: SOURCE ARTICLE VISUAL CONTEXT ===\n"
+            source_section += "Use this information to create a SPECIFIC image that matches the actual story, NOT a generic industrial scene.\n\n"
+
+            # AI analysis of actual source images (highest priority)
+            if source_context["ai_image_analysis"]:
+                source_section += (
+                    "ACTUAL IMAGES FROM THE SOURCE ARTICLE (replicate these visuals):\n"
+                )
+                for i, analysis in enumerate(source_context["ai_image_analysis"], 1):
+                    source_section += f"  Image {i}: {analysis}\n"
+                source_section += "\n"
+
+            # Extracted technical terms
+            if source_context["technical_terms"]:
+                source_section += f"SPECIFIC EQUIPMENT/TECHNOLOGY MENTIONED: {', '.join(source_context['technical_terms'])}\n"
+                source_section += "Your image MUST show this specific equipment, not generic machinery.\n\n"
+
+            # Alt text descriptions
+            if source_context["image_descriptions"]:
+                source_section += f"IMAGE CAPTIONS/ALT TEXT: {'; '.join(source_context['image_descriptions'])}\n\n"
+
+            # Article text excerpt
+            if source_context["text"]:
+                source_section += (
+                    f"ARTICLE CONTEXT: {source_context['text'][:1200]}\n\n"
+                )
+
+            source_section += "=== END SOURCE CONTEXT ===\n"
+            source_section += "Your image prompt MUST incorporate the specific visual elements described above.\n"
 
         # Build refinement prompt from config template with random appearance injected
         refinement_prompt = Config.IMAGE_REFINEMENT_PROMPT.format(
@@ -836,7 +1151,10 @@ MANDATORY APPEARANCE FOR THIS IMAGE (use exactly as specified):
 The female engineer in this image must be: {random_appearance}.
 Do NOT deviate from this appearance description. Include these exact physical traits in your prompt.
 """
-        refinement_prompt = appearance_instruction + "\n" + refinement_prompt
+        # Combine appearance instruction, source context, and refinement prompt
+        refinement_prompt = (
+            appearance_instruction + source_section + "\n" + refinement_prompt
+        )
 
         try:
             refined = None
@@ -1191,6 +1509,121 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
+    def test_fetch_source_content_no_links():
+        """Test fetch_source_content returns empty dict when no source links."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore
+            story = Story(
+                id=101,
+                title="Test Story",
+                summary="Test summary",
+                quality_score=8,
+                source_links=[],  # Empty source links
+            )
+            result = gen._fetch_source_content(story)
+            assert isinstance(result, dict)
+            assert result["text"] == ""
+            assert result["images"] == []
+            assert result["image_descriptions"] == []
+        finally:
+            os.unlink(db_path)
+
+    def test_fetch_source_content_invalid_url():
+        """Test fetch_source_content handles invalid URLs gracefully."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore
+            story = Story(
+                id=102,
+                title="Test Story",
+                summary="Test summary",
+                quality_score=8,
+                source_links=["https://invalid.nonexistent.url.fake/article"],
+            )
+            result = gen._fetch_source_content(story)
+            # Should return empty dict on failure, not crash
+            assert isinstance(result, dict)
+            assert "text" in result
+            assert "images" in result
+            assert "image_descriptions" in result
+        finally:
+            os.unlink(db_path)
+
+    def test_fetch_source_content_structure():
+        """Test fetch_source_content returns correct structure."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore
+            story = Story(
+                id=103,
+                title="Test Story",
+                summary="Test summary",
+                quality_score=8,
+            )
+            result = gen._fetch_source_content(story)
+            # Verify structure even when no source links
+            assert "text" in result
+            assert "images" in result
+            assert "image_descriptions" in result
+            assert "ai_image_analysis" in result
+            assert "technical_terms" in result
+            assert isinstance(result["text"], str)
+            assert isinstance(result["images"], list)
+            assert isinstance(result["image_descriptions"], list)
+            assert isinstance(result["ai_image_analysis"], list)
+            assert isinstance(result["technical_terms"], list)
+        finally:
+            os.unlink(db_path)
+
+    def test_extract_technical_terms():
+        """Test extraction of technical engineering terms from text."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore
+
+            # Test with chemical engineering text
+            text = """The new PEM electrolyzer system achieves 95% efficiency.
+            The hydrogen production facility uses a membrane reactor and
+            includes carbon capture technology. The pilot plant features
+            a fluidized bed reactor for catalyst regeneration."""
+
+            terms = gen._extract_technical_terms(text)
+            assert isinstance(terms, list)
+            assert len(terms) > 0
+            # Should find electrolyzer, reactor, carbon capture, etc.
+            combined = " ".join(terms).lower()
+            assert any(
+                keyword in combined
+                for keyword in ["electrolyz", "reactor", "carbon capture", "membrane"]
+            )
+        finally:
+            os.unlink(db_path)
+
+    def test_extract_technical_terms_empty():
+        """Test extraction with no technical terms."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            db = Database(db_path)
+            gen = ImageGenerator(db, None, None)  # type: ignore
+
+            text = "This is a simple sentence with no technical equipment."
+            terms = gen._extract_technical_terms(text)
+            assert isinstance(terms, list)
+            # May be empty or have few terms
+            assert len(terms) <= 5
+        finally:
+            os.unlink(db_path)
+
     suite.add_test("Add AI watermark", test_add_ai_watermark)
     suite.add_test("Add AI watermark small image", test_add_ai_watermark_small_image)
     suite.add_test("Image generator init", test_image_generator_init)
@@ -1211,6 +1644,19 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     )
     suite.add_test(
         "Clean prompt - removes quotes", test_clean_image_prompt_removes_quotes
+    )
+    suite.add_test(
+        "Fetch source content - no links", test_fetch_source_content_no_links
+    )
+    suite.add_test(
+        "Fetch source content - invalid URL", test_fetch_source_content_invalid_url
+    )
+    suite.add_test(
+        "Fetch source content - structure", test_fetch_source_content_structure
+    )
+    suite.add_test("Extract technical terms", test_extract_technical_terms)
+    suite.add_test(
+        "Extract technical terms - empty", test_extract_technical_terms_empty
     )
 
     return suite

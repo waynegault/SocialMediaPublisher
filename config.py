@@ -509,19 +509,32 @@ STORY TO ILLUSTRATE:
 - Title: {story_title}
 - Summary: {story_summary}
 
-STEP 1 - EXTRACT THE KEY TECHNICAL ELEMENTS:
-Read the story carefully and identify:
-- The specific technology, process, or innovation mentioned
+CRITICAL: YOUR IMAGE MUST DIRECTLY ILLUSTRATE THIS SPECIFIC STORY
+Do NOT create a generic industrial or laboratory scene. Your image must show:
+- The EXACT technology, process, or equipment mentioned in the story title/summary
+- If the story mentions a specific company, reactor type, or process - SHOW THAT
+- If the story is about hydrogen electrolysis - show electrolyzers, not generic pipes
+- If the story is about battery recycling - show battery materials, not a generic lab
+- If the story is about carbon capture - show CO2 absorption equipment, not smokestacks
+
+READ THE SOURCE ARTICLE CONTEXT ABOVE (if provided) for additional visual details.
+This ensures your image reflects the REAL story, not a generic industrial scene.
+
+STEP 1 - EXTRACT THE KEY TECHNICAL ELEMENTS FROM SOURCE:
+Read the source context carefully and identify:
+- The specific technology, process, or innovation described
+- Visual details from the original article images (if described)
 - The type of equipment or facility involved (reactor, distillation column, lab, refinery, etc.)
 - The industry sector (petrochemical, pharmaceutical, renewable energy, etc.)
 - Any specific materials, chemicals, or products discussed
 
 STEP 2 - CREATE A SCENE THAT DIRECTLY DEPICTS THE STORY:
-Your image MUST show the actual subject matter from the headline. Examples:
+Your image MUST show the actual subject matter from the source. Examples:
 - Story about "new catalyst for hydrogen production" → Show hydrogen production equipment with catalyst handling
 - Story about "CO2 capture technology" → Show carbon capture systems, absorption columns, or flue gas treatment
 - Story about "battery recycling process" → Show battery materials, hydrometallurgical equipment, or sorting facilities
 - Story about "biofuel breakthrough" → Show fermentation vessels, biomass handling, or biorefinery equipment
+- If source describes a specific facility color scheme or equipment type, USE THOSE DETAILS
 
 STEP 3 - SUGGEST AUTHENTIC INDUSTRIAL SETTING:
 Create a setting that reflects the sector mentioned in the story:
@@ -529,6 +542,7 @@ Create a setting that reflects the sector mentioned in the story:
 - For petrochemical stories: refinery or plant control room settings
 - For academic research: university laboratory with research equipment
 - For renewable energy: appropriate generation or storage facilities
+- If the source article describes a specific setting, MATCH IT
 - Avoid explicit company logos or branding to prevent trademark issues
 - Use authentic industrial or laboratory aesthetics that match the story context
 
@@ -544,10 +558,11 @@ STEP 4 - ADD A PROMINENT HUMAN ELEMENT (MINIMUM 40% of image):
 - The engineer is a CO-STAR with the technology, not a background prop
 
 TECHNICAL ACCURACY IS CRITICAL:
-- Name the specific type of equipment in your prompt (not just "industrial equipment")
+- Use details from the source article to name specific equipment
 - Reference the actual process or technology from the story
-- Match the setting to what the story describes
+- Match the setting to what the source describes
 - Include relevant instrumentation, gauges, control systems
+- If the source mentions specific equipment brands or types (without logos), include those details
 
 COMPOSITION RULE (STRICT - MINIMUM 40% HUMAN):
 - Female engineer: MINIMUM 40-50% of the frame, upper body prominently visible
@@ -561,6 +576,7 @@ COMPOSITION RULE (STRICT - MINIMUM 40% HUMAN):
 AVOID:
 - Generic industrial backgrounds that could apply to any story
 - Vague descriptions like "technical equipment" or "machinery"
+- Ignoring specific details from the source article context
 - Engineer as a TINY figure in the background - she MUST be prominent
 - Engineer at the FAR EDGES of the frame - she should be center-left or center-right
 - Full-body distant shots - use medium or medium close-up framing
@@ -593,7 +609,7 @@ CRITICAL OUTPUT FORMAT:
 - NEVER include any text, labels, signs, or writing - AI cannot spell correctly
 - Describe visual elements only (shapes, colors, equipment) - NOT readable text
 - End with photography/camera style keywords like "shot with professional camera, editorial quality"
-- The prompt MUST specifically describe the technology/process from the story headline - not generic industrial imagery.""",
+- The prompt MUST specifically describe the technology/process from the story/source - not generic industrial imagery.""",
     )
 
     # Fallback image prompt template when LLM refinement fails
@@ -665,8 +681,19 @@ CRITICAL - NO PLACEHOLDERS:
 - If you cannot find real names, leave story_people as an empty array []
 - Academic stories usually mention researchers by name - look carefully
 - Include the researcher's full name, their institution, and their role
-- Example: If article mentions "Siddharth Deshpande, assistant professor" at "University of Rochester"
-  → Include: {{"name": "Siddharth Deshpande", "company": "University of Rochester", "position": "Assistant Professor"}}
+
+STORY_PEOPLE FIELD REQUIREMENTS (for accurate LinkedIn matching):
+- name: Full name as stated in the article (e.g., "Dr. Jane Smith", "Siddharth Deshpande")
+- company: Organization name (university, company, institution)
+- position: Job title/role exactly as stated (e.g., "Assistant Professor", "VP of Engineering", "PhD Student")
+- department: Department or school name if mentioned (e.g., "Chemical Engineering", "Bioengineering Department")
+- location: City/country if mentioned (e.g., "Cambridge, MA, USA", "London, UK", "Singapore")
+- role_type: One of: "academic", "executive", "researcher", "engineer", "student", "spokesperson", "other"
+- research_area: For academics, their research field if mentioned (e.g., "catalysis", "hydrogen production", "polymer chemistry")
+- linkedin_profile: Leave empty "" - will be filled later
+
+Example: If article mentions "Siddharth Deshpande, assistant professor of biomedical engineering at the University of Rochester"
+  → Include: {{"name": "Siddharth Deshpande", "company": "University of Rochester", "position": "Assistant Professor", "department": "Biomedical Engineering", "location": "Rochester, NY, USA", "role_type": "academic", "research_area": "", "linkedin_profile": ""}}
 
 WRITING STYLE FOR SUMMARIES:
 - Write in first person (use "I", "what stands out to me", "from an engineering perspective", etc.)
@@ -704,8 +731,8 @@ RESPOND WITH ONLY THIS JSON FORMAT:
       "hashtags": ["ChemicalEngineering", "Innovation"],
       "organizations": ["MIT", "BASF"],
       "story_people": [
-        {{"name": "Dr. Jane Smith", "company": "MIT", "position": "Lead Researcher", "linkedin_profile": ""}},
-        {{"name": "John Doe", "company": "BASF", "position": "CEO", "linkedin_profile": ""}}
+        {{"name": "Dr. Jane Smith", "company": "MIT", "position": "Lead Researcher", "department": "Chemical Engineering", "location": "Cambridge, MA, USA", "role_type": "academic", "research_area": "catalysis", "linkedin_profile": ""}},
+        {{"name": "John Doe", "company": "BASF", "position": "CEO", "department": "", "location": "Ludwigshafen, Germany", "role_type": "executive", "research_area": "", "linkedin_profile": ""}}
       ]
     }}
   ]
@@ -781,13 +808,23 @@ GOOD PROMOTION EXAMPLES (should APPROVE):
 - "Fascinated by this approach to catalyst design. Currently seeking process engineering roles — feel free to reach out or connect."
 
 IMAGE EVALUATION (if an image is provided):
-13. IMAGE PROFESSIONALISM: Is the image credible and appropriate for a serious engineering context?
-14. IMAGE RELEVANCE: Does the image clearly relate to the technical subject of the story?
-15. IMAGE CREDIBILITY: Does the image avoid looking staged, promotional, or like generic AI stock imagery?
+13. IMAGE PROFESSIONALISM: Is the image appropriate for a professional engineering context?
+14. IMAGE RELEVANCE: Does the image relate to the technical subject of the story?
+15. IMAGE CREDIBILITY: Does the image depict realistic industrial or laboratory settings with appropriate equipment?
+
+IMPORTANT NOTES ON IMAGES - BE LENIENT:
+- Images are AI-generated and intentionally feature attractive professional engineers
+- An attractive or beautiful person in the image is EXPECTED and ACCEPTABLE - do NOT reject for this reason
+- Professional appearance (well-groomed, confident, attractive) is a positive quality in business imagery
+- DO NOT reject for minor clothing details like necklines, fitted clothing, or fashionable professional attire
+- Lab coats, safety gear, and professional attire in various styles are ALL acceptable
+- Only reject images showing explicit content, nudity, or clearly unprofessional scenarios (e.g., swimwear, lingerie)
+- A "low-cut" top or fitted clothing is NOT grounds for rejection - this is normal professional attire
+- Focus ONLY on: Is there safety gear where needed? Is the setting credible? Does equipment match the story?
+- AI watermarks or generation artifacts are acceptable
+- When in doubt about clothing or appearance, APPROVE the image
 
 IMPORTANT NOTES:
-- Images are AI-generated; AI watermarks or tags are acceptable
-- Evaluate image credibility and relevance, not origin
 - LinkedIn profiles are helpful but not mandatory for approval
 - The promotion message MUST maintain professional dignity - reject if it sounds desperate or self-demeaning
 
@@ -1080,34 +1117,51 @@ Return ONLY the JSON array, no explanation.""",
     # Placeholders: {organization_name}
     ORG_LEADERS_PROMPT: str = _get_str(
         "ORG_LEADERS_PROMPT",
-        """Search for the CURRENT key leadership of "{organization_name}".
+        """Search for the CURRENT key leadership and hiring contacts at "{organization_name}".
 
 IMPORTANT: Leadership positions change frequently. Use web search to find CURRENT information.
 Do NOT rely on potentially outdated training data.
 
-Find the following roles if they exist:
+ORGANIZATION TYPE DETECTION:
+First, determine if this is a COMPANY or a UNIVERSITY/RESEARCH INSTITUTION, then search for appropriate roles.
+
+FOR COMPANIES, search for these roles (in priority order):
 1. CEO / Chief Executive Officer / Managing Director / Founder / Owner
-2. President
-3. CTO / Chief Technology Officer / Chief Engineer
-4. CHRO / Chief Human Resources Officer / Head of HR
+2. CTO / Chief Technology Officer / Chief Engineer / VP Engineering
+3. Head of HR / Talent Acquisition Director / Chief People Officer / Recruitment Manager
+4. Head of R&D / Chief Science Officer / VP Research
+
+FOR UNIVERSITIES/RESEARCH INSTITUTIONS, search for these roles (in priority order):
+1. Department Head / Chair of Chemical Engineering (or relevant department)
+2. Head of Research Group / Lab Director / Principal Investigator (in relevant area)
+3. Dean of Engineering / Faculty Dean
+4. Recruitment/HR contact for academic positions
 
 SEARCH AND VERIFICATION RULES:
-1. Search for current leadership information (e.g., "{organization_name} CEO 2025")
-2. Only include leaders you find in RECENT search results
-3. Verify the person is CURRENTLY in the role, not a predecessor
-4. If search results are ambiguous or outdated, OMIT that role
-5. When in doubt, leave the role empty — a missing leader is better than a wrong one
-6. Include their exact current title as shown in search results
+1. Search for current leadership information (e.g., "{organization_name} CEO 2026" or "{organization_name} chemical engineering department head")
+2. For universities, search for department-specific contacts (e.g., "MIT chemical engineering faculty")
+3. Only include leaders you find in RECENT search results
+4. Verify the person is CURRENTLY in the role, not a predecessor
+5. If search results are ambiguous or outdated, OMIT that role
+6. When in doubt, leave the role empty — a missing leader is better than a wrong one
+7. Include their exact current title as shown in search results
+8. Maximum 4 leaders per organization
 
 BAD EXAMPLE (should NOT do):
 Organization: "BASF"
 Output: {{"name": "Martin Brudermüller", "title": "CEO"}} from memory without verification
 Reason: Leadership may have changed; must verify through current search
 
-GOOD EXAMPLE (correct approach):
+GOOD EXAMPLE (correct approach for company):
 Organization: "BASF"
 Search finds recent news: "BASF CEO Dr. Markus Kamieth announced..."
 Output: {{"name": "Dr. Markus Kamieth", "title": "CEO", "organization": "BASF"}}
+Reason: Verified through recent search results
+
+GOOD EXAMPLE (correct approach for university):
+Organization: "MIT"
+Search finds: "Professor Paula Hammond, Head of Chemical Engineering at MIT..."
+Output: {{"name": "Prof. Paula Hammond", "title": "Head of Chemical Engineering", "organization": "MIT"}}
 Reason: Verified through recent search results
 
 Return a JSON object:
