@@ -89,6 +89,210 @@ class LinkedInCompanyLookup:
         # Track if we've verified LinkedIn login this session
         self._linkedin_login_verified = False
 
+        # Cache person search results across multiple stories
+        # Key: "name@company|department|location" -> LinkedIn URL or None (not found)
+        self._person_cache: dict[str, Optional[str]] = {}
+
+        # Cache company search results across multiple stories
+        # Key: company name -> (url, slug, urn) or None
+        self._company_cache: dict[
+            str, Optional[tuple[str, Optional[str], Optional[str]]]
+        ] = {}
+
+        # Cache department search results across multiple stories
+        # Key: "dept@company" -> (url, slug, urn) or None
+        self._department_cache: dict[
+            str, tuple[Optional[str], Optional[str], Optional[str]]
+        ] = {}
+
+        # Track Gemini fallback success rate - disable after too many failures
+        self._gemini_attempts = 0
+        self._gemini_successes = 0
+        self._gemini_disabled = False
+
+        # Timing metrics for search operations
+        self._timing_stats: dict[str, list[float]] = {
+            "person_search": [],
+            "company_search": [],
+            "department_search": [],
+        }
+
+        # Cache persistence file path
+        self._cache_dir = Path(
+            os.path.expandvars(r"%LOCALAPPDATA%\SocialMediaPublisher")
+        )
+        self._cache_file = self._cache_dir / "linkedin_cache.json"
+
+        # Load persisted cache on startup
+        self._load_cache_from_disk()
+
+    def get_cache_stats(self) -> dict[str, dict[str, int]]:
+        """Get statistics about all search caches.
+
+        Returns:
+            Dict with stats for 'person', 'company', 'department' caches
+        """
+        person_total = len(self._person_cache)
+        person_found = sum(1 for url in self._person_cache.values() if url is not None)
+
+        company_total = len(self._company_cache)
+        company_found = sum(1 for v in self._company_cache.values() if v is not None)
+
+        dept_total = len(self._department_cache)
+        dept_found = sum(1 for v in self._department_cache.values() if v[0] is not None)
+
+        return {
+            "person": {
+                "total": person_total,
+                "found": person_found,
+                "not_found": person_total - person_found,
+            },
+            "company": {
+                "total": company_total,
+                "found": company_found,
+                "not_found": company_total - company_found,
+            },
+            "department": {
+                "total": dept_total,
+                "found": dept_found,
+                "not_found": dept_total - dept_found,
+            },
+        }
+
+    def get_timing_stats(self) -> dict[str, dict[str, float]]:
+        """Get timing statistics for search operations.
+
+        Returns:
+            Dict with avg/min/max/total times in seconds for each operation type
+        """
+        result = {}
+        for op_type, times in self._timing_stats.items():
+            if times:
+                result[op_type] = {
+                    "count": len(times),
+                    "total": sum(times),
+                    "avg": sum(times) / len(times),
+                    "min": min(times),
+                    "max": max(times),
+                }
+            else:
+                result[op_type] = {"count": 0, "total": 0, "avg": 0, "min": 0, "max": 0}
+        return result
+
+    def get_gemini_stats(self) -> dict[str, Any]:
+        """Get Gemini fallback statistics.
+
+        Returns:
+            Dict with attempts, successes, success_rate, and disabled status
+        """
+        rate = (
+            self._gemini_successes / self._gemini_attempts * 100
+            if self._gemini_attempts > 0
+            else 0
+        )
+        return {
+            "attempts": self._gemini_attempts,
+            "successes": self._gemini_successes,
+            "success_rate": round(rate, 1),
+            "disabled": self._gemini_disabled,
+        }
+
+    def _load_cache_from_disk(self) -> None:
+        """Load persisted cache from disk if available."""
+        if not self._cache_file.exists():
+            return
+
+        try:
+            with open(self._cache_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            # Restore person cache
+            self._person_cache = data.get("person", {})
+
+            # Restore company cache (convert lists back to tuples)
+            for key, val in data.get("company", {}).items():
+                if val is None:
+                    self._company_cache[key] = None
+                else:
+                    self._company_cache[key] = tuple(val)  # type: ignore
+
+            # Restore department cache (convert lists back to tuples)
+            for key, val in data.get("department", {}).items():
+                self._department_cache[key] = tuple(val)  # type: ignore
+
+            total = (
+                len(self._person_cache)
+                + len(self._company_cache)
+                + len(self._department_cache)
+            )
+            logger.info(f"Loaded {total} cached entries from {self._cache_file}")
+
+        except Exception as e:
+            logger.warning(f"Failed to load cache from disk: {e}")
+
+    def save_cache_to_disk(self) -> None:
+        """Persist cache to disk for future runs."""
+        try:
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+
+            # Convert tuples to lists for JSON serialization
+            data = {
+                "person": self._person_cache,
+                "company": {
+                    k: list(v) if v else None for k, v in self._company_cache.items()
+                },
+                "department": {k: list(v) for k, v in self._department_cache.items()},
+            }
+
+            with open(self._cache_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+
+            total = (
+                len(self._person_cache)
+                + len(self._company_cache)
+                + len(self._department_cache)
+            )
+            logger.info(f"Saved {total} cache entries to {self._cache_file}")
+
+        except Exception as e:
+            logger.warning(f"Failed to save cache to disk: {e}")
+
+    def get_person_cache_stats(self) -> dict[str, int]:
+        """Get statistics about the person search cache.
+
+        Returns:
+            Dict with 'total', 'found' (with URLs), 'not_found' (None values)
+        """
+        return self.get_cache_stats()["person"]
+
+    def clear_all_caches(self) -> dict[str, int]:
+        """Clear all search caches.
+
+        Returns:
+            Dict with count of entries cleared per cache type
+        """
+        counts = {
+            "person": len(self._person_cache),
+            "company": len(self._company_cache),
+            "department": len(self._department_cache),
+        }
+        self._person_cache.clear()
+        self._company_cache.clear()
+        self._department_cache.clear()
+        logger.info(f"Cleared all caches: {counts}")
+        return counts
+
+    def clear_person_cache(self) -> int:
+        """Clear the person search cache.
+
+        Returns:
+            Number of entries cleared
+        """
+        count = len(self._person_cache)
+        self._person_cache.clear()
+        logger.info(f"Cleared person cache ({count} entries)")
+        return count
+
     def __enter__(self) -> "LinkedInCompanyLookup":
         """Context manager entry - returns self."""
         return self
@@ -540,6 +744,7 @@ NOT_FOUND"""
             logger.warning("Cannot search - company name is required")
             return (None, None)
 
+        start_time = time.time()
         company_name = company_name.strip()
         logger.info(f"Searching LinkedIn for company: {company_name}")
 
@@ -566,6 +771,8 @@ NOT_FOUND"""
 
             url, urn = self._search_with_query(company_name, search_query, validate)
             if url:
+                elapsed = time.time() - start_time
+                self._timing_stats["company_search"].append(elapsed)
                 return (url, urn)
 
             # Small delay between retries
@@ -578,6 +785,8 @@ NOT_FOUND"""
         if url:
             is_valid, slug = self.validate_linkedin_url(url)
             if is_valid:
+                elapsed = time.time() - start_time
+                self._timing_stats["company_search"].append(elapsed)
                 return (url, slug)
 
         # Try Playwright search with acronym if we can generate one
@@ -588,9 +797,15 @@ NOT_FOUND"""
             if url:
                 is_valid, slug = self.validate_linkedin_url(url)
                 if is_valid:
+                    elapsed = time.time() - start_time
+                    self._timing_stats["company_search"].append(elapsed)
                     return (url, slug)
 
-        logger.info(f"No LinkedIn company page found for: {company_name}")
+        elapsed = time.time() - start_time
+        self._timing_stats["company_search"].append(elapsed)
+        logger.info(
+            f"No LinkedIn company page found for: {company_name} ({elapsed:.1f}s)"
+        )
         return (None, None)
 
     def _generate_acronym(self, company_name: str) -> Optional[str]:
@@ -839,6 +1054,8 @@ NOT_FOUND"""
         if not name or not company:
             return None
 
+        start_time = time.time()
+
         # Build enhanced context for logging
         context_parts = [f"{name} at {company}"]
         if position:
@@ -885,13 +1102,27 @@ NOT_FOUND"""
             )
 
         if profile_url:
-            logger.info(f"Found person profile: {name} -> {profile_url}")
+            elapsed = time.time() - start_time
+            self._timing_stats["person_search"].append(elapsed)
+            logger.info(
+                f"Found person profile: {name} -> {profile_url} ({elapsed:.1f}s)"
+            )
             return profile_url
 
-        # Fallback to Gemini search (rarely works but worth trying)
-        return self._search_person_gemini(
+        # Fallback to Gemini search (skip if disabled due to low success rate)
+        if self._gemini_disabled:
+            elapsed = time.time() - start_time
+            self._timing_stats["person_search"].append(elapsed)
+            logger.debug(f"Skipping Gemini fallback (disabled) for {name}")
+            return None
+
+        result = self._search_person_gemini(
             name, company, position, department, location, role_type, research_area
         )
+
+        elapsed = time.time() - start_time
+        self._timing_stats["person_search"].append(elapsed)
+        return result
 
     def _search_person_gemini(
         self,
@@ -907,7 +1138,10 @@ NOT_FOUND"""
         Fallback: Search for a person's LinkedIn profile using Gemini with Google Search.
 
         Note: This method is less reliable than Playwright/Bing search.
+        Automatically disables itself after 10+ attempts with <10% success rate.
         """
+        self._gemini_attempts += 1
+
         if not self.client:
             return None
 
@@ -1006,19 +1240,39 @@ NOT_FOUND"""
 
             if "NOT_FOUND" in result.upper():
                 logger.info(f"Person profile not found: {name} at {company}")
+                self._check_gemini_disable()
                 return None
 
             # Extract LinkedIn personal profile URL
             linkedin_url = self._extract_person_url(result)
             if linkedin_url:
-                logger.info(f"Found person profile: {name} -> {linkedin_url}")
+                self._gemini_successes += 1
+                logger.info(
+                    f"Found person profile via Gemini: {name} -> {linkedin_url}"
+                )
                 return linkedin_url
 
+            self._check_gemini_disable()
             return None
 
         except Exception as e:
             logger.error(f"Error searching for person {name}: {e}")
+            self._check_gemini_disable()
             return None
+
+    def _check_gemini_disable(self) -> None:
+        """Check if Gemini fallback should be disabled due to low success rate."""
+        if self._gemini_disabled:
+            return
+        # Only evaluate after 10+ attempts
+        if self._gemini_attempts >= 10:
+            success_rate = self._gemini_successes / self._gemini_attempts
+            if success_rate < 0.10:  # Less than 10% success
+                self._gemini_disabled = True
+                logger.info(
+                    f"Disabling Gemini fallback: {self._gemini_successes}/{self._gemini_attempts} "
+                    f"({success_rate * 100:.0f}%) success rate"
+                )
 
     def _search_company_playwright(self, company_name: str) -> Optional[str]:
         """
@@ -1192,6 +1446,7 @@ NOT_FOUND"""
         try:
             # Use Google Search (better LinkedIn results than Bing)
             import urllib.parse
+
             encoded_query = urllib.parse.quote(search_query)
             url = f"https://www.google.com/search?q={encoded_query}"
             driver.get(url)
@@ -1245,9 +1500,9 @@ NOT_FOUND"""
             # Extract LinkedIn URLs directly from page source (most reliable for Google)
             page_source = driver.page_source
             linkedin_urls = re.findall(
-                r'https://(?:www\.)?linkedin\.com/in/[\w\-]+/?', page_source
+                r"https://(?:www\.)?linkedin\.com/in/[\w\-]+/?", page_source
             )
-            
+
             # Deduplicate while preserving order
             seen = set()
             unique_urls = []
@@ -1256,7 +1511,7 @@ NOT_FOUND"""
                 if u_clean not in seen:
                     seen.add(u_clean)
                     unique_urls.append(u_clean)
-            
+
             best_match = None
             best_score = 0
 
@@ -1266,11 +1521,13 @@ NOT_FOUND"""
                     # Find the search result containing this URL
                     # Google results are in divs with class 'g' or we can search for the URL in any element
                     result_text = ""
-                    
+
                     # Try to find result elements containing this URL
                     try:
                         # Look for any element containing this URL
-                        elements = driver.find_elements(By.XPATH, f"//*[contains(@href, '{linkedin_url}')]")
+                        elements = driver.find_elements(
+                            By.XPATH, f"//*[contains(@href, '{linkedin_url}')]"
+                        )
                         for elem in elements:
                             # Get parent container text
                             parent = elem
@@ -1278,24 +1535,29 @@ NOT_FOUND"""
                                 try:
                                     parent = parent.find_element(By.XPATH, "..")
                                     parent_text = parent.text
-                                    if len(parent_text) > len(result_text) and len(parent_text) < 1000:
+                                    if (
+                                        len(parent_text) > len(result_text)
+                                        and len(parent_text) < 1000
+                                    ):
                                         result_text = parent_text
                                 except Exception:
                                     break
                     except Exception:
                         pass
-                    
+
                     result_text = result_text.lower() if result_text else ""
-                    
+
                     # If no context found from search results, we can still use the URL
                     # The URL slug often contains the person's name
-                    url_slug = linkedin_url.split("/in/")[-1] if "/in/" in linkedin_url else ""
+                    url_slug = (
+                        linkedin_url.split("/in/")[-1] if "/in/" in linkedin_url else ""
+                    )
                     url_text = url_slug.replace("-", " ").lower()
 
                     # Check name match (required) - first and last name
                     # Check both result text and URL slug
                     text_to_check = f"{result_text} {url_text}"
-                    
+
                     if first_name and last_name:
                         if (
                             first_name not in text_to_check
@@ -1670,6 +1932,8 @@ NOT_FOUND"""
         Returns:
             Tuple of (linkedin_url, slug) if found, (None, None) otherwise
         """
+        start_time = time.time()
+
         # Skip department lookup for generic academic departments that rarely have LinkedIn pages
         # This saves 4+ API calls per department that will almost certainly fail
         dept_lower = department.lower()
@@ -1713,8 +1977,10 @@ NOT_FOUND"""
                 urn, org_id = result
                 if urn:
                     url = f"https://www.linkedin.com/company/{candidate_slug}"
+                    elapsed = time.time() - start_time
+                    self._timing_stats["department_search"].append(elapsed)
                     logger.info(
-                        f"Found department page via API: {department} at {parent_org} -> {url}"
+                        f"Found department page via API: {department} at {parent_org} -> {url} ({elapsed:.1f}s)"
                     )
                     return (url, candidate_slug)
 
@@ -1767,24 +2033,34 @@ NOT_FOUND"""
             result = response.text.strip()
 
             if "NOT_FOUND" in result.upper():
+                elapsed = time.time() - start_time
+                self._timing_stats["department_search"].append(elapsed)
                 return (None, None)
 
             # Extract LinkedIn URL
             linkedin_url = self._extract_company_url(result)
             if not linkedin_url:
+                elapsed = time.time() - start_time
+                self._timing_stats["department_search"].append(elapsed)
                 return (None, None)
 
             # Validate the URL format
             is_valid, slug = self.validate_linkedin_url(linkedin_url)
             if is_valid:
+                elapsed = time.time() - start_time
+                self._timing_stats["department_search"].append(elapsed)
                 logger.info(
-                    f"Found department page via search: {department} at {parent_org} -> {linkedin_url}"
+                    f"Found department page via search: {department} at {parent_org} -> {linkedin_url} ({elapsed:.1f}s)"
                 )
                 return (linkedin_url, slug)
 
+            elapsed = time.time() - start_time
+            self._timing_stats["department_search"].append(elapsed)
             return (None, None)
 
         except Exception as e:
+            elapsed = time.time() - start_time
+            self._timing_stats["department_search"].append(elapsed)
             logger.error(f"Error searching for department {department}: {e}")
             return (None, None)
 
@@ -1828,32 +2104,49 @@ NOT_FOUND"""
         companies_not_found = 0
         company_data: dict[str, tuple[str, Optional[str], Optional[str]]] = {}
 
-        # Look up parent organizations first (as fallback)
+        # Look up parent organizations first (as fallback), using instance cache
         for i, company in enumerate(companies):
+            if company in self._company_cache:
+                # Cache hit
+                cached = self._company_cache[company]
+                if cached:
+                    logger.info(f"Company cache hit: {company} -> {cached[0]}")
+                    company_data[company] = cached
+                    companies_found += 1
+                else:
+                    logger.debug(f"Company cache hit (not found): {company}")
+                    companies_not_found += 1
+                continue
+
+            # Cache miss - do the lookup
             linkedin_url, slug = self.search_company(company)
 
             if linkedin_url:
                 # Look up the organization URN via LinkedIn API
                 urn = self.lookup_organization_urn(linkedin_url)
                 company_data[company] = (linkedin_url, slug, urn)
+                self._company_cache[company] = (linkedin_url, slug, urn)
                 companies_found += 1
             else:
+                self._company_cache[company] = None
                 companies_not_found += 1
 
             # Rate limiting
             if i < len(companies) - 1:
                 time.sleep(delay_between_requests)
 
-        # Cache for department lookups to avoid duplicate searches
-        department_cache: dict[
-            str, tuple[Optional[str], Optional[str], Optional[str]]
-        ] = {}
-
-        # Cache for person lookups to avoid duplicate searches
-        person_cache: dict[str, Optional[str]] = {}
+        # Use instance-level caches to remember results across multiple stories
+        # This avoids re-searching for the same person/department appearing in multiple articles
+        person_cache = self._person_cache
+        department_cache = self._department_cache
 
         # Process each person with hierarchical lookup
         for person in people:
+            # Skip if already has a profile (from previous run or earlier in this run)
+            if person.get("linkedin_profile"):
+                logger.debug(f"Skipping {person.get('name')} - already has profile")
+                continue
+
             name = person.get("name", "").strip()
             company = person.get("company", "").strip()
             position = person.get("position", "").strip()
@@ -1873,7 +2166,18 @@ NOT_FOUND"""
                 # Include department and location in cache key for better specificity
                 person_cache_key = f"{name}@{company}|{department}|{location}"
 
-                if person_cache_key not in person_cache:
+                if person_cache_key in person_cache:
+                    # Cache hit - avoid redundant search
+                    cached_url = person_cache[person_cache_key]
+                    if cached_url:
+                        logger.info(
+                            f"Level 1: Cache hit for {name} at {company} -> {cached_url}"
+                        )
+                    else:
+                        logger.debug(
+                            f"Level 1: Cache hit (not found) for {name} at {company}"
+                        )
+                else:
                     logger.info(
                         f"Level 1: Searching for personal profile: {name} at {company}"
                     )
@@ -1912,7 +2216,19 @@ NOT_FOUND"""
             if dept_for_lookup:
                 dept_cache_key = f"{dept_for_lookup}@{company}"
 
-                if dept_cache_key not in department_cache:
+                if dept_cache_key in department_cache:
+                    # Cache hit
+                    cached_dept = department_cache[dept_cache_key]
+                    if cached_dept[0]:
+                        logger.info(
+                            f"Level 2: Cache hit for {dept_for_lookup}@{company} -> {cached_dept[0]}"
+                        )
+                    else:
+                        logger.debug(
+                            f"Level 2: Cache hit (not found) for {dept_for_lookup}@{company}"
+                        )
+                else:
+                    # Cache miss - do the lookup
                     # Get parent org slug if available
                     parent_slug = None
                     if company in company_data:
@@ -2089,7 +2405,10 @@ NOT_FOUND"""
             return None
 
     def close(self) -> None:
-        """Clean up HTTP client and browser resources."""
+        """Clean up HTTP client and browser resources, and save cache."""
+        # Save cache before closing
+        self.save_cache_to_disk()
+
         if self._http_client:
             self._http_client.close()
             self._http_client = None

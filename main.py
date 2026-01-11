@@ -1548,6 +1548,41 @@ def _lookup_linkedin_profiles_for_people(
             slug_display = f" (slug: {slug})" if slug else ""
             print(f"  • {company}: {url}{slug_display}")
 
+    # Cache statistics (shows cross-story caching efficiency)
+    cache_stats = lookup.get_cache_stats()
+    total_cached = sum(s["total"] for s in cache_stats.values())
+    if total_cached > 0:
+        print("\n📊 Cache Statistics (cross-story efficiency):")
+        for cache_type, stats in cache_stats.items():
+            if stats["total"] > 0:
+                print(
+                    f"  • {cache_type.capitalize()}: {stats['total']} entries "
+                    f"({stats['found']} found, {stats['not_found']} not found)"
+                )
+
+    # Timing statistics
+    timing_stats = lookup.get_timing_stats()
+    total_searches = sum(s["count"] for s in timing_stats.values())
+    if total_searches > 0:
+        print("\n⏱️ Search Timing Statistics:")
+        for op_type, stats in timing_stats.items():
+            if stats["count"] > 0:
+                print(
+                    f"  • {op_type.replace('_', ' ').title()}: "
+                    f"{stats['count']} searches, {stats['total']:.1f}s total, "
+                    f"{stats['avg']:.1f}s avg"
+                )
+
+    # Gemini fallback statistics
+    gemini_stats = lookup.get_gemini_stats()
+    if gemini_stats["attempts"] > 0:
+        status = " (DISABLED)" if gemini_stats["disabled"] else ""
+        print(
+            f"\n🤖 Gemini Fallback{status}: "
+            f"{gemini_stats['successes']}/{gemini_stats['attempts']} successful "
+            f"({gemini_stats['success_rate']}%)"
+        )
+
 
 def _test_enrichment(engine: ContentEngine) -> None:
     """LinkedIn Profile Enrichment - finds profiles and populates URNs."""
