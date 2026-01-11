@@ -32,6 +32,7 @@ TEST_MODULES = [
     ("linkedin_optimizer", "LinkedIn Optimizer"),
     ("monitoring", "Monitoring"),
     ("trend_detector", "Trend Detector"),
+    ("ab_testing", "A/B Testing"),
 ]
 
 
