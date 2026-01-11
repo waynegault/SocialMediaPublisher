@@ -1510,9 +1510,7 @@ NOT_FOUND"""
     @with_enhanced_recovery(
         max_attempts=3,
         base_delay=5.0,
-        retryable_exceptions=(
-            Exception,
-        ),  # Broad retry for network/browser issues
+        retryable_exceptions=(Exception,),  # Broad retry for network/browser issues
     )
     def _lookup_person_urn_with_retry(self, profile_url: str) -> Optional[str]:
         """Internal method with retry logic for URN lookup."""
@@ -1724,7 +1722,9 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     suite.add_test("Extract person URL from text", test_extract_person_url)
     suite.add_test("Lookup class initialization", test_lookup_class_init)
     suite.add_test("Context manager works", test_context_manager)
-    suite.add_test("Lookup person URN - invalid URL", test_lookup_person_urn_invalid_url)
+    suite.add_test(
+        "Lookup person URN - invalid URL", test_lookup_person_urn_invalid_url
+    )
     suite.add_test("Lookup person URN - no driver", test_lookup_person_urn_no_driver)
 
     return suite

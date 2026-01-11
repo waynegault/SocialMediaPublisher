@@ -278,23 +278,33 @@ class LinkedInPublisher:
         # LinkedIn optimal post length is 1200-1500 characters
         warnings: list[str] = []
         if char_count < 100:
-            warnings.append(f"Post is very short ({char_count} chars). Consider adding more content.")
+            warnings.append(
+                f"Post is very short ({char_count} chars). Consider adding more content."
+            )
         elif char_count > 3000:
-            warnings.append(f"Post is very long ({char_count} chars). LinkedIn may truncate it.")
+            warnings.append(
+                f"Post is very long ({char_count} chars). LinkedIn may truncate it."
+            )
         elif char_count > 1500:
-            warnings.append(f"Post is longer than optimal ({char_count} chars). Ideal: 1200-1500.")
+            warnings.append(
+                f"Post is longer than optimal ({char_count} chars). Ideal: 1200-1500."
+            )
 
         # Check for image
         has_image = bool(story.image_path and Path(story.image_path).exists())
         if not has_image:
-            warnings.append("No image attached. Posts with images get 2x more engagement.")
+            warnings.append(
+                "No image attached. Posts with images get 2x more engagement."
+            )
 
         # Check hashtags
         hashtag_count = len(story.hashtags) if story.hashtags else 0
         if hashtag_count == 0:
             warnings.append("No hashtags. Consider adding 1-3 relevant hashtags.")
         elif hashtag_count > 5:
-            warnings.append(f"Too many hashtags ({hashtag_count}). LinkedIn recommends max 3-5.")
+            warnings.append(
+                f"Too many hashtags ({hashtag_count}). LinkedIn recommends max 3-5."
+            )
 
         # Check for mentions
         mention_count = 0
@@ -1192,7 +1202,8 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
             # Story with good content
             story = Story(
                 title="Test Story About Amazing AI Breakthrough in Healthcare",
-                summary="This is a comprehensive test summary for the story that discusses " * 5,
+                summary="This is a comprehensive test summary for the story that discusses "
+                * 5,
                 source_links=["https://example.com"],
                 quality_score=8,
                 hashtags=["#AI", "#Healthcare", "#Technology"],

@@ -66,6 +66,14 @@ def _get_int(key: str, default: int) -> int:
         return default
 
 
+def _get_float(key: str, default: float) -> float:
+    """Get float from environment variable."""
+    try:
+        return float(os.getenv(key, str(default)))
+    except ValueError:
+        return default
+
+
 def _get_bool(key: str, default: bool) -> bool:
     """Get boolean from environment variable."""
     value = os.getenv(key, str(default)).lower()
@@ -895,6 +903,28 @@ Return ONLY valid JSON, no explanation.""",
     SUMMARY_WORD_COUNT: int = _get_int("SUMMARY_WORD_COUNT", 250)
     MIN_QUALITY_SCORE: int = _get_int("MIN_QUALITY_SCORE", 7)
 
+    # --- Quality Score Calibration ---
+    # These weights allow fine-tuning of the quality scoring system.
+    # Higher weights = more influence on final score. Set to 0 to disable a factor.
+    # The AI provides a base score (1-10), then these weights adjust it.
+    QUALITY_WEIGHT_RECENCY: float = _get_float(
+        "QUALITY_WEIGHT_RECENCY", 1.0
+    )  # Newer is better
+    QUALITY_WEIGHT_SOURCE: float = _get_float(
+        "QUALITY_WEIGHT_SOURCE", 1.0
+    )  # Reputable sources
+    QUALITY_WEIGHT_RELEVANCE: float = _get_float(
+        "QUALITY_WEIGHT_RELEVANCE", 1.0
+    )  # Topic match
+    QUALITY_WEIGHT_PEOPLE_MENTIONED: float = _get_float(
+        "QUALITY_WEIGHT_PEOPLE_MENTIONED", 0.5
+    )  # Named sources
+    QUALITY_WEIGHT_GEOGRAPHIC: float = _get_float(
+        "QUALITY_WEIGHT_GEOGRAPHIC", 0.5
+    )  # Priority regions
+    # Maximum bonus points from calibration (prevents inflation)
+    QUALITY_MAX_CALIBRATION_BONUS: int = _get_int("QUALITY_MAX_CALIBRATION_BONUS", 2)
+
     # --- Publication Settings ---
     MAX_STORIES_PER_DAY: int = _get_int("MAX_STORIES_PER_DAY", 4)
     START_PUB_TIME: str = _get_str("START_PUB_TIME", "08:00")
@@ -1029,6 +1059,10 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         result = _get_str("NONEXISTENT_VAR_12345", "default")
         assert result == "default", f"Expected 'default', got {result}"
 
+    def test_get_float_default():
+        result = _get_float("NONEXISTENT_VAR_12345", 3.14)
+        assert result == 3.14, f"Expected 3.14, got {result}"
+
     def test_config_defaults():
         assert Config.SUMMARY_WORD_COUNT >= 50
         assert Config.MAX_STORIES_PER_DAY >= 1
@@ -1052,6 +1086,7 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     suite.add_test("_get_int with default", test_get_int_valid)
     suite.add_test("_get_bool with default", test_get_bool_default)
     suite.add_test("_get_str with default", test_get_str_default)
+    suite.add_test("_get_float with default", test_get_float_default)
     suite.add_test("Config defaults", test_config_defaults)
     suite.add_test("Config validate", test_config_validate)
     suite.add_test("Config ensure directories", test_config_ensure_directories)
