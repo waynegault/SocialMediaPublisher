@@ -1342,8 +1342,10 @@ class StorySearcher:
         new_count = 0
 
         # Get recent titles for semantic deduplication (more memory-efficient for large DBs)
-        # Duplicates are most likely among recent stories, so 90 days is a reasonable window
-        existing_titles = self.db.get_recent_story_titles(days=90)
+        # Uses configurable window (default: 90 days)
+        existing_titles = self.db.get_recent_story_titles(
+            days=Config.DEDUP_ALL_STORIES_WINDOW_DAYS
+        )
         similarity_threshold = Config.DEDUP_SIMILARITY_THRESHOLD
 
         # Also get recently published story titles to prevent similar content

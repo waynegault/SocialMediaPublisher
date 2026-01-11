@@ -882,6 +882,8 @@ Return ONLY valid JSON, no explanation.""",
     DEDUP_SIMILARITY_THRESHOLD: float = float(
         _get_str("DEDUP_SIMILARITY_THRESHOLD", "0.7")
     )
+    # Days to look back for all story deduplication (title matching)
+    DEDUP_ALL_STORIES_WINDOW_DAYS: int = _get_int("DEDUP_ALL_STORIES_WINDOW_DAYS", 90)
     # Days to look back for published story deduplication (prevents similar content)
     DEDUP_PUBLISHED_WINDOW_DAYS: int = _get_int("DEDUP_PUBLISHED_WINDOW_DAYS", 30)
     # Number of retries for transient API failures
@@ -939,6 +941,14 @@ Return ONLY valid JSON, no explanation.""",
     # Include "open to opportunities" postscript in LinkedIn posts
     INCLUDE_OPPORTUNITY_MESSAGE: bool = _get_bool("INCLUDE_OPPORTUNITY_MESSAGE", True)
 
+    # --- LinkedIn Post Thresholds ---
+    # Character count thresholds for post warnings
+    LINKEDIN_POST_MIN_CHARS: int = _get_int("LINKEDIN_POST_MIN_CHARS", 100)
+    LINKEDIN_POST_OPTIMAL_CHARS: int = _get_int("LINKEDIN_POST_OPTIMAL_CHARS", 1500)
+    LINKEDIN_POST_MAX_CHARS: int = _get_int("LINKEDIN_POST_MAX_CHARS", 3000)
+    # Hashtag recommendations
+    LINKEDIN_MAX_HASHTAGS: int = _get_int("LINKEDIN_MAX_HASHTAGS", 5)
+
     @classmethod
     def get_pub_start_hour(cls) -> int:
         """Parse START_PUB_TIME and return hour."""
@@ -957,6 +967,8 @@ Return ONLY valid JSON, no explanation.""",
 
     # --- Cleanup Settings ---
     EXCLUSION_PERIOD_DAYS: int = _get_int("EXCLUSION_PERIOD_DAYS", 30)
+    # Days after which stories are too old for image regeneration
+    IMAGE_REGEN_CUTOFF_DAYS: int = _get_int("IMAGE_REGEN_CUTOFF_DAYS", 14)
 
     # --- Signature Block ---
     SIGNATURE_BLOCK: str = _get_str("SIGNATURE_BLOCK", "\n\n#News #Update")
