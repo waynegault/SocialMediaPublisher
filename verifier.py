@@ -12,6 +12,7 @@ from PIL import Image
 from config import Config
 from database import Database, Story
 from api_client import api_client
+from originality_checker import OriginalityChecker
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,10 @@ class ContentVerifier:
         self.db = database
         self.client = client
         self.local_client = local_client
+        self.originality_checker = OriginalityChecker(
+            client=client,
+            local_client=local_client,
+        )
 
     def verify_pending_content(
         self,
@@ -148,6 +153,26 @@ class ContentVerifier:
         Verify a single story for publication suitability.
         Returns tuple of (is_approved, reason).
         """
+        # Check originality first (if enabled)
+        if self.originality_checker.enabled:
+            try:
+                originality_result = self.originality_checker.check_story_originality(
+                    story=story,
+                )
+                if not originality_result.is_original:
+                    reason = (
+                        f"Originality check failed: {originality_result.recommendation}"
+                    )
+                    if originality_result.flagged_phrases:
+                        reason += f" Flagged: {'; '.join(originality_result.flagged_phrases[:3])}"
+                    logger.warning(f"  Originality check failed: {reason}")
+                    return (False, reason)
+                logger.debug(
+                    f"  Originality check passed (score: {originality_result.similarity_score:.2%})"
+                )
+            except Exception as e:
+                logger.warning(f"  Originality check error (continuing): {e}")
+
         # Build verification prompt
         prompt = self._build_verification_prompt(story)
 

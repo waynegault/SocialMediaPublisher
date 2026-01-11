@@ -93,7 +93,9 @@ class SettingsModel(BaseSettings):
     )  # Alternative name
     linkedin_access_token: str = Field(default="", alias="LINKEDIN_ACCESS_TOKEN")
     linkedin_author_urn: str = Field(default="", alias="LINKEDIN_AUTHOR_URN")
-    linkedin_organization_urn: str = Field(default="", alias="LINKEDIN_ORGANIZATION_URN")
+    linkedin_organization_urn: str = Field(
+        default="", alias="LINKEDIN_ORGANIZATION_URN"
+    )
     linkedin_author_name: str = Field(default="", alias="LINKEDIN_AUTHOR_NAME")
     linkedin_username: str = Field(default="", alias="LINKEDIN_USERNAME")
     linkedin_password: str = Field(default="", alias="LINKEDIN_PASSWORD")
@@ -107,7 +109,9 @@ class SettingsModel(BaseSettings):
 
     # --- AI Models ---
     model_text: str = Field(default="gemini-2.0-flash", alias="MODEL_TEXT")
-    model_verification: str = Field(default="gemini-2.0-flash", alias="MODEL_VERIFICATION")
+    model_verification: str = Field(
+        default="gemini-2.0-flash", alias="MODEL_VERIFICATION"
+    )
     model_image: str = Field(default="imagen-4.0-generate-001", alias="MODEL_IMAGE")
 
     # --- Hugging Face Image Generation ---
@@ -153,7 +157,9 @@ class SettingsModel(BaseSettings):
         alias="SEARCH_PROMPT",
     )
     search_prompt_template: str = Field(default="", alias="SEARCH_PROMPT_TEMPLATE")
-    search_lookback_days: int = Field(default=7, ge=1, le=365, alias="SEARCH_LOOKBACK_DAYS")
+    search_lookback_days: int = Field(
+        default=7, ge=1, le=365, alias="SEARCH_LOOKBACK_DAYS"
+    )
     use_last_checked_date: bool = Field(default=True, alias="USE_LAST_CHECKED_DATE")
     max_stories_per_search: int = Field(
         default=5, ge=1, le=50, alias="MAX_STORIES_PER_SEARCH"
@@ -176,17 +182,23 @@ class SettingsModel(BaseSettings):
     duckduckgo_max_results: int = Field(
         default=10, ge=1, le=100, alias="DUCKDUCKGO_MAX_RESULTS"
     )
-    llm_max_output_tokens: int = Field(default=8192, ge=1, alias="LLM_MAX_OUTPUT_TOKENS")
+    llm_max_output_tokens: int = Field(
+        default=8192, ge=1, alias="LLM_MAX_OUTPUT_TOKENS"
+    )
 
     # --- Content Settings ---
-    summary_word_count: int = Field(default=250, ge=50, le=1000, alias="SUMMARY_WORD_COUNT")
+    summary_word_count: int = Field(
+        default=250, ge=50, le=1000, alias="SUMMARY_WORD_COUNT"
+    )
     min_quality_score: int = Field(default=7, ge=1, le=10, alias="MIN_QUALITY_SCORE")
 
     # --- Quality Score Calibration ---
     quality_weight_recency: float = Field(
         default=1.0, ge=0.0, alias="QUALITY_WEIGHT_RECENCY"
     )
-    quality_weight_source: float = Field(default=1.0, ge=0.0, alias="QUALITY_WEIGHT_SOURCE")
+    quality_weight_source: float = Field(
+        default=1.0, ge=0.0, alias="QUALITY_WEIGHT_SOURCE"
+    )
     quality_weight_relevance: float = Field(
         default=1.0, ge=0.0, alias="QUALITY_WEIGHT_RELEVANCE"
     )
@@ -200,11 +212,24 @@ class SettingsModel(BaseSettings):
         default=2, ge=0, alias="QUALITY_MAX_CALIBRATION_BONUS"
     )
 
+    # --- Originality Checking ---
+    originality_max_similarity: float = Field(
+        default=0.6, ge=0.0, le=1.0, alias="ORIGINALITY_MAX_SIMILARITY"
+    )
+    originality_max_ngram_overlap: float = Field(
+        default=0.4, ge=0.0, le=1.0, alias="ORIGINALITY_MAX_NGRAM_OVERLAP"
+    )
+    originality_check_enabled: bool = Field(
+        default=True, alias="ORIGINALITY_CHECK_ENABLED"
+    )
+
     # --- URL Archiving ---
     archive_source_urls: bool = Field(default=False, alias="ARCHIVE_SOURCE_URLS")
 
     # --- Publication Settings ---
-    max_stories_per_day: int = Field(default=4, ge=1, le=20, alias="MAX_STORIES_PER_DAY")
+    max_stories_per_day: int = Field(
+        default=4, ge=1, le=20, alias="MAX_STORIES_PER_DAY"
+    )
     start_pub_time: str = Field(default="08:00", alias="START_PUB_TIME")
     end_pub_time: str = Field(default="20:00", alias="END_PUB_TIME")
     jitter_minutes: int = Field(default=30, ge=0, le=60, alias="JITTER_MINUTES")
@@ -213,18 +238,24 @@ class SettingsModel(BaseSettings):
     )
 
     # --- LinkedIn Post Thresholds ---
-    linkedin_post_min_chars: int = Field(default=100, ge=0, alias="LINKEDIN_POST_MIN_CHARS")
+    linkedin_post_min_chars: int = Field(
+        default=100, ge=0, alias="LINKEDIN_POST_MIN_CHARS"
+    )
     linkedin_post_optimal_chars: int = Field(
         default=1500, ge=100, alias="LINKEDIN_POST_OPTIMAL_CHARS"
     )
     linkedin_post_max_chars: int = Field(
         default=3000, ge=100, alias="LINKEDIN_POST_MAX_CHARS"
     )
-    linkedin_max_hashtags: int = Field(default=5, ge=0, le=30, alias="LINKEDIN_MAX_HASHTAGS")
+    linkedin_max_hashtags: int = Field(
+        default=5, ge=0, le=30, alias="LINKEDIN_MAX_HASHTAGS"
+    )
 
     # --- Cleanup Settings ---
     exclusion_period_days: int = Field(default=30, ge=1, alias="EXCLUSION_PERIOD_DAYS")
-    image_regen_cutoff_days: int = Field(default=14, ge=1, alias="IMAGE_REGEN_CUTOFF_DAYS")
+    image_regen_cutoff_days: int = Field(
+        default=14, ge=1, alias="IMAGE_REGEN_CUTOFF_DAYS"
+    )
 
     # --- Signature Block ---
     signature_block: str = Field(default="\n\n#News #Update", alias="SIGNATURE_BLOCK")
@@ -243,7 +274,9 @@ class SettingsModel(BaseSettings):
     # These are loaded from env vars but validated as non-empty strings
     image_refinement_prompt: str = Field(default="", alias="IMAGE_REFINEMENT_PROMPT")
     image_fallback_prompt: str = Field(default="", alias="IMAGE_FALLBACK_PROMPT")
-    search_instruction_prompt: str = Field(default="", alias="SEARCH_INSTRUCTION_PROMPT")
+    search_instruction_prompt: str = Field(
+        default="", alias="SEARCH_INSTRUCTION_PROMPT"
+    )
     verification_prompt: str = Field(default="", alias="VERIFICATION_PROMPT")
     search_distill_prompt: str = Field(default="", alias="SEARCH_DISTILL_PROMPT")
     local_llm_search_prompt: str = Field(default="", alias="LOCAL_LLM_SEARCH_PROMPT")
@@ -1227,6 +1260,16 @@ Return ONLY valid JSON, no explanation.""",
     # Maximum bonus points from calibration (prevents inflation)
     QUALITY_MAX_CALIBRATION_BONUS: int = _get_int("QUALITY_MAX_CALIBRATION_BONUS", 2)
 
+    # --- Originality Checking ---
+    # Maximum word similarity (0-1) before flagging as too similar to source
+    ORIGINALITY_MAX_SIMILARITY: float = _get_float("ORIGINALITY_MAX_SIMILARITY", 0.6)
+    # Maximum n-gram overlap (0-1) before flagging copied phrases
+    ORIGINALITY_MAX_NGRAM_OVERLAP: float = _get_float(
+        "ORIGINALITY_MAX_NGRAM_OVERLAP", 0.4
+    )
+    # Enable/disable originality checking during verification
+    ORIGINALITY_CHECK_ENABLED: bool = _get_bool("ORIGINALITY_CHECK_ENABLED", True)
+
     # --- URL Archiving ---
     # Automatically archive source URLs to Wayback Machine to prevent link rot
     ARCHIVE_SOURCE_URLS: bool = _get_bool("ARCHIVE_SOURCE_URLS", False)
@@ -1491,18 +1534,26 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         field_info = SettingsModel.model_fields["search_lookback_days"]
         ge_constraints = [m for m in field_info.metadata if isinstance(m, Ge)]
         le_constraints = [m for m in field_info.metadata if isinstance(m, Le)]
-        assert len(ge_constraints) == 1, "search_lookback_days should have ge constraint"
+        assert len(ge_constraints) == 1, (
+            "search_lookback_days should have ge constraint"
+        )
         assert ge_constraints[0].ge == 1, "search_lookback_days ge should be 1"
-        assert len(le_constraints) == 1, "search_lookback_days should have le constraint"
+        assert len(le_constraints) == 1, (
+            "search_lookback_days should have le constraint"
+        )
         assert le_constraints[0].le == 365, "search_lookback_days le should be 365"
 
         field_info = SettingsModel.model_fields["dedup_similarity_threshold"]
         ge_constraints = [m for m in field_info.metadata if isinstance(m, Ge)]
         le_constraints = [m for m in field_info.metadata if isinstance(m, Le)]
         assert len(ge_constraints) == 1, "dedup_similarity_threshold should have ge"
-        assert ge_constraints[0].ge == 0.0, "dedup_similarity_threshold ge should be 0.0"
+        assert ge_constraints[0].ge == 0.0, (
+            "dedup_similarity_threshold ge should be 0.0"
+        )
         assert len(le_constraints) == 1, "dedup_similarity_threshold should have le"
-        assert le_constraints[0].le == 1.0, "dedup_similarity_threshold le should be 1.0"
+        assert le_constraints[0].le == 1.0, (
+            "dedup_similarity_threshold le should be 1.0"
+        )
 
     def test_pydantic_time_range_validation():
         """Test that end time must be after start time (model validator)."""
@@ -1531,8 +1582,14 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     suite.add_test("Pydantic constraints", test_pydantic_settings_constraints)
     suite.add_test("Pydantic time validation", test_pydantic_settings_time_validation)
     suite.add_test("Pydantic range validation", test_pydantic_settings_range_validation)
-    suite.add_test("Pydantic time range validation", test_pydantic_time_range_validation)
-    suite.add_test("Pydantic LinkedIn thresholds", test_pydantic_linkedin_thresholds_validation)
-    suite.add_test("Pydantic HuggingFace token", test_pydantic_huggingface_token_fallback)
+    suite.add_test(
+        "Pydantic time range validation", test_pydantic_time_range_validation
+    )
+    suite.add_test(
+        "Pydantic LinkedIn thresholds", test_pydantic_linkedin_thresholds_validation
+    )
+    suite.add_test(
+        "Pydantic HuggingFace token", test_pydantic_huggingface_token_fallback
+    )
 
     return suite

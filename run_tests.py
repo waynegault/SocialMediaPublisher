@@ -27,6 +27,7 @@ TEST_MODULES = [
     ("opportunity_messages", "Opportunity Messages"),
     ("validation_server", "Validation Server"),
     ("find_leadership", "Find Leadership"),
+    ("originality_checker", "Originality Checker"),
 ]
 
 
