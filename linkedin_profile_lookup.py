@@ -601,9 +601,9 @@ class LinkedInCompanyLookup:
             logger.error(f"Error calling LinkedIn API for {vanity_name}: {e}")
             return None
 
-    def validate_linkedin_url(self, url: str) -> tuple[bool, Optional[str]]:
+    def validate_linkedin_org_url(self, url: str) -> tuple[bool, Optional[str]]:
         """
-        Validate that a LinkedIn URL is well-formed and extract the organization slug.
+        Validate that a LinkedIn company/school URL is well-formed and extract the slug.
 
         Note: LinkedIn blocks direct HTTP requests with 999 status, so we cannot
         validate by fetching the page. Instead we validate the URL format and
@@ -785,7 +785,7 @@ NOT_FOUND"""
         logger.info(f"Trying Playwright/Bing search for: {company_name}")
         url = self._search_company_playwright(company_name)
         if url:
-            is_valid, slug = self.validate_linkedin_url(url)
+            is_valid, slug = self.validate_linkedin_org_url(url)
             if is_valid:
                 elapsed = time.time() - start_time
                 self._timing_stats["company_search"].append(elapsed)
@@ -797,7 +797,7 @@ NOT_FOUND"""
             logger.info(f"Trying Playwright/Bing search with acronym: {acronym}")
             url = self._search_company_playwright(acronym)
             if url:
-                is_valid, slug = self.validate_linkedin_url(url)
+                is_valid, slug = self.validate_linkedin_org_url(url)
                 if is_valid:
                     elapsed = time.time() - start_time
                     self._timing_stats["company_search"].append(elapsed)
@@ -974,7 +974,7 @@ NOT_FOUND"""
 
             # Validate the URL if requested
             if validate:
-                is_valid, org_urn = self.validate_linkedin_url(linkedin_url)
+                is_valid, org_urn = self.validate_linkedin_org_url(linkedin_url)
                 if is_valid:
                     logger.info(
                         f"Found and validated LinkedIn page for {company_name}: {linkedin_url}"
@@ -1599,7 +1599,9 @@ NOT_FOUND"""
                     unique_urls.append(u_clean)
 
             # Track all candidates with their scores
-            candidates: List[Tuple[int, str, List[str]]] = []  # (score, url, matched_keywords)
+            candidates: List[
+                Tuple[int, str, List[str]]
+            ] = []  # (score, url, matched_keywords)
 
             # For each LinkedIn URL found, try to get context from the search result
             for linkedin_url in unique_urls[:10]:  # Check up to 10 results
@@ -1910,7 +1912,9 @@ NOT_FOUND"""
                     if vanity_match:
                         vanity = vanity_match.group(1)
                         candidate_url = f"https://www.linkedin.com/in/{vanity}"
-                        candidates.append((match_score, candidate_url, matched_keywords))
+                        candidates.append(
+                            (match_score, candidate_url, matched_keywords)
+                        )
                         logger.debug(
                             f"Candidate: {candidate_url} (score={match_score}, keywords={matched_keywords})"
                         )
@@ -1950,7 +1954,9 @@ NOT_FOUND"""
                     break
 
                 # FINAL VALIDATION: Visit the profile page and verify the name
-                if self._validate_profile_name(driver, candidate_url, first_name, last_name):
+                if self._validate_profile_name(
+                    driver, candidate_url, first_name, last_name
+                ):
                     logger.info(
                         f"Found profile via UC Chrome: {candidate_url} (score={candidate_score}, threshold={threshold})"
                     )
@@ -1961,7 +1967,9 @@ NOT_FOUND"""
                     )
 
             if candidates:
-                logger.debug(f"No valid candidate found from {len(candidates)} candidates")
+                logger.debug(
+                    f"No valid candidate found from {len(candidates)} candidates"
+                )
             else:
                 logger.debug("No matching LinkedIn profile found via UC Chrome")
 
@@ -2177,7 +2185,7 @@ NOT_FOUND"""
                 return (None, None)
 
             # Validate the URL format
-            is_valid, slug = self.validate_linkedin_url(linkedin_url)
+            is_valid, slug = self.validate_linkedin_org_url(linkedin_url)
             if is_valid:
                 elapsed = time.time() - start_time
                 self._timing_stats["department_search"].append(elapsed)
@@ -3006,34 +3014,36 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
 
     suite = TestSuite("LinkedIn Profile Lookup Tests")
 
-    def test_validate_linkedin_url_valid_company():
+    def test_validate_linkedin_org_url_valid_company():
         lookup = LinkedInCompanyLookup(genai_client=None)
-        valid, slug = lookup.validate_linkedin_url(
+        valid, slug = lookup.validate_linkedin_org_url(
             "https://www.linkedin.com/company/google"
         )
         assert valid is True
         assert slug == "google"
         lookup.close()
 
-    def test_validate_linkedin_url_valid_school():
+    def test_validate_linkedin_org_url_valid_school():
         lookup = LinkedInCompanyLookup(genai_client=None)
-        valid, slug = lookup.validate_linkedin_url(
+        valid, slug = lookup.validate_linkedin_org_url(
             "https://www.linkedin.com/school/stanford-university"
         )
         assert valid is True
         assert slug == "stanford-university"
         lookup.close()
 
-    def test_validate_linkedin_url_invalid():
+    def test_validate_linkedin_org_url_invalid():
         lookup = LinkedInCompanyLookup(genai_client=None)
-        valid, slug = lookup.validate_linkedin_url("https://example.com/not-linkedin")
+        valid, slug = lookup.validate_linkedin_org_url(
+            "https://example.com/not-linkedin"
+        )
         assert valid is False
         assert slug is None
         lookup.close()
 
-    def test_validate_linkedin_url_empty():
+    def test_validate_linkedin_org_url_empty():
         lookup = LinkedInCompanyLookup(genai_client=None)
-        valid, slug = lookup.validate_linkedin_url("")
+        valid, slug = lookup.validate_linkedin_org_url("")
         assert valid is False
         assert slug is None
         lookup.close()
@@ -3127,15 +3137,18 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
 
     suite.add_test(
         "Validate LinkedIn URL - valid company",
-        test_validate_linkedin_url_valid_company,
+        test_validate_linkedin_org_url_valid_company,
     )
     suite.add_test(
-        "Validate LinkedIn URL - valid school", test_validate_linkedin_url_valid_school
+        "Validate LinkedIn URL - valid school",
+        test_validate_linkedin_org_url_valid_school,
     )
     suite.add_test(
-        "Validate LinkedIn URL - invalid", test_validate_linkedin_url_invalid
+        "Validate LinkedIn URL - invalid", test_validate_linkedin_org_url_invalid
     )
-    suite.add_test("Validate LinkedIn URL - empty", test_validate_linkedin_url_empty)
+    suite.add_test(
+        "Validate LinkedIn URL - empty", test_validate_linkedin_org_url_empty
+    )
     suite.add_test("Generate acronym - long phrase", test_generate_acronym_long)
     suite.add_test("Generate acronym - short name", test_generate_acronym_short)
     suite.add_test("Extract company URL from text", test_extract_company_url)
