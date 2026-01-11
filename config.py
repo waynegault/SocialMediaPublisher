@@ -1083,32 +1083,51 @@ Return ONLY valid JSON, no explanation.""",
 PEOPLE TO FIND:
 {people_list}
 
-**CRITICAL: Search for PERSONAL profiles only (linkedin.com/in/...)**
-Do NOT return company pages (linkedin.com/company/...) or school pages (linkedin.com/school/...).
+STORY CONTEXT (use to help verify correct profiles):
+{story_context}
+
+**CRITICAL: HIGH PRECISION MATCHING**
+- Search for PERSONAL profiles only (linkedin.com/in/...)
+- Do NOT return company pages (linkedin.com/company/...) or school pages (linkedin.com/school/...)
+- ONLY return a profile if you are HIGHLY CONFIDENT it's the correct person
+- Better to return NO profile than the WRONG profile
 
 For each person:
-1. Search LinkedIn for their name and affiliation
+1. Search LinkedIn for their name AND organization/affiliation
 2. Look for personal profile URLs in format: linkedin.com/in/username
-3. Academic researchers, professors, postdocs often have LinkedIn profiles
-4. LinkedIn usernames may differ from real names (e.g., "sophialu1" not "sophia-lu")
+3. Verify the profile matches ALL available context:
+   - Name matches or closely matches
+   - Organization/institution matches
+   - Title/role is consistent with their position
+   - Location is consistent (if known)
+4. For academics: Look for professor, researcher, PhD, university affiliation
+5. For executives: Look for C-suite, VP, Director titles at the company
+
+**REJECTION CRITERIA - Do NOT return a profile if:**
+- The profile shows a completely DIFFERENT field (e.g., real estate agent when expecting researcher)
+- The profile shows a CONFLICTING location (e.g., profile says India when expecting USA/UK)
+- The profile shows an INCOMPATIBLE role (e.g., marketing manager when expecting engineer)
+- The name matches but organization does NOT match
+- You are uncertain whether it's the correct person
+
+**COMMON NAME HANDLING:**
+For common names (Smith, Johnson, Wang, Kim, Kumar, etc.):
+- Require MULTIPLE matching signals (name + org + role + location)
+- If only the name matches, do NOT include the profile
+- Be EXTRA cautious with common names
 
 **Search Tips:**
 - For names with parentheses like "Harry (Shih-I) Tan", try both versions
 - Include their institution/company in the search to narrow results
 - Professors and researchers are often on LinkedIn even if not obvious
 
-**Validation:**
-- The profile name should match or closely match the person's name
-- The profile should show the correct institution/affiliation
-- If a good match is found, INCLUDE it (don't be overly cautious)
-
 Return a JSON array with found profiles:
 [
-  {{"name": "Person Name", "linkedin_url": "https://www.linkedin.com/in/actualusername", "title": "Their Title", "affiliation": "Their Organization"}}
+  {{"name": "Person Name", "linkedin_url": "https://www.linkedin.com/in/actualusername", "title": "Their Title", "affiliation": "Their Organization", "confidence": "high|medium"}}
 ]
 
-Include ONLY personal profiles (linkedin.com/in/...).
-If no personal profiles found, return: []
+Include ONLY profiles where you are HIGHLY CONFIDENT it's the correct person.
+If no profiles can be confidently matched, return: []
 
 Return ONLY the JSON array, no explanation.""",
     )
@@ -1117,57 +1136,84 @@ Return ONLY the JSON array, no explanation.""",
     # Placeholders: {organization_name}
     ORG_LEADERS_PROMPT: str = _get_str(
         "ORG_LEADERS_PROMPT",
-        """Search for the CURRENT key leadership and hiring contacts at "{organization_name}".
+        """Search for CURRENT key contacts at "{organization_name}" relevant to this story context.
+
+STORY CONTEXT (use to prioritize leader types):
+Story Category: {story_category}
+Story Title: {story_title}
 
 IMPORTANT: Leadership positions change frequently. Use web search to find CURRENT information.
 Do NOT rely on potentially outdated training data.
 
 ORGANIZATION TYPE DETECTION:
-First, determine if this is a COMPANY or a UNIVERSITY/RESEARCH INSTITUTION, then search for appropriate roles.
+First, determine if this is a COMPANY or a UNIVERSITY/RESEARCH INSTITUTION.
 
-FOR COMPANIES, search for these roles (in priority order):
-1. CEO / Chief Executive Officer / Managing Director / Founder / Owner
-2. CTO / Chief Technology Officer / Chief Engineer / VP Engineering
-3. Head of HR / Talent Acquisition Director / Chief People Officer / Recruitment Manager
-4. Head of R&D / Chief Science Officer / VP Research
+LEADER TYPE PRIORITIES BY STORY CATEGORY:
 
-FOR UNIVERSITIES/RESEARCH INSTITUTIONS, search for these roles (in priority order):
-1. Department Head / Chair of Chemical Engineering (or relevant department)
-2. Head of Research Group / Lab Director / Principal Investigator (in relevant area)
-3. Dean of Engineering / Faculty Dean
-4. Recruitment/HR contact for academic positions
+FOR RESEARCH/SCIENCE/TECHNOLOGY STORIES:
+- Principal Investigator / Lead Researcher / Lab Director (HIGHEST PRIORITY)
+- Department Head / Chair of relevant department
+- CTO / Chief Science Officer / VP R&D
+- Dean of Engineering/Science (for universities)
+
+FOR BUSINESS/JOBS/HIRING STORIES:
+- Head of HR / Talent Acquisition Director / Chief People Officer (HIGHEST PRIORITY)
+- Recruitment Manager / University Careers Director
+- CEO / Managing Director (if directly quoted in story)
+
+FOR PR/ANNOUNCEMENTS/NEWS STORIES:
+- Head of Communications / PR Director / Media Relations (HIGHEST PRIORITY)
+- Corporate Communications Manager / Press Office
+- CEO / Founder (if announcement is about company direction)
+
+FOR GENERAL STORIES:
+- CEO / Managing Director / Founder (for companies)
+- Department Head / Dean (for universities)
+- CTO / VP Engineering (for tech-related)
+
+EXPANDED ROLE TYPES TO SEARCH:
+
+EXECUTIVE ROLES (C-suite):
+- CEO, CTO, CFO, COO, CSO (Chief Science Officer)
+- Managing Director, President, Founder, Owner
+- VP/SVP Engineering, Research, Technology, Operations
+
+HR/RECRUITMENT ROLES:
+- Chief People Officer, Head of HR, HR Director
+- Talent Acquisition Director/Manager, Recruiting Lead
+- University Careers/Placement Director
+
+PR/COMMUNICATIONS ROLES:
+- Chief Communications Officer, VP Communications
+- Director of Media Relations, Press Office Lead
+- Corporate Communications Manager
+
+ACADEMIC ROLES:
+- Department Chair/Head, Dean, Associate Dean
+- Principal Investigator, Lab Director
+- Director of Research, Research Group Leader
 
 SEARCH AND VERIFICATION RULES:
-1. Search for current leadership information (e.g., "{organization_name} CEO 2026" or "{organization_name} chemical engineering department head")
-2. For universities, search for department-specific contacts (e.g., "MIT chemical engineering faculty")
-3. Only include leaders you find in RECENT search results
-4. Verify the person is CURRENTLY in the role, not a predecessor
-5. If search results are ambiguous or outdated, OMIT that role
-6. When in doubt, leave the role empty — a missing leader is better than a wrong one
-7. Include their exact current title as shown in search results
-8. Maximum 4 leaders per organization
+1. Search for current information: "{organization_name} [role] 2025" or 2026
+2. For universities, search department-specific: "[university] [department] head"
+3. Only include leaders found in RECENT search results
+4. Verify the person is CURRENTLY in the role
+5. Include LOCATION if found (city, country) for LinkedIn matching
+6. When in doubt, OMIT — a missing leader is better than a wrong one
+7. Maximum 4 leaders per organization
+8. Include role_type for each leader: "executive", "academic", "hr_recruiter", "pr_comms", "researcher"
 
-BAD EXAMPLE (should NOT do):
-Organization: "BASF"
-Output: {{"name": "Martin Brudermüller", "title": "CEO"}} from memory without verification
-Reason: Leadership may have changed; must verify through current search
-
-GOOD EXAMPLE (correct approach for company):
-Organization: "BASF"
-Search finds recent news: "BASF CEO Dr. Markus Kamieth announced..."
-Output: {{"name": "Dr. Markus Kamieth", "title": "CEO", "organization": "BASF"}}
-Reason: Verified through recent search results
-
-GOOD EXAMPLE (correct approach for university):
-Organization: "MIT"
-Search finds: "Professor Paula Hammond, Head of Chemical Engineering at MIT..."
-Output: {{"name": "Prof. Paula Hammond", "title": "Head of Chemical Engineering", "organization": "MIT"}}
-Reason: Verified through recent search results
-
-Return a JSON object:
+Return a JSON object with enhanced fields:
 {{
   "leaders": [
-    {{"name": "Full Name", "title": "Exact Title", "organization": "{organization_name}"}}
+    {{
+      "name": "Full Name",
+      "title": "Exact Title",
+      "organization": "{organization_name}",
+      "role_type": "executive|academic|hr_recruiter|pr_comms|researcher",
+      "department": "Department name if applicable",
+      "location": "City, Country if found"
+    }}
   ]
 }}
 

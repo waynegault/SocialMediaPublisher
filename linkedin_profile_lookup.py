@@ -1159,6 +1159,60 @@ NOT_FOUND"""
         search_query = " ".join(parts)
         logger.debug(f"UC Chrome Bing search: {search_query}")
 
+        # Common names that require higher confidence scores
+        COMMON_NAMES = {
+            "john",
+            "james",
+            "michael",
+            "david",
+            "robert",
+            "william",
+            "richard",
+            "joseph",
+            "thomas",
+            "charles",
+            "mary",
+            "patricia",
+            "jennifer",
+            "linda",
+            "elizabeth",
+            "barbara",
+            "susan",
+            "jessica",
+            "sarah",
+            "karen",
+            "li",
+            "wang",
+            "zhang",
+            "chen",
+            "liu",
+            "yang",
+            "huang",
+            "zhao",
+            "wu",
+            "zhou",
+            "kumar",
+            "singh",
+            "sharma",
+            "patel",
+            "gupta",
+            "kim",
+            "lee",
+            "park",
+            "jung",
+            "choi",
+            "smith",
+            "johnson",
+            "williams",
+            "brown",
+            "jones",
+            "miller",
+            "davis",
+            "wilson",
+            "anderson",
+            "taylor",
+        }
+
         try:
             url = f"https://www.bing.com/search?q={search_query.replace(' ', '+')}"
             driver.get(url)
@@ -1169,6 +1223,9 @@ NOT_FOUND"""
             name_parts = name_clean.split()
             first_name = name_parts[0] if name_parts else ""
             last_name = name_parts[-1] if len(name_parts) >= 2 else ""
+
+            # Check if this is a common name (requires higher confidence)
+            is_common_name = first_name in COMMON_NAMES or last_name in COMMON_NAMES
 
             # Build context matching keywords from all available metadata
             context_keywords = set()
@@ -1478,11 +1535,34 @@ NOT_FOUND"""
                     logger.debug(f"Error processing result item: {e}")
                     continue
 
-            if best_match:
+            # HIGH PRECISION THRESHOLD: Require minimum score for confidence
+            # Score breakdown:
+            # - Org match: +2
+            # - Location match: +1
+            # - Role type match: +1
+            # - Keyword matches: +1 each
+            # Use higher threshold for common names to avoid false positives
+            MIN_CONFIDENCE_SCORE = 2
+            MIN_CONFIDENCE_SCORE_COMMON_NAME = (
+                4  # Require more signals for common names
+            )
+
+            threshold = (
+                MIN_CONFIDENCE_SCORE_COMMON_NAME
+                if is_common_name
+                else MIN_CONFIDENCE_SCORE
+            )
+
+            if best_match and best_score >= threshold:
                 logger.info(
-                    f"Found profile via UC Chrome: {best_match} (score={best_score})"
+                    f"Found profile via UC Chrome: {best_match} (score={best_score}, threshold={threshold})"
                 )
                 return best_match
+            elif best_match:
+                logger.info(
+                    f"Rejecting {'common name ' if is_common_name else ''}low-confidence match: "
+                    f"{best_match} (score={best_score} < {threshold})"
+                )
 
             logger.debug("No matching LinkedIn profile found via UC Chrome")
 
