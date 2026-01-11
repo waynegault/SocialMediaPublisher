@@ -413,6 +413,39 @@ Return ONLY valid JSON, no explanation."""
                     else:
                         logger.info(f"  ⏭ {org}: No leaders found")
 
+                # Look up LinkedIn profiles for org_leaders (same as story_people)
+                if all_leaders:
+                    people_for_lookup = [
+                        {
+                            "name": leader.get("name", ""),
+                            "title": leader.get("title", ""),
+                            "affiliation": leader.get("organization", ""),
+                        }
+                        for leader in all_leaders
+                        if leader.get("name")
+                    ]
+
+                    if people_for_lookup:
+                        linkedin_profiles = self._find_linkedin_profiles_batch(
+                            people_for_lookup
+                        )
+
+                        # Update org_leaders with found LinkedIn profiles
+                        if linkedin_profiles:
+                            profiles_by_name = {
+                                p.get("name", "").lower(): p for p in linkedin_profiles
+                            }
+                            for leader in all_leaders:
+                                name_lower = leader.get("name", "").lower()
+                                if name_lower in profiles_by_name:
+                                    profile = profiles_by_name[name_lower]
+                                    leader["linkedin_profile"] = profile.get(
+                                        "linkedin_url", ""
+                                    )
+                            logger.info(
+                                f"  ✓ Found {len(linkedin_profiles)} LinkedIn profiles for leaders"
+                            )
+
                 story.org_leaders = all_leaders
                 self.db.update_story(story)
 

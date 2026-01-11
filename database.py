@@ -447,8 +447,8 @@ class Database:
                 (title, summary, source_links, acquire_date, quality_score,
                  category, quality_justification, image_path, verification_status,
                  publish_status, hashtags, company_mention_enrichment,
-                 enrichment_status, story_people)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 enrichment_status, story_people, organizations, org_leaders)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     story.title,
@@ -465,6 +465,8 @@ class Database:
                     story.company_mention_enrichment,
                     story.enrichment_status,
                     json.dumps(story.story_people),
+                    json.dumps(story.organizations),
+                    json.dumps(story.org_leaders),
                 ),
             )
             story_id = cursor.lastrowid or 0

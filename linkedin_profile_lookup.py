@@ -809,7 +809,14 @@ NOT_FOUND"""
         return None
 
     def search_person(
-        self, name: str, company: str, position: Optional[str] = None
+        self,
+        name: str,
+        company: str,
+        position: Optional[str] = None,
+        department: Optional[str] = None,
+        location: Optional[str] = None,
+        role_type: Optional[str] = None,
+        research_area: Optional[str] = None,
     ) -> Optional[str]:
         """
         Search for an individual person's LinkedIn profile.
@@ -821,6 +828,10 @@ NOT_FOUND"""
             name: Person's name (e.g., "Suzanne Farid")
             company: Company or organization they work at (e.g., "UCL")
             position: Optional job title to help identify the right person
+            department: Optional department name (e.g., "Chemical Engineering")
+            location: Optional location (e.g., "Cambridge, MA, USA")
+            role_type: Optional role type (academic, executive, researcher, etc.)
+            research_area: Optional research field for academics
 
         Returns:
             LinkedIn profile URL if found, None otherwise
@@ -828,18 +839,40 @@ NOT_FOUND"""
         if not name or not company:
             return None
 
-        logger.info(f"Searching for person LinkedIn profile: {name} at {company}")
+        # Build enhanced context for logging
+        context_parts = [f"{name} at {company}"]
+        if position:
+            context_parts.append(f"({position})")
+        if department:
+            context_parts.append(f"in {department}")
+        if location:
+            context_parts.append(f"from {location}")
+        logger.info(f"Searching for person LinkedIn profile: {' '.join(context_parts)}")
 
         # Primary method: Playwright/Bing search with org matching
         profile_url = self._search_person_playwright(
-            name, location=None, company=company, require_org_match=True
+            name,
+            location=location,
+            company=company,
+            position=position,
+            department=department,
+            role_type=role_type,
+            research_area=research_area,
+            require_org_match=True,
         )
 
         # Fallback: Retry without org matching if needed
         if not profile_url:
             logger.info(f"Retrying search for {name} without org matching...")
             profile_url = self._search_person_playwright(
-                name, location=None, company=company, require_org_match=False
+                name,
+                location=location,
+                company=company,
+                position=position,
+                department=department,
+                role_type=role_type,
+                research_area=research_area,
+                require_org_match=False,
             )
 
         if profile_url:
@@ -847,10 +880,19 @@ NOT_FOUND"""
             return profile_url
 
         # Fallback to Gemini search (rarely works but worth trying)
-        return self._search_person_gemini(name, company, position)
+        return self._search_person_gemini(
+            name, company, position, department, location, role_type, research_area
+        )
 
     def _search_person_gemini(
-        self, name: str, company: str, position: Optional[str] = None
+        self,
+        name: str,
+        company: str,
+        position: Optional[str] = None,
+        department: Optional[str] = None,
+        location: Optional[str] = None,
+        role_type: Optional[str] = None,
+        research_area: Optional[str] = None,
     ) -> Optional[str]:
         """
         Fallback: Search for a person's LinkedIn profile using Gemini with Google Search.
@@ -860,28 +902,80 @@ NOT_FOUND"""
         if not self.client:
             return None
 
-        # Build search context
-        position_context = f", {position}" if position else ""
+        # Build rich context for better matching
+        context_lines = [f"Name: {name}", f"Company/Organization: {company}"]
+
+        if position:
+            context_lines.append(f"Position/Title: {position}")
+        if department:
+            context_lines.append(f"Department: {department}")
+        if location:
+            context_lines.append(f"Location: {location}")
+        if role_type:
+            context_lines.append(f"Role Type: {role_type}")
+        if research_area:
+            context_lines.append(f"Research Area/Field: {research_area}")
+
+        person_context = "\n".join(context_lines)
+
+        # Build role-specific matching guidance
+        matching_guidance = ""
+        if role_type == "academic":
+            matching_guidance = """
+MATCHING TIPS FOR ACADEMIC PROFILE:
+- Look for university affiliations and department matches
+- Research area/field should align with their expertise
+- Academic titles: Professor, Dr., Researcher, Postdoc, PhD
+- May list publications or research interests"""
+        elif role_type == "executive":
+            matching_guidance = """
+MATCHING TIPS FOR EXECUTIVE PROFILE:
+- Look for C-suite titles or VP/Director positions
+- Industry experience should match the company sector
+- Senior leadership roles at the mentioned organization"""
+        elif role_type == "researcher":
+            matching_guidance = """
+MATCHING TIPS FOR RESEARCHER PROFILE:
+- Look for research-focused titles and affiliations
+- Research area should match their published work
+- May be affiliated with universities, labs, or R&D divisions"""
 
         prompt = f"""Find the LinkedIn profile for this specific person:
 
-Name: {name}
-Company/Organization: {company}{position_context}
+{person_context}
 
 TASK: Search for the LinkedIn personal profile page for this individual.
 
-RULES:
+CRITICAL MATCHING RULES:
 1. Find a linkedin.com/in/username profile URL for THIS SPECIFIC PERSON
-2. The person should work at or be affiliated with {company}
-3. Do NOT return company pages (linkedin.com/company/...)
-4. Do NOT return school pages (linkedin.com/school/...)
-5. Only return a profile if you're confident it's the right person
+2. The person MUST work at or be affiliated with {company}
+3. ALL available context (position, department, location) should match
+4. Be VERY careful with common names - require multiple matching attributes
+5. Do NOT return company pages (linkedin.com/company/...)
+6. Do NOT return school pages (linkedin.com/school/...)
+7. Only return a profile if you're HIGHLY CONFIDENT it's the right person
+{matching_guidance}
+
+CONTRADICTION DETECTION - REJECT if ANY of these are true:
+- Profile shows a completely DIFFERENT field of work (e.g., real estate agent when expecting researcher)
+- Profile shows a conflicting location (e.g., India when expecting USA, unless recent move indicated)
+- Profile shows unrelated industry (e.g., hospitality, retail when expecting engineering/science)
+- Profile title/role is fundamentally incompatible (e.g., "Marketing Manager" when expecting "Professor")
+- Same name but clearly different person (different photo context, different career entirely)
+
+VERIFICATION CHECKLIST:
+- Name matches (including possible variations like Dr., Prof.)
+- Organization/company affiliation matches
+- Job title/position is consistent with the context
+- Location is consistent (if provided)
+- Department or field aligns (if provided)
+- NO contradictory information present
 
 RESPONSE FORMAT:
-If you find their LinkedIn profile, respond with ONLY the URL like:
+If you find their LinkedIn profile with HIGH CONFIDENCE, respond with ONLY the URL like:
 https://www.linkedin.com/in/username
 
-If you cannot find their personal LinkedIn profile, respond exactly:
+If you cannot find their personal LinkedIn profile OR are uncertain OR found contradictory information, respond exactly:
 NOT_FOUND"""
 
         try:
@@ -1017,6 +1111,10 @@ NOT_FOUND"""
         name: str,
         location: Optional[str] = None,
         company: Optional[str] = None,
+        position: Optional[str] = None,
+        department: Optional[str] = None,
+        role_type: Optional[str] = None,
+        research_area: Optional[str] = None,
         require_org_match: bool = True,
     ) -> Optional[str]:
         """
@@ -1026,8 +1124,12 @@ NOT_FOUND"""
 
         Args:
             name: Person's name
-            location: Optional location
+            location: Optional location (city, state, country)
             company: Optional company/organisation
+            position: Optional job title
+            department: Optional department name
+            role_type: Optional role type (academic, executive, researcher)
+            research_area: Optional research field for academics
             require_org_match: If True, only return results that match the org.
                              If False, return first result matching the name.
 
@@ -1040,12 +1142,19 @@ NOT_FOUND"""
 
         from selenium.webdriver.common.by import By
 
-        # Build search query
+        # Build enhanced search query with available context
         parts = [name]
-        if location:
-            parts.append(location)
         if company:
             parts.append(company)
+        # Add department for more specific searches (especially useful for academics)
+        if department:
+            parts.append(department)
+        # Add location for disambiguation
+        if location:
+            # Extract just city/region for search (avoid full country name)
+            location_parts = location.split(",")
+            if location_parts:
+                parts.append(location_parts[0].strip())
         parts.append("LinkedIn")
         search_query = " ".join(parts)
         logger.debug(f"UC Chrome Bing search: {search_query}")
@@ -1055,12 +1164,50 @@ NOT_FOUND"""
             driver.get(url)
             time.sleep(2)  # Wait for page to load
 
-            # Parse name for matching (first and last, ignoring middle names)
-            name_parts = name.lower().split()
+            # Parse name for matching (first and last, ignoring middle names and titles)
+            name_clean = re.sub(r"^(dr\.?|prof\.?|professor)\s+", "", name.lower())
+            name_parts = name_clean.split()
             first_name = name_parts[0] if name_parts else ""
             last_name = name_parts[-1] if len(name_parts) >= 2 else ""
 
+            # Build context matching keywords from all available metadata
+            context_keywords = set()
+            if company:
+                context_keywords.update(
+                    w.lower() for w in company.split() if len(w) > 2
+                )
+            if department:
+                context_keywords.update(
+                    w.lower() for w in department.split() if len(w) > 3
+                )
+            if position:
+                # Add significant words from position
+                context_keywords.update(
+                    w.lower() for w in position.split() if len(w) > 4
+                )
+            if research_area:
+                context_keywords.update(
+                    w.lower() for w in research_area.split() if len(w) > 3
+                )
+
+            # Remove common stopwords from context keywords
+            stopwords = {
+                "the",
+                "and",
+                "for",
+                "with",
+                "from",
+                "research",
+                "center",
+                "centre",
+                "department",
+            }
+            context_keywords -= stopwords
+
             result_items = driver.find_elements(By.CSS_SELECTOR, ".b_algo")
+            best_match = None
+            best_score = 0
+
             for item in result_items:
                 try:
                     heading = item.find_element(By.CSS_SELECTOR, "h2")
@@ -1101,29 +1248,241 @@ NOT_FOUND"""
                         ):
                             logger.debug(f"Skipping '{title[:40]}' - name mismatch")
                             continue
-
-                    # Check org match (optional based on require_org_match)
-                    if company and require_org_match:
-                        company_lower = company.lower()
-                        company_words = [w for w in company_lower.split() if len(w) > 3]
-                        org_match = any(word in result_text for word in company_words)
-                        org_match = org_match or company_lower in result_text
-
-                        if not org_match:
-                            logger.debug(f"Skipping '{title[:40]}' - org mismatch")
+                    elif first_name:
+                        # Single word name - be more careful
+                        if first_name not in result_text:
+                            logger.debug(f"Skipping '{title[:40]}' - name mismatch")
                             continue
 
-                    # Extract vanity name and return
-                    vanity_match = re.search(r"linkedin\.com/in/([\w\-]+)", decoded_url)
-                    if vanity_match:
-                        vanity = vanity_match.group(1)
-                        result_url = f"https://www.linkedin.com/in/{vanity}"
-                        logger.info(f"Found profile via UC Chrome: {result_url}")
-                        return result_url
+                    # Calculate match score based on context keywords
+                    match_score = 0
+                    matched_keywords = []
+                    for keyword in context_keywords:
+                        if keyword in result_text:
+                            match_score += 1
+                            matched_keywords.append(keyword)
+
+                    # Check org match (optional based on require_org_match)
+                    org_matched = False
+                    if company:
+                        company_lower = company.lower()
+                        company_words = [w for w in company_lower.split() if len(w) > 3]
+                        org_matched = any(word in result_text for word in company_words)
+                        org_matched = org_matched or company_lower in result_text
+
+                    if require_org_match and not org_matched:
+                        logger.debug(f"Skipping '{title[:40]}' - org mismatch")
+                        continue
+
+                    # Boost score for org match
+                    if org_matched:
+                        match_score += 2
+
+                    # Boost score for location match
+                    if location:
+                        location_lower = location.lower()
+                        location_parts = [p.strip() for p in location_lower.split(",")]
+                        if any(
+                            part in result_text
+                            for part in location_parts
+                            if len(part) > 2
+                        ):
+                            match_score += 1
+
+                    # Boost score for role-type specific matches
+                    if role_type == "academic":
+                        academic_indicators = [
+                            "professor",
+                            "researcher",
+                            "phd",
+                            "dr.",
+                            "university",
+                        ]
+                        if any(ind in result_text for ind in academic_indicators):
+                            match_score += 1
+                    elif role_type == "executive":
+                        exec_indicators = [
+                            "ceo",
+                            "cto",
+                            "cfo",
+                            "vp",
+                            "president",
+                            "director",
+                            "chief",
+                        ]
+                        if any(ind in result_text for ind in exec_indicators):
+                            match_score += 1
+
+                    # === CONTRADICTION DETECTION ===
+                    # Penalize profiles with indicators of wrong person
+                    contradiction_penalty = 0
+                    contradiction_reasons = []
+
+                    # Wrong field of work - unrelated professions
+                    if role_type == "academic":
+                        # Academic should not be primarily sales, marketing, real estate
+                        wrong_field_indicators = [
+                            "real estate agent",
+                            "realtor",
+                            "sales manager",
+                            "marketing manager",
+                            "insurance agent",
+                            "financial advisor",
+                            "fitness trainer",
+                            "hair stylist",
+                            "photographer",
+                            "life coach",
+                        ]
+                        for wrong_field in wrong_field_indicators:
+                            if wrong_field in result_text:
+                                contradiction_penalty += 3
+                                contradiction_reasons.append(
+                                    f"wrong field: {wrong_field}"
+                                )
+                    elif role_type == "executive":
+                        # Executive at company X should not show as professor
+                        if "professor" in result_text and company:
+                            company_lower = company.lower()
+                            # If they're a professor but not at expected org
+                            if not any(
+                                word in result_text
+                                for word in company_lower.split()
+                                if len(word) > 3
+                            ):
+                                contradiction_penalty += 2
+                                contradiction_reasons.append(
+                                    "professor at different org"
+                                )
+
+                    # Wrong industry indicators
+                    if department or research_area:
+                        # Engineering/science person should not be primarily in unrelated fields
+                        expected_terms = set()
+                        if department:
+                            expected_terms.update(
+                                w.lower() for w in department.split() if len(w) > 4
+                            )
+                        if research_area:
+                            expected_terms.update(
+                                w.lower() for w in research_area.split() if len(w) > 4
+                            )
+
+                        # If we expect engineering/science but find completely different industry
+                        science_expected = any(
+                            term in expected_terms
+                            for term in [
+                                "chemical",
+                                "engineering",
+                                "biology",
+                                "chemistry",
+                                "physics",
+                                "research",
+                            ]
+                        )
+                        if science_expected:
+                            unrelated_industries = [
+                                "real estate",
+                                "retail sales",
+                                "hospitality",
+                                "food service",
+                                "beauty salon",
+                            ]
+                            for industry in unrelated_industries:
+                                if industry in result_text:
+                                    contradiction_penalty += 2
+                                    contradiction_reasons.append(
+                                        f"unrelated industry: {industry}"
+                                    )
+
+                    # Location contradiction - different country/continent
+                    if location:
+                        location_lower = location.lower()
+                        # Extract expected country/region
+                        location_parts = [p.strip() for p in location_lower.split(",")]
+                        expected_country = location_parts[-1] if location_parts else ""
+
+                        # Check for conflicting country indicators
+                        country_conflicts = {
+                            "usa": [
+                                "india",
+                                "china",
+                                "brazil",
+                                "indonesia",
+                                "nigeria",
+                                "pakistan",
+                            ],
+                            "uk": [
+                                "india",
+                                "china",
+                                "brazil",
+                                "indonesia",
+                                "nigeria",
+                                "pakistan",
+                            ],
+                            "canada": [
+                                "india",
+                                "china",
+                                "brazil",
+                                "indonesia",
+                                "nigeria",
+                            ],
+                            "australia": ["india", "china", "brazil", "indonesia"],
+                            "germany": ["india", "china", "brazil", "indonesia"],
+                        }
+
+                        for expected, conflicts in country_conflicts.items():
+                            if expected in expected_country:
+                                for conflict_country in conflicts:
+                                    # Check if the snippet mentions the conflicting country prominently
+                                    if conflict_country in result_text:
+                                        # Don't penalize if expected location also appears
+                                        if not any(
+                                            part in result_text
+                                            for part in location_parts
+                                            if len(part) > 2
+                                        ):
+                                            contradiction_penalty += 2
+                                            contradiction_reasons.append(
+                                                f"location mismatch: {conflict_country}"
+                                            )
+                                            break
+
+                    # Apply contradiction penalty
+                    if contradiction_penalty > 0:
+                        match_score -= contradiction_penalty
+                        logger.debug(
+                            f"Contradiction detected for '{title[:40]}': {contradiction_reasons}, penalty={contradiction_penalty}"
+                        )
+
+                    # Skip if contradictions outweigh matches
+                    if match_score < 0:
+                        logger.debug(
+                            f"Skipping '{title[:40]}' - contradictions outweigh matches (score={match_score})"
+                        )
+                        continue
+
+                    # Track best match by score
+                    if match_score > best_score:
+                        best_score = match_score
+                        vanity_match = re.search(
+                            r"linkedin\.com/in/([\w\-]+)", decoded_url
+                        )
+                        if vanity_match:
+                            vanity = vanity_match.group(1)
+                            best_match = f"https://www.linkedin.com/in/{vanity}"
+                            logger.debug(
+                                f"New best match: {best_match} (score={match_score}, keywords={matched_keywords})"
+                            )
 
                 except Exception as e:
                     logger.debug(f"Error processing result item: {e}")
                     continue
+
+            if best_match:
+                logger.info(
+                    f"Found profile via UC Chrome: {best_match} (score={best_score})"
+                )
+                return best_match
 
             logger.debug("No matching LinkedIn profile found via UC Chrome")
 
@@ -1385,6 +1744,11 @@ NOT_FOUND"""
             name = person.get("name", "").strip()
             company = person.get("company", "").strip()
             position = person.get("position", "").strip()
+            # Extract enhanced person metadata for better matching
+            department = person.get("department", "").strip()
+            location = person.get("location", "").strip()
+            role_type = person.get("role_type", "").strip()
+            research_area = person.get("research_area", "").strip()
 
             if not company:
                 continue
@@ -1393,13 +1757,22 @@ NOT_FOUND"""
             # HIERARCHY LEVEL 1: Try to find the individual's personal profile
             # ============================================================
             if name:
-                person_cache_key = f"{name}@{company}"
+                # Include department and location in cache key for better specificity
+                person_cache_key = f"{name}@{company}|{department}|{location}"
 
                 if person_cache_key not in person_cache:
                     logger.info(
                         f"Level 1: Searching for personal profile: {name} at {company}"
                     )
-                    person_url = self.search_person(name, company, position)
+                    person_url = self.search_person(
+                        name,
+                        company,
+                        position=position or None,
+                        department=department or None,
+                        location=location or None,
+                        role_type=role_type or None,
+                        research_area=research_area or None,
+                    )
                     person_cache[person_cache_key] = person_url
                     time.sleep(delay_between_requests)
 
