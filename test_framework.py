@@ -151,18 +151,31 @@ class MockLogger:
         return any(text in m["message"] for m in self.messages)
 
 
-def run_all_suites(suites: list[TestSuite], verbose: bool = True) -> bool:
-    """Run multiple test suites and return overall success."""
+def run_all_suites(
+    suites: list[TestSuite], verbose: bool = True
+) -> tuple[bool, list[tuple[str, str]]]:
+    """Run multiple test suites and return (success, failed_tests).
+
+    Returns:
+        Tuple of (all_passed, list of (suite_name, test_name) for failures)
+    """
     all_passed = True
     total_passed = total_failed = 0
+    failed_tests: list[tuple[str, str]] = []
+
     for suite in suites:
         result = suite.run(verbose=verbose)
         total_passed += result.passed
         total_failed += result.failed
         if result.failed > 0:
             all_passed = False
+            # Collect failed test names
+            for test_result in result.results:
+                if not test_result.passed:
+                    failed_tests.append((result.suite_name, test_result.name))
+
     if verbose and len(suites) > 1:
         print(
             f"\n{'=' * 60}\n  OVERALL: {total_passed}/{total_passed + total_failed}\n{'=' * 60}\n"
         )
-    return all_passed
+    return all_passed, failed_tests

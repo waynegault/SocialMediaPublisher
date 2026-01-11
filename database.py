@@ -60,10 +60,6 @@ class Story:
     org_leaders: list[dict] = field(
         default_factory=list
     )  # [{"name": "John Doe", "title": "CEO", "organization": "BASF"}]
-    # LinkedIn handles for @ mentions (consolidated from all people)
-    linkedin_handles: list[dict] = field(
-        default_factory=list
-    )  # [{"name": "Dr. Jane Smith", "handle": "janesmith", "urn": "urn:li:person:123", "url": "https://linkedin.com/in/janesmith"}]
 
     # --- 4. IMAGE GENERATION ---
     image_path: Optional[str] = None
@@ -79,8 +75,6 @@ class Story:
     published_time: Optional[datetime] = None
     linkedin_post_id: Optional[str] = None
     linkedin_post_url: Optional[str] = None
-    # LinkedIn mentions: list of {"name": "...", "urn": "urn:li:person/organization:...", "type": "person/organization"}
-    linkedin_mentions: list[dict] = field(default_factory=list)
     # Promotional message to append to LinkedIn posts (randomly selected from promotion.json)
     promotion: Optional[str] = None
 
@@ -102,7 +96,7 @@ class Story:
     )  # DEPRECATED - use story_people
     linkedin_profiles: list[dict] = field(
         default_factory=list
-    )  # DEPRECATED - use linkedin_handles
+    )  # DEPRECATED - use relevant_people.linkedin_profile
 
     def to_dict(self) -> dict:
         """Convert story to dictionary (organized by workflow sequence)."""
@@ -126,7 +120,6 @@ class Story:
             "organizations": self.organizations,
             "story_people": self.story_people,
             "org_leaders": self.org_leaders,
-            "linkedin_handles": self.linkedin_handles,
             # 4. Image Generation
             "image_path": self.image_path,
             "image_alt_text": self.image_alt_text,
@@ -143,7 +136,6 @@ class Story:
             else None,
             "linkedin_post_id": self.linkedin_post_id,
             "linkedin_post_url": self.linkedin_post_url,
-            "linkedin_mentions": self.linkedin_mentions,
             "promotion": self.promotion,
             # 7. Analytics
             "linkedin_impressions": self.linkedin_impressions,
@@ -182,14 +174,6 @@ class Story:
             except json.JSONDecodeError:
                 hashtags = []
 
-        # Parse linkedin_mentions (JSON array of objects)
-        linkedin_mentions = []
-        if "linkedin_mentions" in keys and row["linkedin_mentions"]:
-            try:
-                linkedin_mentions = json.loads(row["linkedin_mentions"])
-            except json.JSONDecodeError:
-                linkedin_mentions = []
-
         return cls(
             id=row["id"],
             title=row["title"],
@@ -215,7 +199,6 @@ class Story:
             if "linkedin_post_url" in keys
             else None,
             hashtags=hashtags,
-            linkedin_mentions=linkedin_mentions,
             linkedin_impressions=row["linkedin_impressions"]
             if "linkedin_impressions" in keys
             else 0,
@@ -245,9 +228,6 @@ class Story:
             else [],
             org_leaders=json.loads(row["org_leaders"])
             if "org_leaders" in keys and row["org_leaders"]
-            else [],
-            linkedin_handles=json.loads(row["linkedin_handles"])
-            if "linkedin_handles" in keys and row["linkedin_handles"]
             else [],
             relevant_people=json.loads(row["relevant_people"])
             if "relevant_people" in keys and row["relevant_people"]
@@ -477,9 +457,9 @@ class Database:
                 INSERT INTO stories
                 (title, summary, source_links, acquire_date, quality_score,
                  category, quality_justification, image_path, verification_status,
-                 publish_status, hashtags, linkedin_mentions, company_mention_enrichment,
+                 publish_status, hashtags, company_mention_enrichment,
                  enrichment_status, relevant_people)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     story.title,
@@ -493,7 +473,6 @@ class Database:
                     story.verification_status,
                     story.publish_status,
                     json.dumps(story.hashtags),
-                    json.dumps(story.linkedin_mentions),
                     story.company_mention_enrichment,
                     story.enrichment_status,
                     json.dumps(story.relevant_people),
@@ -593,7 +572,6 @@ class Database:
                     linkedin_post_id = ?,
                     linkedin_post_url = ?,
                     hashtags = ?,
-                    linkedin_mentions = ?,
                     linkedin_impressions = ?,
                     linkedin_clicks = ?,
                     linkedin_likes = ?,
@@ -605,7 +583,6 @@ class Database:
                     organizations = ?,
                     story_people = ?,
                     org_leaders = ?,
-                    linkedin_handles = ?,
                     relevant_people = ?,
                     company_mention_enrichment = ?,
                     individuals = ?,
@@ -629,7 +606,6 @@ class Database:
                     story.linkedin_post_id,
                     story.linkedin_post_url,
                     json.dumps(story.hashtags),
-                    json.dumps(story.linkedin_mentions),
                     story.linkedin_impressions,
                     story.linkedin_clicks,
                     story.linkedin_likes,
@@ -641,7 +617,6 @@ class Database:
                     json.dumps(story.organizations),
                     json.dumps(story.story_people),
                     json.dumps(story.org_leaders),
-                    json.dumps(story.linkedin_handles),
                     json.dumps(story.relevant_people),
                     story.company_mention_enrichment,
                     json.dumps(story.individuals),

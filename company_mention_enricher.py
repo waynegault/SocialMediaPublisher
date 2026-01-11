@@ -14,6 +14,7 @@ from openai import OpenAI
 import requests
 import re
 
+from api_client import api_client
 from config import Config
 from database import Database, Story
 
@@ -48,7 +49,14 @@ def validate_linkedin_url(url: str) -> bool:
             "Accept-Language": "en-US,en;q=0.5",
         }
 
-        response = requests.head(url, headers=headers, timeout=10, allow_redirects=True)
+        response = api_client.http_request(
+            method="HEAD",
+            url=url,
+            headers=headers,
+            timeout=10,
+            allow_redirects=True,
+            endpoint="linkedin_profile_validate",
+        )
 
         # Check if we got a successful response
         if response.status_code == 200:
@@ -61,8 +69,13 @@ def validate_linkedin_url(url: str) -> bool:
 
         # 405 Method Not Allowed - try GET instead
         if response.status_code == 405:
-            response = requests.get(
-                url, headers=headers, timeout=10, allow_redirects=True
+            response = api_client.http_request(
+                method="GET",
+                url=url,
+                headers=headers,
+                timeout=10,
+                allow_redirects=True,
+                endpoint="linkedin_profile_validate",
             )
             if response.status_code == 200:
                 # Check we're still on a profile page
@@ -143,14 +156,14 @@ class CompanyMentionEnricher:
                     ]
 
                     if people_for_lookup:
-                        linkedin_handles = self._find_linkedin_profiles_batch(
+                        linkedin_profiles = self._find_linkedin_profiles_batch(
                             people_for_lookup
                         )
 
                         # Update relevant_people with found LinkedIn profiles
-                        if linkedin_handles:
+                        if linkedin_profiles:
                             profiles_by_name = {
-                                h.get("name", "").lower(): h for h in linkedin_handles
+                                h.get("name", "").lower(): h for h in linkedin_profiles
                             }
                             updated_people = []
                             for person in story.relevant_people:
@@ -163,13 +176,12 @@ class CompanyMentionEnricher:
                                 updated_people.append(person)
                             story.relevant_people = updated_people
 
-                        story.linkedin_handles = linkedin_handles
                         logger.info(
-                            f"  ✓ Found {len(linkedin_handles)} LinkedIn profiles"
+                            f"  ✓ Found {len(linkedin_profiles)} LinkedIn profiles"
                         )
-                        for handle in linkedin_handles:
+                        for profile in linkedin_profiles:
                             logger.info(
-                                f"    → {handle.get('name', '')}: {handle.get('linkedin_url', '')}"
+                                f"    → {profile.get('name', '')}: {profile.get('linkedin_url', '')}"
                             )
 
                     # Also populate organizations from relevant_people companies
@@ -239,7 +251,102 @@ class CompanyMentionEnricher:
         return (enriched, skipped)
 
     def _extract_orgs_and_people(self, story: Story) -> dict | None:
-        """Extract organizations and people from a story using AI."""
+        """Extract organizations and people from a story using AI with Google Search grounding.
+
+        Uses Google Search to fetch the actual source article content for more thorough
+        extraction of people mentioned in the story.
+        """
+        sources_str = (
+            ", ".join(story.source_links[:5])
+            if story.source_links
+            else "No sources provided"
+        )
+
+        # Build a prompt that instructs the AI to search the source URL for people
+        search_prompt = f"""Find all people mentioned in this news story by searching the source URL.
+
+STORY TITLE: {story.title}
+
+STORY SUMMARY: {story.summary}
+
+SOURCE URL TO SEARCH: {sources_str}
+
+TASK: Search the source URL and extract:
+1. All researchers, scientists, professors named in the article
+2. Any executives, leaders, or spokespersons quoted
+3. Authors of the study if it's research
+4. Anyone receiving awards or honors
+
+Look for:
+- Names in quotes (people who said something)
+- Names linked to profile pages
+- Names in bylines or "about the author" sections
+- Names in research paper citations
+- "Senior author", "lead researcher", "principal investigator" mentions
+
+Return a JSON object:
+{{
+  "organizations": ["Org Name 1", "Org Name 2"],
+  "story_people": [
+    {{"name": "Full Name", "title": "Their Title/Role", "affiliation": "Their Institution"}}
+  ]
+}}
+
+If nothing found, return: {{"organizations": [], "story_people": []}}
+
+Return ONLY valid JSON, no explanation."""
+
+        try:
+            # Use Gemini with Google Search grounding to fetch source content
+            response = api_client.gemini_generate(
+                client=self.client,
+                model=Config.MODEL_TEXT,
+                contents=search_prompt,
+                config={
+                    "tools": [{"google_search": {}}],
+                    "max_output_tokens": 2000,
+                },
+                endpoint="source_extraction",
+            )
+
+            if not response.text:
+                logger.warning("Empty response from source article extraction")
+                # Fall back to non-grounded extraction
+                return self._extract_orgs_and_people_fallback(story)
+
+            response_text = response.text.strip()
+
+            # Clean up response - sometimes AI adds markdown code blocks
+            if response_text.startswith("```"):
+                response_text = re.sub(r"^```\w*\n?", "", response_text)
+                response_text = re.sub(r"\n?```$", "", response_text)
+
+            data = json.loads(response_text)
+            orgs = data.get("organizations", [])
+            people = data.get("story_people", [])
+
+            logger.info(
+                f"  Extracted from source: {len(orgs)} orgs, {len(people)} people"
+            )
+            for person in people:
+                logger.info(
+                    f"    → {person.get('name', 'Unknown')} ({person.get('title', '')})"
+                )
+
+            return {
+                "organizations": orgs,
+                "story_people": people,
+            }
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse enrichment JSON: {e}")
+            return self._extract_orgs_and_people_fallback(story)
+        except Exception as e:
+            logger.error(f"Error extracting orgs/people with search: {e}")
+            return self._extract_orgs_and_people_fallback(story)
+
+    def _extract_orgs_and_people_fallback(self, story: Story) -> dict | None:
+        """Fallback extraction without Google Search (uses only summary text)."""
         sources_str = (
             ", ".join(story.source_links[:5])
             if story.source_links
@@ -269,10 +376,10 @@ class CompanyMentionEnricher:
             }
 
         except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse enrichment JSON: {e}")
+            logger.warning(f"Failed to parse enrichment JSON (fallback): {e}")
             return None
         except Exception as e:
-            logger.error(f"Error extracting orgs/people: {e}")
+            logger.error(f"Error extracting orgs/people (fallback): {e}")
             return None
 
     def find_org_leaders(self) -> tuple[int, int]:
@@ -369,82 +476,6 @@ class CompanyMentionEnricher:
                 stories.append(Story.from_row(row))
         return stories
 
-    def find_linkedin_handles(self) -> tuple[int, int]:
-        """
-        Find LinkedIn handles for all people (story_people + org_leaders).
-        Returns tuple of (enriched_count, skipped_count).
-        """
-        # Get stories that have people but no linkedin_handles yet
-        stories = self._get_stories_needing_linkedin_handles()
-
-        if not stories:
-            logger.info("No stories need LinkedIn handle enrichment")
-            return (0, 0)
-
-        total = len(stories)
-        logger.info(f"Finding LinkedIn handles for {total} stories...")
-
-        enriched = 0
-        skipped = 0
-
-        for i, story in enumerate(stories, 1):
-            try:
-                logger.info(
-                    f"[{i}/{total}] Finding LinkedIn handles for: {story.title}"
-                )
-
-                # Combine all people
-                all_people = []
-                for person in story.story_people:
-                    all_people.append(
-                        {
-                            "name": person.get("name", ""),
-                            "title": person.get("title", ""),
-                            "affiliation": person.get("affiliation", ""),
-                        }
-                    )
-                for leader in story.org_leaders:
-                    all_people.append(
-                        {
-                            "name": leader.get("name", ""),
-                            "title": leader.get("title", ""),
-                            "affiliation": leader.get("organization", ""),
-                        }
-                    )
-
-                # Use batch search with Google Search grounding
-                linkedin_handles = self._find_linkedin_profiles_batch(all_people)
-                for handle in linkedin_handles:
-                    name = handle.get("name", "Unknown")
-                    url = handle.get("linkedin_url", "")
-                    if url:
-                        logger.info(f"    → {name}: {url}")
-
-                story.linkedin_handles = linkedin_handles
-                self.db.update_story(story)
-
-                if linkedin_handles:
-                    logger.info(f"  ✓ Found {len(linkedin_handles)} LinkedIn handles")
-                    enriched += 1
-                else:
-                    logger.info("  ⏭ No LinkedIn handles found")
-                    skipped += 1
-
-            except KeyboardInterrupt:
-                logger.warning(
-                    f"\nLinkedIn enrichment interrupted at story {i}/{total}"
-                )
-                break
-            except Exception as e:
-                logger.error(f"  ! Error: {e}")
-                skipped += 1
-                continue
-
-        logger.info(
-            f"LinkedIn enrichment complete: {enriched} enriched, {skipped} skipped"
-        )
-        return (enriched, skipped)
-
     def _find_linkedin_profiles_batch(self, people: list[dict]) -> list[dict]:
         """
         Search for LinkedIn profiles for a batch of people using Gemini with Google Search.
@@ -482,13 +513,15 @@ class CompanyMentionEnricher:
 
         try:
             # Use Gemini with Google Search grounding to find real profiles
-            response = self.client.models.generate_content(
+            response = api_client.gemini_generate(
+                client=self.client,
                 model=Config.MODEL_TEXT,
                 contents=prompt,
                 config={
                     "tools": [{"google_search": {}}],
                     "max_output_tokens": 2000,
                 },
+                endpoint="linkedin_profile_search",
             )
 
             if not response.text:
@@ -548,23 +581,366 @@ class CompanyMentionEnricher:
             logger.error(f"Error finding LinkedIn profiles: {e}")
             return []
 
-    def _get_stories_needing_linkedin_handles(self) -> list[Story]:
-        """Get stories with people but no linkedin_handles yet."""
+    def populate_linkedin_mentions(self) -> tuple[int, int]:
+        """
+        Look up and store URNs directly in relevant_people.linkedin_urn.
+
+        This streamlined approach stores URNs within relevant_people rather
+        than duplicating data in a separate linkedin_mentions column.
+
+        Returns tuple of (enriched_count, skipped_count).
+        """
+        from linkedin_profile_lookup import LinkedInCompanyLookup
+
+        # Get stories that have profiles but no URNs
+        stories = self._get_stories_needing_urns()
+
+        if not stories:
+            logger.info("No stories need LinkedIn URN lookup")
+            return (0, 0)
+
+        total = len(stories)
+        logger.info(f"Looking up LinkedIn URNs for {total} stories...")
+
+        enriched = 0
+        skipped = 0
+
+        # Use a single browser session for efficiency
+        with LinkedInCompanyLookup(genai_client=self.client) as lookup:
+            for i, story in enumerate(stories, 1):
+                try:
+                    logger.info(f"[{i}/{total}] Looking up URNs for: {story.title}")
+
+                    if not story.relevant_people:
+                        logger.info("  ⏭ No relevant people")
+                        skipped += 1
+                        continue
+
+                    # Find people needing URN lookup:
+                    # 1. Has personal profile URL but no URN
+                    # 2. Has organization profile (wrong type - needs personal profile search)
+                    people_needing_lookup = []
+                    for p in story.relevant_people:
+                        profile = p.get("linkedin_profile", "")
+                        urn = p.get("linkedin_urn", "")
+                        profile_type = p.get("linkedin_profile_type", "")
+
+                        # Has personal profile but no URN
+                        if profile and "/in/" in profile and not urn:
+                            people_needing_lookup.append(
+                                {"person": p, "needs_search": False}
+                            )
+                        # Has organization profile - needs personal profile search
+                        elif (
+                            profile_type == "organization"
+                            or "urn:li:organization:" in str(urn)
+                        ):
+                            people_needing_lookup.append(
+                                {"person": p, "needs_search": True}
+                            )
+
+                    if not people_needing_lookup:
+                        logger.info("  ⏭ All people already have personal URNs")
+                        skipped += 1
+                        continue
+
+                    logger.info(
+                        f"  Found {len(people_needing_lookup)} people to lookup"
+                    )
+
+                    urns_found = 0
+                    for item in people_needing_lookup:
+                        person = item["person"]
+                        needs_search = item["needs_search"]
+                        name = person.get("name", "Unknown")
+                        company = person.get("company", "")
+                        position = person.get("position", "")
+
+                        import time
+
+                        if needs_search:
+                            # Search for personal profile using Google Search
+                            logger.info(
+                                f"    🔍 Searching for personal profile: {name}"
+                            )
+                            personal_url = self._search_personal_linkedin(
+                                lookup, name, company, position
+                            )
+                            if personal_url:
+                                # Update to personal profile
+                                person["linkedin_profile"] = personal_url
+                                person["linkedin_profile_type"] = "personal"
+                                # Clear wrong org URN
+                                person["linkedin_urn"] = None
+                                person.pop("linkedin_slug", None)
+                                logger.info(
+                                    f"    ✓ Found personal profile: {personal_url}"
+                                )
+                                # Now look up the URN
+                                urn = lookup.lookup_person_urn(personal_url)
+                                if urn:
+                                    person["linkedin_urn"] = urn
+                                    urns_found += 1
+                                    logger.info(f"    ✓ {name}: {urn}")
+                                time.sleep(2.0)
+                            else:
+                                logger.info(f"    ✗ {name}: No personal profile found")
+                        else:
+                            # Already has personal profile URL, just look up URN
+                            url = person.get("linkedin_profile", "")
+                            urn = lookup.lookup_person_urn(url)
+                            if urn:
+                                person["linkedin_urn"] = urn
+                                urns_found += 1
+                                logger.info(f"    ✓ {name}: {urn}")
+                            else:
+                                # Profile URL might be invalid/removed - search for new one
+                                logger.info(
+                                    f"    ⚠ {name}: Existing profile invalid, searching..."
+                                )
+                                personal_url = self._search_personal_linkedin(
+                                    lookup, name, company, position
+                                )
+                                if personal_url:
+                                    person["linkedin_profile"] = personal_url
+                                    logger.info(
+                                        f"    ✓ Found new profile: {personal_url}"
+                                    )
+                                    urn = lookup.lookup_person_urn(personal_url)
+                                    if urn:
+                                        person["linkedin_urn"] = urn
+                                        urns_found += 1
+                                        logger.info(f"    ✓ {name}: {urn}")
+                                    time.sleep(2.0)
+                                else:
+                                    logger.info(f"    ✗ {name}: No URN found")
+                            time.sleep(2.0)
+
+                    # Save updated relevant_people
+                    self.db.update_story(story)
+
+                    if urns_found > 0:
+                        logger.info(
+                            f"  ✓ Updated {urns_found}/{len(people_needing_lookup)} URNs"
+                        )
+                        enriched += 1
+                    else:
+                        logger.info("  ⏭ No URNs found")
+                        skipped += 1
+
+                except KeyboardInterrupt:
+                    logger.warning(f"\nURN lookup interrupted at story {i}/{total}")
+                    break
+                except Exception as e:
+                    logger.error(f"  ! Error: {e}")
+                    skipped += 1
+                    continue
+
+        logger.info(f"URN lookup complete: {enriched} enriched, {skipped} skipped")
+        return (enriched, skipped)
+
+    def _search_personal_linkedin(
+        self, lookup, name: str, company: str, position: str
+    ) -> str | None:
+        """Search for a person's personal LinkedIn profile URL using browser-based Google Search."""
+        import re as regex
+        import urllib.parse
+
+        # Get browser driver from lookup
+        driver = lookup._get_uc_driver()
+        if not driver:
+            logger.warning("Cannot search for LinkedIn - browser driver not available")
+            return None
+
+        # Clean name - remove parentheses for cleaner search
+        clean_name = regex.sub(r"\([^)]*\)", "", name).strip()
+
+        # Also extract the part in parentheses if present (e.g., "Harry (Shih-I) Tan" -> "Shih-I Tan")
+        alt_name = None
+        paren_match = regex.search(r"\(([^)]+)\)", name)
+        if paren_match:
+            parts = name.split()
+            if len(parts) > 1:
+                last_name = parts[-1]
+                alt_name = f"{paren_match.group(1)} {last_name}"
+
+        # Extract location hint from company name
+        location = self._extract_location_hint(company)
+
+        # Build search query - use location context for better results
+        if location:
+            query = f'"{clean_name}" {location} site:linkedin.com/in'
+        else:
+            query = f'"{clean_name}" "{company}" site:linkedin.com/in'
+
+        search_url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+
+        try:
+            logger.debug(f"Searching Google: {query}")
+            driver.get(search_url)
+            time.sleep(2)
+
+            # Extract LinkedIn URLs from search results
+            page_source = driver.page_source
+            urls = regex.findall(
+                r"https://www\.linkedin\.com/in/[\w\-]+/?", page_source
+            )
+
+            # Deduplicate
+            seen = set()
+            unique_urls = []
+            for url in urls:
+                url_clean = url.rstrip("/")
+                if url_clean not in seen:
+                    seen.add(url_clean)
+                    unique_urls.append(url_clean)
+
+            if unique_urls:
+                # Return first result
+                url = unique_urls[0]
+                logger.debug(f"Found LinkedIn URL: {url}")
+                return url
+
+            # Try alternate search with alt_name if first search failed
+            if alt_name:
+                if location:
+                    query2 = f'"{alt_name}" {location} site:linkedin.com/in'
+                else:
+                    query2 = f'"{alt_name}" "{company}" site:linkedin.com/in'
+
+                search_url2 = (
+                    f"https://www.google.com/search?q={urllib.parse.quote(query2)}"
+                )
+                logger.debug(f"Retry search: {query2}")
+                driver.get(search_url2)
+                time.sleep(2)
+
+                page_source = driver.page_source
+                urls = regex.findall(
+                    r"https://www\.linkedin\.com/in/[\w\-]+/?", page_source
+                )
+                for url in urls:
+                    url_clean = url.rstrip("/")
+                    if url_clean not in seen:
+                        logger.debug(f"Found LinkedIn URL (alt): {url_clean}")
+                        return url_clean
+
+            # Try with position as last resort
+            if position:
+                query3 = f'"{clean_name}" {position} site:linkedin.com/in'
+                search_url3 = (
+                    f"https://www.google.com/search?q={urllib.parse.quote(query3)}"
+                )
+                logger.debug(f"Retry with position: {query3}")
+                driver.get(search_url3)
+                time.sleep(2)
+
+                page_source = driver.page_source
+                urls = regex.findall(
+                    r"https://www\.linkedin\.com/in/[\w\-]+/?", page_source
+                )
+                for url in urls:
+                    url_clean = url.rstrip("/")
+                    if url_clean not in seen:
+                        logger.debug(f"Found LinkedIn URL (position): {url_clean}")
+                        return url_clean
+
+            logger.debug(f"No LinkedIn profile found for {name}")
+            return None
+
+        except Exception as e:
+            logger.warning(f"Error searching for personal LinkedIn: {e}")
+            return None
+
+    def _extract_location_hint(self, company: str) -> str:
+        """Extract a location hint from the company/institution name."""
+        location_hints = {
+            "Toronto": "Toronto",
+            "Stanford": "Stanford",
+            "MIT": "Massachusetts",
+            "Harvard": "Boston",
+            "Berkeley": "Berkeley",
+            "UCLA": "Los Angeles",
+            "UIUC": "Urbana",
+            "Illinois Urbana-Champaign": "Urbana",
+            "Urbana-Champaign": "Urbana",
+            "Northwestern": "Evanston",
+            "Michigan": "Ann Arbor",
+            "Penn State": "Pennsylvania",
+            "Waterloo": "Waterloo",
+            "UBC": "Vancouver",
+            "McGill": "Montreal",
+            "Caltech": "Pasadena",
+            "Princeton": "Princeton",
+            "Yale": "New Haven",
+            "Columbia": "New York",
+            "Cornell": "Ithaca",
+            "Duke": "Durham",
+            "Rice": "Houston",
+            "Georgia Tech": "Atlanta",
+            "Carnegie Mellon": "Pittsburgh",
+            "CMU": "Pittsburgh",
+            "Wisconsin": "Madison",
+            "Washington": "Seattle",
+            "UW": "Seattle",
+            "Texas": "Austin",
+            "UT Austin": "Austin",
+            "Chicago": "Chicago",
+            "Oxford": "Oxford",
+            "Cambridge": "Cambridge",
+            "ETH": "Zurich",
+            "EPFL": "Lausanne",
+            "Imperial": "London",
+            "UCL": "London",
+        }
+        for key, location in location_hints.items():
+            if key.lower() in company.lower():
+                return location
+        return ""
+
+    def _get_stories_needing_urns(self) -> list[Story]:
+        """Get stories with people needing personal LinkedIn URNs.
+
+        Includes people who:
+        1. Have linkedin_profile but no linkedin_urn
+        2. Have organization URN instead of personal URN (wrong type)
+        """
         stories = []
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
+            # Stories with relevant_people containing linkedin_profile
             cursor.execute("""
                 SELECT * FROM stories
-                WHERE enrichment_status = 'enriched'
-                AND (
-                    (story_people IS NOT NULL AND story_people != '[]')
-                    OR (org_leaders IS NOT NULL AND org_leaders != '[]')
-                )
-                AND (linkedin_handles IS NULL OR linkedin_handles = '[]')
+                WHERE relevant_people IS NOT NULL
+                AND relevant_people LIKE '%linkedin_profile%'
                 ORDER BY id DESC
             """)
             for row in cursor.fetchall():
-                stories.append(Story.from_row(row))
+                story = Story.from_row(row)
+                if story.relevant_people:
+                    needs_lookup = False
+                    for p in story.relevant_people:
+                        has_profile = bool(p.get("linkedin_profile"))
+                        has_urn = bool(p.get("linkedin_urn"))
+                        profile_type = p.get("linkedin_profile_type", "")
+                        urn = p.get("linkedin_urn", "")
+
+                        # Need lookup if: has personal profile URL but no URN
+                        if (
+                            has_profile
+                            and "/in/" in p.get("linkedin_profile", "")
+                            and not has_urn
+                        ):
+                            needs_lookup = True
+                            break
+                        # Or if: has organization URN (wrong - person needs personal URN)
+                        if profile_type == "organization" or (
+                            has_urn and "urn:li:organization:" in str(urn)
+                        ):
+                            needs_lookup = True
+                            break
+                    if needs_lookup:
+                        stories.append(story)
         return stories
 
     # =========================================================================
@@ -750,8 +1126,11 @@ class CompanyMentionEnricher:
                 logger.warning(f"Local AI failed: {e}. Falling back to Gemini.")
 
         # Fallback to Gemini
-        response = self.client.models.generate_content(
-            model=Config.MODEL_TEXT, contents=prompt
+        response = api_client.gemini_generate(
+            client=self.client,
+            model=Config.MODEL_TEXT,
+            contents=prompt,
+            endpoint="ai_response",
         )
         return response.text.strip() if response.text else None
 
@@ -842,8 +1221,11 @@ class CompanyMentionEnricher:
                 logger.warning(f"Local enrichment failed: {e}. Falling back to Gemini.")
 
         # Fallback to Gemini
-        response = self.client.models.generate_content(
-            model=Config.MODEL_TEXT, contents=prompt
+        response = api_client.gemini_generate(
+            client=self.client,
+            model=Config.MODEL_TEXT,
+            contents=prompt,
+            endpoint="company_mention",
         )
         if not response.text:
             logger.warning("Empty response from Gemini during enrichment")
@@ -988,11 +1370,13 @@ class CompanyMentionEnricher:
                 continue
             params = {"q": "vanityName", "vanityName": candidate}
             try:
-                resp = requests.get(
-                    "https://api.linkedin.com/v2/organizations",
+                resp = api_client.linkedin_request(
+                    method="GET",
+                    url="https://api.linkedin.com/v2/organizations",
                     headers=headers,
                     params=params,
                     timeout=10,
+                    endpoint="org_lookup",
                 )
             except requests.RequestException:
                 continue
@@ -1087,14 +1471,13 @@ class CompanyMentionEnricher:
             )
             with_people = cursor.fetchone()[0]
 
-            # Count stories with LinkedIn handles
+            # Count stories with LinkedIn URNs in relevant_people
             cursor.execute(
                 """SELECT COUNT(*) FROM stories
                    WHERE enrichment_status = 'enriched'
-                   AND linkedin_handles IS NOT NULL
-                   AND linkedin_handles != '[]'"""
+                   AND relevant_people LIKE '%linkedin_urn%'"""
             )
-            with_handles = cursor.fetchone()[0]
+            with_urns = cursor.fetchone()[0]
 
             # Count pending
             cursor.execute(
@@ -1107,7 +1490,7 @@ class CompanyMentionEnricher:
             "total_enriched": total_enriched,
             "with_orgs": with_orgs,
             "with_people": with_people,
-            "with_handles": with_handles,
+            "with_urns": with_urns,
             # Legacy fields for backward compatibility
             "with_mentions": with_orgs,
             "no_mentions": total_enriched - with_orgs,

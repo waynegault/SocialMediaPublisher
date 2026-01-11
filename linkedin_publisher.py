@@ -10,6 +10,7 @@ from urllib.parse import quote
 from config import Config
 from database import Database, Story
 from opportunity_messages import get_random_opportunity_message
+from api_client import api_client
 
 logger = logging.getLogger(__name__)
 
@@ -132,11 +133,13 @@ class LinkedInPublisher:
                 }
             }
 
-            response = requests.post(
-                self.UPLOAD_URL,
+            response = api_client.linkedin_request(
+                method="POST",
+                url=self.UPLOAD_URL,
                 headers=self._get_headers(),
                 json=register_payload,
                 timeout=30,
+                endpoint="upload_register",
             )
 
             if response.status_code != 200:
@@ -158,6 +161,7 @@ class LinkedInPublisher:
                 "Content-Type": "application/octet-stream",
             }
 
+            # Note: Using requests directly for binary upload (api_client handles JSON)
             upload_response = requests.put(
                 upload_url,
                 headers=upload_headers,
@@ -191,11 +195,13 @@ class LinkedInPublisher:
             payload = self._build_article_post_payload(post_text, story)
 
         try:
-            response = requests.post(
-                f"{self.BASE_URL}/ugcPosts",
+            response = api_client.linkedin_request(
+                method="POST",
+                url=f"{self.BASE_URL}/ugcPosts",
                 headers=self._get_headers(),
                 json=payload,
                 timeout=30,
+                endpoint="create_post",
             )
 
             if response.status_code == 201:
@@ -223,9 +229,10 @@ class LinkedInPublisher:
                 text_parts.append(f"• {source}")
             text_parts.append("")
 
-        # Add LinkedIn mentions (companies/people related to the story)
-        if story.linkedin_mentions:
-            mentions_text = self._format_mentions(story.linkedin_mentions)
+        # Add LinkedIn mentions from relevant_people (people with URNs)
+        mentions = self._get_mentions_from_relevant_people(story)
+        if mentions:
+            mentions_text = self._format_mentions(mentions)
             if mentions_text:
                 text_parts.append(mentions_text)
                 text_parts.append("")
@@ -247,6 +254,27 @@ class LinkedInPublisher:
             text_parts.append(opportunity_msg)
 
         return "\n".join(text_parts)
+
+    def _get_mentions_from_relevant_people(self, story: Story) -> list[dict]:
+        """
+        Generate mentions list from relevant_people with linkedin_urn.
+
+        This provides backward compatibility by generating the mentions format
+        that _format_mentions expects, but from the streamlined relevant_people data.
+        """
+        mentions = []
+        if story.relevant_people:
+            for person in story.relevant_people:
+                if person.get("linkedin_urn") or person.get("linkedin_profile"):
+                    mentions.append(
+                        {
+                            "name": person.get("name", ""),
+                            "urn": person.get("linkedin_urn", ""),
+                            "type": "person",
+                            "linkedin_url": person.get("linkedin_profile", ""),
+                        }
+                    )
+        return mentions
 
     def _format_mentions(self, mentions: list[dict]) -> str:
         """
@@ -376,11 +404,13 @@ class LinkedInPublisher:
             }
 
         try:
-            response = requests.post(
-                f"{self.BASE_URL}/ugcPosts",
+            response = api_client.linkedin_request(
+                method="POST",
+                url=f"{self.BASE_URL}/ugcPosts",
                 headers=self._get_headers(),
                 json=payload,
                 timeout=30,
+                endpoint="oneoff_post",
             )
 
             if response.status_code in (200, 201):
@@ -403,15 +433,135 @@ class LinkedInPublisher:
             return False
 
         try:
-            response = requests.get(
-                f"{self.BASE_URL}/userinfo",
+            response = api_client.linkedin_request(
+                method="GET",
+                url=f"{self.BASE_URL}/userinfo",
                 headers=self._get_headers(),
                 timeout=10,
+                endpoint="test_connection",
             )
             return response.status_code == 200
         except Exception as e:
             logger.error(f"LinkedIn connection test failed: {e}")
             return False
+
+    def send_connection_request(
+        self, person_urn: str, message: str | None = None
+    ) -> tuple[bool, str]:
+        """
+        Send a LinkedIn connection request (invitation) to a person.
+
+        Uses the LinkedIn Invitations API: POST /v2/invitations
+
+        Args:
+            person_urn: The URN of the person to connect with (e.g., 'urn:li:person:ABC123')
+            message: Optional custom message for the invitation (max 300 chars).
+                    If None, LinkedIn's default message is used.
+
+        Returns:
+            Tuple of (success: bool, message: str describing result)
+        """
+        if not Config.LINKEDIN_ACCESS_TOKEN:
+            return (False, "LinkedIn access token not configured")
+
+        if not person_urn or not person_urn.startswith("urn:li:person:"):
+            return (False, f"Invalid person URN: {person_urn}")
+
+        # Build invitation payload
+        payload: dict = {"invitee": person_urn}
+
+        # Add custom message if provided
+        if message:
+            # LinkedIn limits invitation messages to 300 characters
+            truncated_message = message[:300] if len(message) > 300 else message
+            payload["message"] = {
+                "com.linkedin.invitations.InvitationMessage": {
+                    "body": truncated_message
+                }
+            }
+
+        try:
+            response = api_client.linkedin_request(
+                method="POST",
+                url=f"{self.BASE_URL}/invitations",
+                headers=self._get_headers(),
+                json=payload,
+                timeout=30,
+                endpoint="invitation",
+            )
+
+            if response.status_code in (200, 201):
+                invitation_id = response.headers.get("x-linkedin-id", "")
+                logger.info(f"Connection request sent to {person_urn}: {invitation_id}")
+                return (True, f"Invitation sent: {invitation_id}")
+            elif response.status_code == 422:
+                # Usually means already connected or pending invitation
+                return (False, "Already connected or invitation pending")
+            else:
+                error_msg = f"Failed ({response.status_code}): {response.text[:200]}"
+                logger.warning(
+                    f"Connection request failed for {person_urn}: {error_msg}"
+                )
+                return (False, error_msg)
+
+        except requests.exceptions.Timeout:
+            return (False, "Request timed out")
+        except Exception as e:
+            logger.error(f"Connection request exception for {person_urn}: {e}")
+            return (False, f"Exception: {str(e)}")
+
+    def send_bulk_connection_requests(
+        self, people: list[dict], delay_seconds: float = 2.0
+    ) -> tuple[int, int, list[str]]:
+        """
+        Send connection requests to multiple people with rate limiting.
+
+        Args:
+            people: List of dicts with 'name', 'linkedin_urn', and optionally 'company'
+            delay_seconds: Delay between requests to avoid rate limiting
+
+        Returns:
+            Tuple of (success_count, failure_count, list of error messages)
+        """
+        import time
+
+        success_count = 0
+        failure_count = 0
+        errors: list[str] = []
+
+        for i, person in enumerate(people):
+            name = person.get("name", "Unknown")
+            urn = person.get("linkedin_urn", "")
+            company = person.get("company", "")
+
+            if not urn or not urn.startswith("urn:li:person:"):
+                errors.append(f"{name}: Invalid or missing URN")
+                failure_count += 1
+                continue
+
+            # Personalized message mentioning the company context
+            message = None
+            if company:
+                message = (
+                    f"Hi! I noticed your work at {company} and would love to connect. "
+                    f"I'm a chemical engineer interested in process engineering opportunities."
+                )
+
+            success, result_msg = self.send_connection_request(urn, message)
+
+            if success:
+                success_count += 1
+                logger.info(f"[{i + 1}/{len(people)}] Connected: {name}")
+            else:
+                failure_count += 1
+                errors.append(f"{name}: {result_msg}")
+                logger.warning(f"[{i + 1}/{len(people)}] Failed: {name} - {result_msg}")
+
+            # Rate limiting delay between requests
+            if i < len(people) - 1:
+                time.sleep(delay_seconds)
+
+        return (success_count, failure_count, errors)
 
     def get_profile_info(self) -> dict | None:
         """Get the authenticated user's profile info."""
@@ -419,10 +569,12 @@ class LinkedInPublisher:
             return None
 
         try:
-            response = requests.get(
-                f"{self.BASE_URL}/userinfo",
+            response = api_client.linkedin_request(
+                method="GET",
+                url=f"{self.BASE_URL}/userinfo",
                 headers=self._get_headers(),
                 timeout=10,
+                endpoint="profile_info",
             )
             if response.status_code == 200:
                 return response.json()
@@ -459,7 +611,13 @@ class LinkedInPublisher:
                 "Linkedin-Version": version,
             }
 
-            response = requests.get(rest_url, headers=headers, timeout=10)
+            response = api_client.linkedin_request(
+                method="GET",
+                url=rest_url,
+                headers=headers,
+                timeout=10,
+                endpoint="verify_post",
+            )
 
             if response.status_code == 200:
                 post_data = response.json()
@@ -583,7 +741,13 @@ class LinkedInPublisher:
                 "Linkedin-Version": version,
             }
 
-            response = requests.get(url, headers=headers, timeout=15)
+            response = api_client.linkedin_request(
+                method="GET",
+                url=url,
+                headers=headers,
+                timeout=15,
+                endpoint="org_analytics",
+            )
 
             if response.status_code == 200:
                 data = response.json()
@@ -644,7 +808,13 @@ class LinkedInPublisher:
                 "X-Restli-Protocol-Version": "2.0.0",
             }
 
-            response = requests.get(url, headers=headers, timeout=15)
+            response = api_client.linkedin_request(
+                method="GET",
+                url=url,
+                headers=headers,
+                timeout=15,
+                endpoint="social_actions",
+            )
 
             if response.status_code == 200:
                 data = response.json()

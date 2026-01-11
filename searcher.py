@@ -16,6 +16,7 @@ from openai import OpenAI
 from config import Config
 from database import Database, Story
 from error_handling import with_enhanced_recovery
+from api_client import api_client
 
 logger = logging.getLogger(__name__)
 
@@ -132,10 +133,21 @@ def validate_url(url: str) -> bool:
     if Config.VALIDATE_SOURCE_URLS:
         try:
             # Try HEAD first (faster)
-            response = requests.head(url, timeout=5, allow_redirects=True)
+            response = api_client.http_request(
+                method="HEAD",
+                url=url,
+                timeout=5,
+                allow_redirects=True,
+                endpoint="url_validation",
+            )
             # Some servers don't support HEAD, try GET on 405
             if response.status_code == 405:
-                response = requests.get(url, timeout=5, allow_redirects=True)
+                response = api_client.http_get(
+                    url=url,
+                    timeout=5,
+                    allow_redirects=True,
+                    endpoint="url_validation",
+                )
             if response.status_code >= 400:
                 logger.debug(f"URL returned {response.status_code}: {url}")
                 return False
@@ -355,13 +367,15 @@ class StorySearcher:
         # NOTE: We intentionally do NOT use response_mime_type: application/json
         # because it prevents grounding_chunks from being populated with source URLs.
         # Instead, we ask the model to output JSON in plain text and parse it.
-        response = self.client.models.generate_content(
+        response = api_client.gemini_generate(
+            client=self.client,
             model=Config.MODEL_TEXT,
             contents=prompt,
             config={
                 "tools": [{"google_search": {}}],
                 "max_output_tokens": Config.LLM_MAX_OUTPUT_TOKENS,
             },
+            endpoint="search",
         )
 
         if not response.text:
@@ -456,13 +470,15 @@ class StorySearcher:
             try:
                 # Strategy 1: Simple HEAD request with redirects
                 if attempt == 0:
-                    response = requests.head(
-                        url,
+                    response = api_client.http_request(
+                        method="HEAD",
+                        url=url,
                         timeout=15,
                         allow_redirects=True,
                         headers={
                             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                         },
+                        endpoint="redirect_resolution",
                     )
                     if (
                         response.url
@@ -476,16 +492,16 @@ class StorySearcher:
 
                 # Strategy 2: GET request without following redirects (get Location header)
                 elif attempt == 1:
-                    response = requests.get(
-                        url,
+                    response = api_client.http_request(
+                        method="GET",
+                        url=url,
                         timeout=15,
                         allow_redirects=False,
-                        stream=True,
                         headers={
                             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                         },
+                        endpoint="redirect_resolution",
                     )
-                    response.close()
                     if response.status_code in (301, 302, 303, 307, 308):
                         location = response.headers.get("Location")
                         if location and location.startswith("http"):
@@ -504,17 +520,17 @@ class StorySearcher:
 
                 # Strategy 3: Full GET with redirects followed
                 else:
-                    response = requests.get(
-                        url,
+                    response = api_client.http_request(
+                        method="GET",
+                        url=url,
                         timeout=20,
                         allow_redirects=True,
-                        stream=True,
                         headers={
                             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                         },
+                        endpoint="redirect_resolution",
                     )
-                    response.close()
                     if (
                         response.url
                         and "vertexaisearch.cloud.google.com" not in response.url
@@ -605,13 +621,15 @@ class StorySearcher:
         current_url = url
         for _ in range(max_hops):
             try:
-                response = requests.head(
-                    current_url,
+                response = api_client.http_request(
+                    method="HEAD",
+                    url=current_url,
                     timeout=10,
                     allow_redirects=False,
                     headers={
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                     },
+                    endpoint="redirect_chain",
                 )
                 if response.status_code in (301, 302, 303, 307, 308):
                     location = response.headers.get("Location")
@@ -652,7 +670,8 @@ class StorySearcher:
             # Use Gemini with grounding to find the article
             from google.genai.types import Tool, GoogleSearch
 
-            response = self.client.models.generate_content(
+            response = api_client.gemini_generate(
+                client=self.client,
                 model=Config.MODEL_TEXT,
                 contents=f"Find the original news article URL for this story. Return ONLY the URL, nothing else.\n\nStory: {title}\n\nSummary: {summary[:200] if summary else 'N/A'}",
                 config={
@@ -660,6 +679,7 @@ class StorySearcher:
                     "max_output_tokens": 200,
                     "tools": [Tool(google_search=GoogleSearch())],
                 },
+                endpoint="source_lookup",
             )
 
             # First try to get URL from grounding metadata
@@ -1343,13 +1363,15 @@ class StorySearcher:
                 prompt = self._build_search_prompt(
                     search_prompt, since_date, summary_words
                 )
-                response = self.client.models.generate_content(
+                response = api_client.gemini_generate(
+                    client=self.client,
                     model=Config.MODEL_TEXT,
                     contents=prompt,
                     config={
                         "tools": [{"google_search": {}}],
                         "max_output_tokens": Config.LLM_MAX_OUTPUT_TOKENS,
                     },
+                    endpoint="preview_search",
                 )
                 if not response.text:
                     return []
@@ -1550,10 +1572,12 @@ class StorySearcher:
                 )
                 return response.choices[0].message.content
             else:
-                response = self.client.models.generate_content(
+                response = api_client.gemini_generate(
+                    client=self.client,
                     model=Config.MODEL_TEXT,
                     contents=repair_prompt,
                     config={"response_mime_type": "application/json"},
+                    endpoint="json_repair",
                 )
                 return response.text
         except Exception as e:

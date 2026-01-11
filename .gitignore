@@ -49,7 +49,7 @@ data/
 output/
 
 # Database files (ignore local DB; backups are also ignored)
-/content_engine.db
+content_engine.db
 *.db.backup
 /content_engine.db.backup
 /.linkedin_session

@@ -92,6 +92,9 @@ class Config:
     LINKEDIN_ORGANIZATION_URN: str = _get_str("LINKEDIN_ORGANIZATION_URN")
     # Author's display name for first-person story writing (e.g., "Wayne Gault")
     LINKEDIN_AUTHOR_NAME: str = _get_str("LINKEDIN_AUTHOR_NAME", "")
+    # LinkedIn browser login credentials (for profile URN extraction)
+    LINKEDIN_USERNAME: str = _get_str("LINKEDIN_USERNAME", "")
+    LINKEDIN_PASSWORD: str = _get_str("LINKEDIN_PASSWORD", "")
 
     # --- Local LLM (LM Studio) ---
     LM_STUDIO_BASE_URL: str = _get_str("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
@@ -277,12 +280,14 @@ CRITICAL - INCLUDE NAMES IN SUMMARY:
 - ALWAYS mention KEY INDIVIDUALS by full name when available (researchers, CEOs, lead engineers)
 - Include their role/title (e.g., "Dr. Jane Smith, lead researcher at MIT")
 - If the story is about academic research, name the university AND the lead researcher(s) by name
+- Look for: "senior author", "lead author", "principal investigator", "study author", "co-author", "corresponding author"
 - If the story is about a company development, name the company AND any executives mentioned
-- Read the source article carefully to extract actual names - they are usually mentioned
+- Read the source article THOROUGHLY to extract actual names - they are usually in quotes or linked to profiles
 
 RELEVANT PEOPLE - MANDATORY EXTRACTION:
 For EVERY story, identify and include in relevant_people:
 1. People MENTIONED in the story (researchers, engineers, scientists, executives quoted)
+2. Authors of any research papers or studies mentioned (senior author, lead author, co-authors)
 2. Key leaders from ANY organizations/universities mentioned in the story:
    - CEO, President, Managing Director, Founder, Owner
    - Head/Director of Engineering, Head/Director of Research
@@ -663,38 +668,37 @@ Return ONLY valid JSON, no explanation.""",
     # Placeholders: {people_list}
     LINKEDIN_PROFILE_SEARCH_PROMPT: str = _get_str(
         "LINKEDIN_PROFILE_SEARCH_PROMPT",
-        """Search for the LinkedIn profile URLs of the following people.
+        """Search for the PERSONAL LinkedIn profile URLs of the following people.
 
 PEOPLE TO FIND:
 {people_list}
 
-For each person, search for their actual LinkedIn profile URL (format: linkedin.com/in/username).
+**CRITICAL: Search for PERSONAL profiles only (linkedin.com/in/...)**
+Do NOT return company pages (linkedin.com/company/...) or school pages (linkedin.com/school/...).
 
-VALIDATION RULES (CRITICAL):
-1. Only include profiles you found through LIVE SEARCH RESULTS
-2. The LinkedIn URL must appear in your search results, not be constructed or guessed
-3. Verify the profile shows the SAME NAME AND AFFILIATION before including
-4. When in doubt, EXCLUDE — a missing profile is better than a wrong one
-5. Do NOT construct LinkedIn URLs from names (e.g., /in/john-smith)
-6. Do NOT guess usernames based on common patterns
+For each person:
+1. Search LinkedIn for their name and affiliation
+2. Look for personal profile URLs in format: linkedin.com/in/username
+3. Academic researchers, professors, postdocs often have LinkedIn profiles
+4. LinkedIn usernames may differ from real names (e.g., "sophialu1" not "sophia-lu")
 
-BAD EXAMPLE (should NOT do):
-Person: "Dr. Jane Smith, MIT Professor"
-Output: {{"name": "Dr. Jane Smith", "linkedin_url": "https://www.linkedin.com/in/jane-smith-mit"}}
-Reason: URL was guessed/constructed, not found in search results
+**Search Tips:**
+- For names with parentheses like "Harry (Shih-I) Tan", try both versions
+- Include their institution/company in the search to narrow results
+- Professors and researchers are often on LinkedIn even if not obvious
 
-GOOD EXAMPLE (correct approach):
-Person: "Dr. Jane Smith, MIT Professor"
-Search finds: LinkedIn profile at linkedin.com/in/janesmith-chem showing "Jane Smith, Professor at MIT"
-Output: {{"name": "Dr. Jane Smith", "linkedin_url": "https://www.linkedin.com/in/janesmith-chem", "title": "Professor", "affiliation": "MIT"}}
-Reason: URL was found in search, name and affiliation match
+**Validation:**
+- The profile name should match or closely match the person's name
+- The profile should show the correct institution/affiliation
+- If a good match is found, INCLUDE it (don't be overly cautious)
 
-Return a JSON array:
+Return a JSON array with found profiles:
 [
   {{"name": "Person Name", "linkedin_url": "https://www.linkedin.com/in/actualusername", "title": "Their Title", "affiliation": "Their Organization"}}
 ]
 
-If no profiles can be VERIFIED through search, return: []
+Include ONLY personal profiles (linkedin.com/in/...).
+If no personal profiles found, return: []
 
 Return ONLY the JSON array, no explanation.""",
     )
