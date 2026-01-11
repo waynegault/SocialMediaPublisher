@@ -41,6 +41,7 @@
 
 - [x] **TASK 5.3**: Caching Layer (`cache.py` - LRU memory cache with TTL, SQLite persistent cache, two-level cache system, @cached decorator, key generation utilities)
 - [x] **TASK 5.2**: Analytics Data Warehouse (`analytics_db.py` - time-series storage, data aggregation by hour/day/week/month, trend analysis, CSV/JSON export, data retention cleanup)
+- [x] **TASK 5.1**: Database Migration System (`migrations.py` - versioned migrations, up/down methods, rollback capability, dry-run mode, checksum validation, 5 built-in migrations)
 
 ### Image Generation
 
@@ -53,7 +54,7 @@
 
 ### Test Status
 
-- **373 tests passing** ✅
+- **387 tests passing** ✅
 
 ---
 
