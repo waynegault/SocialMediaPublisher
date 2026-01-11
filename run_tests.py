@@ -40,6 +40,7 @@ TEST_MODULES = [
     ("property_tests", "Property Tests"),
     ("cli", "CLI"),
     ("integration_tests", "Integration Tests"),
+    ("analytics_db", "Analytics Data Warehouse"),
 ]
 
 

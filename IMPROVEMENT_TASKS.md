@@ -40,6 +40,7 @@
 ### Performance & Scalability
 
 - [x] **TASK 5.3**: Caching Layer (`cache.py` - LRU memory cache with TTL, SQLite persistent cache, two-level cache system, @cached decorator, key generation utilities)
+- [x] **TASK 5.2**: Analytics Data Warehouse (`analytics_db.py` - time-series storage, data aggregation by hour/day/week/month, trend analysis, CSV/JSON export, data retention cleanup)
 
 ### Image Generation
 
@@ -52,7 +53,7 @@
 
 ### Test Status
 
-- **359 tests passing** ✅
+- **373 tests passing** ✅
 
 ---
 
