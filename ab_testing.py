@@ -60,7 +60,7 @@ class Variant:
     description: str
     variant_type: VariantType
     config: dict[str, Any] = field(default_factory=dict)
-    
+
     def __hash__(self) -> int:
         return hash(self.id)
 
@@ -76,12 +76,12 @@ class VariantResult:
     shares: int = 0
     clicks: int = 0
     assignments: int = 0  # How many times this variant was assigned
-    
+
     @property
     def total_engagement(self) -> int:
         """Total engagement actions."""
         return self.likes + self.comments + self.shares + self.clicks
-    
+
     @property
     def engagement_rate(self) -> float:
         """Calculate engagement rate as percentage."""
@@ -102,7 +102,7 @@ class ABTest:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     is_active: bool = True
     winner_id: str | None = None
-    
+
     def __post_init__(self) -> None:
         if len(self.variants) < 2:
             raise ValueError("A/B test requires at least 2 variants")
@@ -429,9 +429,7 @@ class ABTestManager:
             return "Insufficient data to make a recommendation."
 
         best_result = results.get(best_variant_id)
-        best_variant = next(
-            (v for v in test.variants if v.id == best_variant_id), None
-        )
+        best_variant = next((v for v in test.variants if v.id == best_variant_id), None)
 
         if not best_result or not best_variant:
             return "Unable to determine best variant."
@@ -669,14 +667,16 @@ def format_test_results(summary: TestSummary) -> str:
             f"({result.total_engagement}/{result.impressions} impressions)"
         )
 
-    lines.extend([
-        "",
-        f"Best Performer: {summary.best_variant_id}",
-        f"Confidence: {summary.confidence_score:.1f}%",
-        f"Statistically Significant: {'Yes' if summary.is_statistically_significant else 'No'}",
-        "",
-        f"Recommendation: {summary.recommendation}",
-    ])
+    lines.extend(
+        [
+            "",
+            f"Best Performer: {summary.best_variant_id}",
+            f"Confidence: {summary.confidence_score:.1f}%",
+            f"Statistically Significant: {'Yes' if summary.is_statistically_significant else 'No'}",
+            "",
+            f"Recommendation: {summary.recommendation}",
+        ]
+    )
 
     return "\n".join(lines)
 
@@ -810,12 +810,8 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         )
 
         # Add some metrics
-        manager.record_metrics(
-            test.id, test.variants[0].id, impressions=100, likes=20
-        )
-        manager.record_metrics(
-            test.id, test.variants[1].id, impressions=100, likes=10
-        )
+        manager.record_metrics(test.id, test.variants[0].id, impressions=100, likes=20)
+        manager.record_metrics(test.id, test.variants[1].id, impressions=100, likes=10)
 
         summary = manager.get_test_summary(test.id)
         assert summary is not None
@@ -896,7 +892,9 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
 
     suite.add_test("Variant creation", test_variant_creation)
     suite.add_test("Variant result engagement", test_variant_result_engagement)
-    suite.add_test("Variant result zero impressions", test_variant_result_zero_impressions)
+    suite.add_test(
+        "Variant result zero impressions", test_variant_result_zero_impressions
+    )
     suite.add_test("AB test creation", test_ab_test_creation)
     suite.add_test("AB test min variants", test_ab_test_min_variants)
     suite.add_test("Get variant deterministic", test_get_variant_deterministic)

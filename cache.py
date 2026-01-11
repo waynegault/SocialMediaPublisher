@@ -414,6 +414,7 @@ class SQLiteCache:
         # But we force a cleanup to release any locks
         try:
             import gc
+
             gc.collect()  # Force garbage collection to close any lingering connections
         except Exception:
             pass

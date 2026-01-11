@@ -13,7 +13,7 @@ Features:
 Example:
     assessor = ImageQualityAssessor()
     score = assessor.assess_image(image_path)
-    
+
     if score.overall_score < 0.6:
         print(f"Image quality too low: {score.issues}")
 """
@@ -21,10 +21,9 @@ Example:
 from __future__ import annotations
 
 import hashlib
-import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -125,11 +124,11 @@ class QualityThresholds:
     min_height: int = 600  # Minimum image height
     max_width: int = 4096  # Maximum before resize needed
     max_height: int = 4096  # Maximum before resize needed
-    
+
     # Optimal aspect ratios for LinkedIn
     linkedin_ratios: tuple[float, ...] = (1.0, 1.91, 0.8)  # square, landscape, portrait
     aspect_ratio_tolerance: float = 0.15  # How close to optimal
-    
+
     # Quality thresholds
     min_overall_score: float = 0.6
     min_sharpness: float = 0.4
@@ -149,7 +148,7 @@ DEFAULT_THRESHOLDS = QualityThresholds()
 class ImageQualityAssessor:
     """
     Assess quality of AI-generated images.
-    
+
     Uses PIL for basic image analysis without heavy ML dependencies.
     Provides actionable recommendations for image improvement.
     """
@@ -157,7 +156,7 @@ class ImageQualityAssessor:
     def __init__(self, thresholds: QualityThresholds | None = None) -> None:
         """
         Initialize the quality assessor.
-        
+
         Args:
             thresholds: Optional custom quality thresholds
         """
@@ -168,6 +167,7 @@ class ImageQualityAssessor:
         """Check if PIL/Pillow is available."""
         try:
             from PIL import Image  # noqa: F401
+
             return True
         except ImportError:
             return False
@@ -175,15 +175,15 @@ class ImageQualityAssessor:
     def assess_image(self, image_path: str | Path) -> QualityScore:
         """
         Assess the quality of an image.
-        
+
         Args:
             image_path: Path to the image file
-            
+
         Returns:
             QualityScore with detailed assessment
         """
         path = Path(image_path)
-        
+
         if not path.exists():
             return QualityScore(
                 overall_score=0.0,
@@ -204,14 +204,14 @@ class ImageQualityAssessor:
         # Can only check file size and extension
         issues: list[str] = []
         recommendations: list[str] = []
-        
+
         file_size = path.stat().st_size
         if file_size < 10000:  # < 10KB
             issues.append("Image file is very small, may be low quality")
-            
+
         if file_size > 10_000_000:  # > 10MB
             recommendations.append("Consider compressing image for faster loading")
-            
+
         # Check extension
         valid_extensions = {".jpg", ".jpeg", ".png", ".webp"}
         if path.suffix.lower() not in valid_extensions:
@@ -286,16 +286,16 @@ class ImageQualityAssessor:
     def _calculate_metrics(self, img: "Image.Image") -> QualityMetrics:
         """Calculate quality metrics for an image."""
         width, height = img.size
-        
+
         # Resolution score (based on total pixels)
         total_pixels = width * height
         optimal_pixels = 1920 * 1080  # 2MP is optimal
         resolution_score = min(1.0, total_pixels / optimal_pixels)
-        
+
         # Aspect ratio score
         aspect_ratio = width / height
         aspect_ratio_score = self._score_aspect_ratio(aspect_ratio)
-        
+
         # Convert to RGB if needed for analysis
         if img.mode not in ("RGB", "L"):
             try:
@@ -310,19 +310,19 @@ class ImageQualityAssessor:
                     brightness_score=0.7,
                     color_balance_score=0.7,
                 )
-        
+
         # Sharpness (edge detection variance)
         sharpness_score = self._calculate_sharpness(img)
-        
+
         # Contrast (histogram spread)
         contrast_score = self._calculate_contrast(img)
-        
+
         # Brightness
         brightness_score = self._calculate_brightness(img)
-        
+
         # Color balance
         color_balance_score = self._calculate_color_balance(img)
-        
+
         return QualityMetrics(
             resolution_score=resolution_score,
             aspect_ratio_score=aspect_ratio_score,
@@ -335,13 +335,13 @@ class ImageQualityAssessor:
     def _score_aspect_ratio(self, aspect_ratio: float) -> float:
         """Score aspect ratio based on LinkedIn optimal ratios."""
         best_score = 0.0
-        
+
         for optimal in self.thresholds.linkedin_ratios:
             difference = abs(aspect_ratio - optimal) / optimal
             if difference <= self.thresholds.aspect_ratio_tolerance:
                 score = 1.0 - (difference / self.thresholds.aspect_ratio_tolerance)
                 best_score = max(best_score, score)
-        
+
         # If not close to any optimal, give partial score
         if best_score == 0.0:
             # Penalize extreme aspect ratios
@@ -349,30 +349,30 @@ class ImageQualityAssessor:
                 best_score = 0.5
             else:
                 best_score = 0.3
-                
+
         return best_score
 
     def _calculate_sharpness(self, img: "Image.Image") -> float:
         """Calculate sharpness using Laplacian variance approximation."""
         try:
             from PIL import ImageFilter
-            
+
             # Convert to grayscale
             gray = img.convert("L")
-            
+
             # Apply edge detection
             edges = gray.filter(ImageFilter.FIND_EDGES)
-            
+
             # Calculate variance of edge pixels
-            pixels = list(edges.getdata())
+            pixels: list[Any] = list(edges.getdata())  # type: ignore[arg-type]
             mean = sum(pixels) / len(pixels)
             variance = sum((p - mean) ** 2 for p in pixels) / len(pixels)
-            
+
             # Normalize to 0-1 (variance of 1000+ is very sharp)
             sharpness = min(1.0, variance / 1000)
-            
+
             return sharpness
-            
+
         except Exception:
             return 0.7  # Default on error
 
@@ -381,20 +381,20 @@ class ImageQualityAssessor:
         try:
             gray = img.convert("L")
             histogram = gray.histogram()
-            
+
             # Find range of non-zero bins
             non_zero = [i for i, count in enumerate(histogram) if count > 0]
-            
+
             if not non_zero:
                 return 0.0
-                
+
             range_spread = non_zero[-1] - non_zero[0]
-            
+
             # Normalize (255 is full range)
             contrast = range_spread / 255.0
-            
+
             return contrast
-            
+
         except Exception:
             return 0.7
 
@@ -402,19 +402,19 @@ class ImageQualityAssessor:
         """Calculate brightness score (penalize too dark or too bright)."""
         try:
             gray = img.convert("L")
-            pixels = list(gray.getdata())
+            pixels: list[Any] = list(gray.getdata())  # type: ignore[arg-type]
             mean_brightness = sum(pixels) / len(pixels) / 255.0
-            
+
             # Optimal is around 0.5 (middle gray)
             # Score drops as it approaches 0 or 1
             if mean_brightness < 0.5:
                 score = mean_brightness / 0.5  # 0 at 0, 1 at 0.5
             else:
                 score = (1.0 - mean_brightness) / 0.5  # 1 at 0.5, 0 at 1
-                
+
             # Adjust to be less harsh (min 0.3 for any reasonable image)
             return max(0.3, score)
-            
+
         except Exception:
             return 0.7
 
@@ -423,55 +423,58 @@ class ImageQualityAssessor:
         try:
             if img.mode != "RGB":
                 img = img.convert("RGB")
-                
+
             # Split into channels
             r, g, b = img.split()
-            
+
             # Calculate mean of each channel
-            r_mean = sum(r.getdata()) / len(list(r.getdata()))
-            g_mean = sum(g.getdata()) / len(list(g.getdata()))
-            b_mean = sum(b.getdata()) / len(list(b.getdata()))
-            
+            r_data: list[Any] = list(r.getdata())  # type: ignore[arg-type]
+            g_data: list[Any] = list(g.getdata())  # type: ignore[arg-type]
+            b_data: list[Any] = list(b.getdata())  # type: ignore[arg-type]
+            r_mean = sum(r_data) / len(r_data)
+            g_mean = sum(g_data) / len(g_data)
+            b_mean = sum(b_data) / len(b_data)
+
             # Calculate deviation from balanced (equal means)
             overall_mean = (r_mean + g_mean + b_mean) / 3
-            
+
             if overall_mean == 0:
                 return 0.5
-                
+
             r_dev = abs(r_mean - overall_mean) / overall_mean
             g_dev = abs(g_mean - overall_mean) / overall_mean
             b_dev = abs(b_mean - overall_mean) / overall_mean
-            
+
             max_dev = max(r_dev, g_dev, b_dev)
-            
+
             # Score based on maximum deviation (0.3 deviation = 0.7 score)
             score = max(0.3, 1.0 - max_dev)
-            
+
             return score
-            
+
         except Exception:
             return 0.7
 
     def _detect_artifacts(self, img: "Image.Image") -> ArtifactDetection:
         """Detect common AI-generated image artifacts."""
         artifacts = ArtifactDetection()
-        
+
         try:
             # Check for color banding
             if self._detect_banding(img):
                 artifacts.has_banding = True
                 artifacts.artifact_count += 1
                 artifacts.artifact_descriptions.append("Color banding detected")
-            
+
             # Check for excessive noise
             if self._detect_noise(img):
                 artifacts.has_noise = True
                 artifacts.artifact_count += 1
                 artifacts.artifact_descriptions.append("High noise level")
-                
+
         except Exception:
             pass  # Fail gracefully
-            
+
         return artifacts
 
     def _detect_banding(self, img: "Image.Image") -> bool:
@@ -479,12 +482,12 @@ class ImageQualityAssessor:
         try:
             gray = img.convert("L")
             histogram = gray.histogram()
-            
+
             # Check for spiky histogram (indicates banding)
             # Count number of empty bins between non-empty bins
             in_gap = False
             gap_count = 0
-            
+
             for count in histogram:
                 if count == 0:
                     in_gap = True
@@ -492,10 +495,10 @@ class ImageQualityAssessor:
                     if in_gap:
                         gap_count += 1
                     in_gap = False
-            
+
             # Many gaps suggest banding
             return gap_count > 50
-            
+
         except Exception:
             return False
 
@@ -503,31 +506,31 @@ class ImageQualityAssessor:
         """Detect excessive noise in image."""
         try:
             gray = img.convert("L")
-            
+
             # Sample a portion of the image
             width, height = gray.size
             sample_size = min(100, width, height)
-            
+
             # Get center crop
             left = (width - sample_size) // 2
             top = (height - sample_size) // 2
-            
+
             crop = gray.crop((left, top, left + sample_size, top + sample_size))
-            pixels = list(crop.getdata())
-            
+            pixels: list[Any] = list(crop.getdata())  # type: ignore[arg-type]
+
             # Calculate variance of adjacent pixel differences
             differences = []
             for i in range(len(pixels) - 1):
                 differences.append(abs(pixels[i] - pixels[i + 1]))
-            
+
             if not differences:
                 return False
-                
+
             mean_diff = sum(differences) / len(differences)
-            
+
             # High mean difference in a small area suggests noise
             return mean_diff > 30
-            
+
         except Exception:
             return False
 
@@ -539,14 +542,18 @@ class ImageQualityAssessor:
     ) -> None:
         """Evaluate image resolution."""
         width, height = img.size
-        
+
         if width < self.thresholds.min_width:
-            issues.append(f"Width too small: {width}px (min: {self.thresholds.min_width}px)")
+            issues.append(
+                f"Width too small: {width}px (min: {self.thresholds.min_width}px)"
+            )
             recommendations.append("Regenerate image at higher resolution")
-            
+
         if height < self.thresholds.min_height:
-            issues.append(f"Height too small: {height}px (min: {self.thresholds.min_height}px)")
-            
+            issues.append(
+                f"Height too small: {height}px (min: {self.thresholds.min_height}px)"
+            )
+
         if width > self.thresholds.max_width or height > self.thresholds.max_height:
             recommendations.append("Consider resizing for faster loading")
 
@@ -559,14 +566,17 @@ class ImageQualityAssessor:
         """Evaluate aspect ratio for LinkedIn."""
         width, height = img.size
         aspect_ratio = width / height
-        
+
         # Check if close to any optimal ratio
         is_optimal = False
         for optimal in self.thresholds.linkedin_ratios:
-            if abs(aspect_ratio - optimal) / optimal <= self.thresholds.aspect_ratio_tolerance:
+            if (
+                abs(aspect_ratio - optimal) / optimal
+                <= self.thresholds.aspect_ratio_tolerance
+            ):
                 is_optimal = True
                 break
-        
+
         if not is_optimal:
             recommendations.append(
                 f"Aspect ratio {aspect_ratio:.2f} not optimal for LinkedIn. "
@@ -583,7 +593,7 @@ class ImageQualityAssessor:
         if metrics.sharpness_score < self.thresholds.min_sharpness:
             issues.append("Image appears blurry")
             recommendations.append("Regenerate with higher sharpness settings")
-            
+
         if metrics.contrast_score < self.thresholds.min_contrast:
             issues.append("Low contrast")
             recommendations.append("Increase contrast in post-processing")
@@ -597,7 +607,7 @@ class ImageQualityAssessor:
         """Evaluate artifact detection results."""
         if artifacts.has_banding:
             recommendations.append("Color banding detected - consider regenerating")
-            
+
         if artifacts.has_noise:
             issues.append("Image has excessive noise")
             recommendations.append("Apply noise reduction or regenerate")
@@ -617,7 +627,7 @@ class ImageQualityAssessor:
             "brightness": 0.15,
             "color_balance": 0.15,
         }
-        
+
         base_score = (
             metrics.resolution_score * weights["resolution"]
             + metrics.aspect_ratio_score * weights["aspect_ratio"]
@@ -626,10 +636,10 @@ class ImageQualityAssessor:
             + metrics.brightness_score * weights["brightness"]
             + metrics.color_balance_score * weights["color_balance"]
         )
-        
+
         # Penalize for artifacts
         artifact_penalty = artifacts.artifact_count * 0.1
-        
+
         return max(0.0, min(1.0, base_score - artifact_penalty))
 
     def should_regenerate(self, score: QualityScore) -> bool:
@@ -638,17 +648,17 @@ class ImageQualityAssessor:
         # 1. Overall score below threshold
         if score.overall_score < self.thresholds.min_overall_score:
             return True
-            
+
         # 2. Has critical artifacts
         if not score.artifacts.is_clean:
             return True
-            
+
         # 3. Has critical issues
         critical_keywords = ["too small", "blurry", "distorted"]
         for issue in score.issues:
             if any(keyword in issue.lower() for keyword in critical_keywords):
                 return True
-                
+
         return False
 
     def compare_images(
@@ -657,32 +667,32 @@ class ImageQualityAssessor:
     ) -> tuple[str | Path, QualityScore]:
         """
         Compare multiple images and return the best one.
-        
+
         Args:
             paths: List of image paths to compare
-            
+
         Returns:
             Tuple of (best_path, best_score)
         """
         if not paths:
             raise ValueError("No images to compare")
-            
+
         best_path = paths[0]
         best_score = self.assess_image(paths[0])
-        
+
         for path in paths[1:]:
             score = self.assess_image(path)
             if score.overall_score > best_score.overall_score:
                 best_path = path
                 best_score = score
-                
+
         return best_path, best_score
 
     def format_report(self, score: QualityScore) -> str:
         """Format a human-readable quality report."""
         lines = [
-            f"Image Quality Report",
-            f"=" * 40,
+            "Image Quality Report",
+            "=" * 40,
             f"File: {Path(score.image_path).name}",
             f"Overall Score: {score.overall_score:.2f} ({score.get_grade()})",
             f"Acceptable: {'Yes' if score.is_acceptable else 'No'}",
@@ -695,31 +705,37 @@ class ImageQualityAssessor:
             f"  Brightness:     {score.metrics.brightness_score:.2f}",
             f"  Color Balance:  {score.metrics.color_balance_score:.2f}",
         ]
-        
+
         if score.artifacts.artifact_count > 0:
-            lines.extend([
-                "",
-                f"Artifacts Detected: {score.artifacts.artifact_count}",
-            ])
+            lines.extend(
+                [
+                    "",
+                    f"Artifacts Detected: {score.artifacts.artifact_count}",
+                ]
+            )
             for desc in score.artifacts.artifact_descriptions:
                 lines.append(f"  - {desc}")
-        
+
         if score.issues:
-            lines.extend([
-                "",
-                "Issues:",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "Issues:",
+                ]
+            )
             for issue in score.issues:
                 lines.append(f"  ⚠ {issue}")
-        
+
         if score.recommendations:
-            lines.extend([
-                "",
-                "Recommendations:",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "Recommendations:",
+                ]
+            )
             for rec in score.recommendations:
                 lines.append(f"  → {rec}")
-        
+
         return "\n".join(lines)
 
 
@@ -734,25 +750,25 @@ def assess_directory(
 ) -> dict[str, QualityScore]:
     """
     Assess all images in a directory.
-    
+
     Args:
         directory: Path to directory containing images
         assessor: Optional assessor instance
-        
+
     Returns:
         Dictionary mapping filename to QualityScore
     """
     assessor = assessor or ImageQualityAssessor()
     directory = Path(directory)
-    
+
     results: dict[str, QualityScore] = {}
-    
+
     image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
-    
+
     for path in directory.iterdir():
         if path.suffix.lower() in image_extensions:
             results[path.name] = assessor.assess_image(path)
-            
+
     return results
 
 
@@ -762,23 +778,21 @@ def filter_quality_images(
 ) -> list[Path]:
     """
     Filter images that meet quality threshold.
-    
+
     Args:
         directory: Path to directory containing images
         min_score: Minimum acceptable quality score
-        
+
     Returns:
         List of paths to acceptable images
     """
     assessor = ImageQualityAssessor()
     assessor.thresholds.min_overall_score = min_score
-    
+
     results = assess_directory(directory, assessor)
-    
+
     return [
-        Path(directory) / name
-        for name, score in results.items()
-        if score.is_acceptable
+        Path(directory) / name for name, score in results.items() if score.is_acceptable
     ]
 
 
@@ -790,6 +804,7 @@ def filter_quality_images(
 def _create_module_tests() -> "TestSuite":
     """Create unit tests for this module."""
     import sys
+
     sys.path.insert(0, str(Path(__file__).parent))
     from test_framework import TestSuite
 
@@ -845,11 +860,21 @@ def _create_module_tests() -> "TestSuite":
         assert score.is_acceptable is False
 
     def test_quality_score_grades():
-        assert QualityScore(0.95, QualityMetrics(), ArtifactDetection()).get_grade() == "A"
-        assert QualityScore(0.85, QualityMetrics(), ArtifactDetection()).get_grade() == "B"
-        assert QualityScore(0.75, QualityMetrics(), ArtifactDetection()).get_grade() == "C"
-        assert QualityScore(0.65, QualityMetrics(), ArtifactDetection()).get_grade() == "D"
-        assert QualityScore(0.45, QualityMetrics(), ArtifactDetection()).get_grade() == "F"
+        assert (
+            QualityScore(0.95, QualityMetrics(), ArtifactDetection()).get_grade() == "A"
+        )
+        assert (
+            QualityScore(0.85, QualityMetrics(), ArtifactDetection()).get_grade() == "B"
+        )
+        assert (
+            QualityScore(0.75, QualityMetrics(), ArtifactDetection()).get_grade() == "C"
+        )
+        assert (
+            QualityScore(0.65, QualityMetrics(), ArtifactDetection()).get_grade() == "D"
+        )
+        assert (
+            QualityScore(0.45, QualityMetrics(), ArtifactDetection()).get_grade() == "F"
+        )
 
     def test_thresholds_defaults():
         thresholds = QualityThresholds()
@@ -920,10 +945,18 @@ def _create_module_tests() -> "TestSuite":
 
     suite.add_test("Quality metrics average", test_quality_metrics_average)
     suite.add_test("Artifact detection clean", test_artifact_detection_clean)
-    suite.add_test("Artifact detection with issues", test_artifact_detection_with_issues)
+    suite.add_test(
+        "Artifact detection with issues", test_artifact_detection_with_issues
+    )
     suite.add_test("Quality score acceptable", test_quality_score_acceptable)
-    suite.add_test("Quality score not acceptable - low", test_quality_score_not_acceptable_low_score)
-    suite.add_test("Quality score not acceptable - artifacts", test_quality_score_not_acceptable_artifacts)
+    suite.add_test(
+        "Quality score not acceptable - low",
+        test_quality_score_not_acceptable_low_score,
+    )
+    suite.add_test(
+        "Quality score not acceptable - artifacts",
+        test_quality_score_not_acceptable_artifacts,
+    )
     suite.add_test("Quality score grades", test_quality_score_grades)
     suite.add_test("Thresholds defaults", test_thresholds_defaults)
     suite.add_test("Assessor init", test_assessor_init)

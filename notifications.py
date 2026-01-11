@@ -132,33 +132,37 @@ def format_notification(
 ) -> tuple[str, str, str]:
     """
     Format a notification using templates.
-    
+
     Args:
         event_type: Type of notification event
         data: Data to populate the template
-        
+
     Returns:
         Tuple of (title, message, priority)
     """
-    template = NOTIFICATION_TEMPLATES.get(event_type, {
-        "title": event_type.replace("_", " ").title(),
-        "message": str(data),
-        "priority": "normal",
-    })
-    
+    template = NOTIFICATION_TEMPLATES.get(
+        event_type,
+        {
+            "title": event_type.replace("_", " ").title(),
+            "message": str(data),
+            "priority": "normal",
+        },
+    )
+
     title = template["title"]
-    
+
     # Format message with data, handling missing keys gracefully
     message = template["message"]
     for key, value in data.items():
         message = message.replace(f"{{{key}}}", str(value))
-    
+
     # Remove any unformatted placeholders
     import re
+
     message = re.sub(r"\{[^}]+\}", "[N/A]", message)
-    
+
     priority = template.get("priority", "normal")
-    
+
     return title, message, priority
 
 
@@ -199,7 +203,7 @@ class SlackChannel(NotificationChannel):
     ) -> None:
         """
         Initialize Slack channel.
-        
+
         Args:
             webhook_url: Slack incoming webhook URL
             channel_name: Slack channel name (for display)
@@ -226,7 +230,7 @@ class SlackChannel(NotificationChannel):
 
         # Build Slack message payload
         color = self._get_color_for_priority(notification.priority)
-        
+
         payload = {
             "username": self._username,
             "icon_emoji": self._icon_emoji,
@@ -248,7 +252,7 @@ class SlackChannel(NotificationChannel):
                 data=data,
                 headers={"Content-Type": "application/json"},
             )
-            
+
             with urllib.request.urlopen(req, timeout=10) as response:
                 if response.status == 200:
                     return NotificationResult(
@@ -262,7 +266,7 @@ class SlackChannel(NotificationChannel):
                         channel=self.name,
                         error=f"HTTP {response.status}",
                     )
-                    
+
         except urllib.error.URLError as e:
             return NotificationResult(
                 success=False,
@@ -290,7 +294,7 @@ class SlackChannel(NotificationChannel):
         """Test Slack webhook connectivity."""
         if not self._webhook_url:
             return False
-        
+
         # Just check URL format, don't actually send
         return self._webhook_url.startswith("https://hooks.slack.com/")
 
@@ -310,7 +314,7 @@ class EmailChannel(NotificationChannel):
     ) -> None:
         """
         Initialize email channel.
-        
+
         Args:
             smtp_host: SMTP server hostname
             smtp_port: SMTP server port
@@ -421,7 +425,7 @@ class EmailChannel(NotificationChannel):
         """Test SMTP connectivity."""
         if not self._smtp_host or not self._username:
             return False
-        
+
         try:
             with smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=5) as server:
                 if self._use_tls:
@@ -446,7 +450,7 @@ class ConsoleChannel(NotificationChannel):
     def send(self, notification: Notification) -> NotificationResult:
         """Print notification to console."""
         timestamp = notification.created_at.strftime("%Y-%m-%d %H:%M:%S")
-        
+
         print(f"\n{self._prefix} [{notification.priority.upper()}] {timestamp}")
         print(f"  {notification.title}")
         print(f"  {notification.message.replace(chr(10), chr(10) + '  ')}")
@@ -473,7 +477,7 @@ class FileChannel(NotificationChannel):
     ) -> None:
         """
         Initialize file channel.
-        
+
         Args:
             log_path: Path to log file
             json_format: Whether to use JSON format
@@ -501,7 +505,9 @@ class FileChannel(NotificationChannel):
                     f.write(json.dumps(record) + "\n")
                 else:
                     timestamp = notification.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                    f.write(f"[{timestamp}] [{notification.priority.upper()}] {notification.title}\n")
+                    f.write(
+                        f"[{timestamp}] [{notification.priority.upper()}] {notification.title}\n"
+                    )
                     f.write(f"  {notification.message}\n\n")
 
             return NotificationResult(
@@ -534,7 +540,7 @@ class FileChannel(NotificationChannel):
 class NotificationManager:
     """
     Central manager for all notification channels.
-    
+
     Features:
     - Multiple channel support
     - Rate limiting
@@ -549,7 +555,7 @@ class NotificationManager:
     ) -> None:
         """
         Initialize notification manager.
-        
+
         Args:
             rate_limit_per_hour: Max notifications per hour
             min_priority: Minimum priority to send
@@ -585,32 +591,36 @@ class NotificationManager:
     ) -> list[NotificationResult]:
         """
         Send a notification.
-        
+
         Args:
             event_type: Type of notification event
             data: Data for the notification template
             channels: Optional list of specific channels to use
-            
+
         Returns:
             List of results from each channel
         """
         data = data or {}
-        
+
         # Format notification from template
         title, message, priority = format_notification(event_type, data)
-        
+
         # Check priority filter
-        if self._priority_levels.index(priority) < self._priority_levels.index(self._min_priority):
+        if self._priority_levels.index(priority) < self._priority_levels.index(
+            self._min_priority
+        ):
             return []
-        
+
         # Check rate limit
         if self._is_rate_limited():
-            return [NotificationResult(
-                success=False,
-                channel="all",
-                error="Rate limit exceeded",
-            )]
-        
+            return [
+                NotificationResult(
+                    success=False,
+                    channel="all",
+                    error="Rate limit exceeded",
+                )
+            ]
+
         # Create notification object
         notification = Notification(
             event_type=event_type,
@@ -619,24 +629,24 @@ class NotificationManager:
             data=data,
             priority=priority,
         )
-        
+
         # Send to channels
         results: list[NotificationResult] = []
         target_channels = self._get_target_channels(channels)
-        
+
         for channel in target_channels:
             result = channel.send(notification)
             results.append(result)
-            
+
             # Update notification with result
             notification.channel = channel.name
             notification.success = result.success
             notification.sent_at = result.sent_at
             notification.error = result.error
-        
+
         # Store in history
         self._add_to_history(notification)
-        
+
         return results
 
     def _get_target_channels(
@@ -646,27 +656,24 @@ class NotificationManager:
         """Get channels to send to."""
         if not channel_names:
             return self._channels
-        
+
         return [c for c in self._channels if c.name in channel_names]
 
     def _is_rate_limited(self) -> bool:
         """Check if rate limit is exceeded."""
         if self._rate_limit <= 0:
             return False
-        
+
         cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
-        recent_count = sum(
-            1 for n in self._history
-            if n.created_at > cutoff
-        )
-        
+        recent_count = sum(1 for n in self._history if n.created_at > cutoff)
+
         return recent_count >= self._rate_limit
 
     def _add_to_history(self, notification: Notification) -> None:
         """Add notification to history."""
         self._history.append(notification)
         if len(self._history) > self._max_history:
-            self._history = self._history[-self._max_history:]
+            self._history = self._history[-self._max_history :]
 
     def get_history(
         self,
@@ -675,10 +682,10 @@ class NotificationManager:
     ) -> list[Notification]:
         """Get notification history."""
         history = self._history
-        
+
         if event_type:
             history = [n for n in history if n.event_type == event_type]
-        
+
         return list(reversed(history[-limit:]))
 
     def test_all_channels(self) -> dict[str, bool]:
@@ -716,32 +723,36 @@ class DigestGenerator:
     def record_event(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         """Record an event for digest inclusion."""
         data = data or {}
-        
+
         # Update daily stats
         if event_type not in self._daily_stats:
             self._daily_stats[event_type] = {
                 "count": 0,
                 "data": [],
             }
-        
+
         self._daily_stats[event_type]["count"] += 1
-        self._daily_stats[event_type]["data"].append({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            **data,
-        })
+        self._daily_stats[event_type]["data"].append(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                **data,
+            }
+        )
 
     def generate_daily_summary(self) -> dict[str, Any]:
         """Generate daily summary data."""
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        
+
         posts_published = self._daily_stats.get("post_published", {}).get("count", 0)
         posts_failed = self._daily_stats.get("post_failed", {}).get("count", 0)
         stories_processed = self._daily_stats.get("story_processed", {}).get("count", 0)
-        
+
         # Calculate total engagement from events
-        engagement_events = self._daily_stats.get("engagement_update", {}).get("data", [])
+        engagement_events = self._daily_stats.get("engagement_update", {}).get(
+            "data", []
+        )
         total_engagement = sum(e.get("engagement", 0) for e in engagement_events)
-        
+
         return {
             "date": today,
             "posts_published": posts_published,
@@ -754,30 +765,30 @@ class DigestGenerator:
         """Send daily summary notification."""
         summary = self.generate_daily_summary()
         results = self._manager.notify("daily_summary", summary)
-        
+
         # Archive daily stats to weekly
         self._weekly_stats.append(summary)
-        
+
         # Reset daily stats
         self._daily_stats = {}
-        
+
         return results
 
     def send_weekly_digest(self) -> list[NotificationResult]:
         """Send weekly digest notification."""
         if not self._weekly_stats:
             return []
-        
+
         now = datetime.now(timezone.utc)
         start_date = (now - timedelta(days=7)).strftime("%Y-%m-%d")
         end_date = now.strftime("%Y-%m-%d")
-        
+
         total_posts = sum(d.get("posts_published", 0) for d in self._weekly_stats)
         total_reach = sum(d.get("total_engagement", 0) for d in self._weekly_stats)
-        
+
         # Find best post (placeholder - would need actual tracking)
         best_post = "N/A"
-        
+
         digest_data = {
             "start_date": start_date,
             "end_date": end_date,
@@ -785,12 +796,12 @@ class DigestGenerator:
             "total_reach": total_reach,
             "best_post": best_post,
         }
-        
+
         results = self._manager.notify("weekly_digest", digest_data)
-        
+
         # Reset weekly stats
         self._weekly_stats = []
-        
+
         return results
 
 
@@ -802,6 +813,7 @@ class DigestGenerator:
 def _create_module_tests() -> "TestSuite":
     """Create unit tests for this module."""
     import sys
+
     sys.path.insert(0, str(Path(__file__).parent))
     from test_framework import TestSuite
 
@@ -848,23 +860,23 @@ def _create_module_tests() -> "TestSuite":
     def test_console_channel_send():
         import io
         import sys
-        
+
         channel = ConsoleChannel("[TEST]")
         notif = Notification(
             event_type="test",
             title="Test",
             message="Message",
         )
-        
+
         # Capture stdout
         old_stdout = sys.stdout
         sys.stdout = io.StringIO()
-        
+
         result = channel.send(notif)
-        
+
         output = sys.stdout.getvalue()
         sys.stdout = old_stdout
-        
+
         assert result.success is True
         assert "[TEST]" in output
 
@@ -884,7 +896,7 @@ def _create_module_tests() -> "TestSuite":
     def test_slack_channel_test_connection():
         channel = SlackChannel(webhook_url="")
         assert channel.test_connection() is False
-        
+
         channel = SlackChannel(webhook_url="https://hooks.slack.com/test")
         assert channel.test_connection() is True
 
@@ -917,16 +929,18 @@ def _create_module_tests() -> "TestSuite":
     def test_digest_generator():
         manager = NotificationManager()
         digest = DigestGenerator(manager)
-        
+
         digest.record_event("post_published", {"title": "Test"})
         digest.record_event("post_published", {"title": "Test 2"})
-        
+
         summary = digest.generate_daily_summary()
         assert summary["posts_published"] == 2
 
     suite.add_test("Notification creation", test_notification_creation)
     suite.add_test("Format notification", test_format_notification)
-    suite.add_test("Format notification missing key", test_format_notification_missing_key)
+    suite.add_test(
+        "Format notification missing key", test_format_notification_missing_key
+    )
     suite.add_test("Format notification unknown", test_format_notification_unknown)
     suite.add_test("Console channel", test_console_channel)
     suite.add_test("Console channel send", test_console_channel_send)
@@ -935,9 +949,15 @@ def _create_module_tests() -> "TestSuite":
     suite.add_test("Slack channel test connection", test_slack_channel_test_connection)
     suite.add_test("Email channel name", test_email_channel_name)
     suite.add_test("Notification manager init", test_notification_manager_init)
-    suite.add_test("Notification manager add channel", test_notification_manager_add_channel)
-    suite.add_test("Notification manager remove channel", test_notification_manager_remove_channel)
-    suite.add_test("Notification manager test channels", test_notification_manager_test_channels)
+    suite.add_test(
+        "Notification manager add channel", test_notification_manager_add_channel
+    )
+    suite.add_test(
+        "Notification manager remove channel", test_notification_manager_remove_channel
+    )
+    suite.add_test(
+        "Notification manager test channels", test_notification_manager_test_channels
+    )
     suite.add_test("Digest generator", test_digest_generator)
 
     return suite
