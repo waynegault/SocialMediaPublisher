@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from PIL import Image
+    from test_framework import TestSuite
 
 
 # =============================================================================
