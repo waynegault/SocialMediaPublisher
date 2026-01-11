@@ -41,6 +41,7 @@ TEST_MODULES = [
     ("cli", "CLI"),
     ("integration_tests", "Integration Tests"),
     ("analytics_db", "Analytics Data Warehouse"),
+    ("migrations", "Database Migrations"),
 ]
 
 
