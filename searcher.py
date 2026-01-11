@@ -1346,6 +1346,12 @@ class StorySearcher:
         existing_titles = self.db.get_recent_story_titles(days=90)
         similarity_threshold = Config.DEDUP_SIMILARITY_THRESHOLD
 
+        # Also get recently published story titles to prevent similar content
+        # This uses a configurable window (default: 30 days)
+        published_titles = self.db.get_recent_published_titles(
+            days=Config.DEDUP_PUBLISHED_WINDOW_DAYS
+        )
+
         for i, data in enumerate(stories_data):
             try:
                 title = data.get("title", "").strip()
@@ -1434,6 +1440,22 @@ class StorySearcher:
                 if is_duplicate:
                     continue
 
+                # Check against recently published stories to prevent similar content
+                # This uses a stricter threshold to avoid posting similar topics
+                for published_id, published_title in published_titles:
+                    similarity = calculate_similarity(title, published_title)
+                    # Use slightly lower threshold for published stories (more strict)
+                    if similarity >= similarity_threshold * 0.85:
+                        logger.info(
+                            f"Similar to recently published story (similarity={similarity:.2f}): "
+                            f"'{title}' matches '{published_title}'"
+                        )
+                        is_duplicate = True
+                        break
+
+                if is_duplicate:
+                    continue
+
                 # Create new story with all fields
                 quality_score = data.get("quality_score", 5)
                 # Apply quality score calibration based on configured weights
@@ -1508,10 +1530,14 @@ class StorySearcher:
                 # Archive source URLs to Wayback Machine (optional, runs in background)
                 if Config.ARCHIVE_SOURCE_URLS and sources:
                     try:
-                        archived = archive_urls_batch(sources[:3])  # Limit to first 3 URLs
+                        archived = archive_urls_batch(
+                            sources[:3]
+                        )  # Limit to first 3 URLs
                         archived_count = sum(1 for v in archived.values() if v)
                         if archived_count > 0:
-                            logger.info(f"Archived {archived_count}/{len(sources)} URLs for story")
+                            logger.info(
+                                f"Archived {archived_count}/{len(sources)} URLs for story"
+                            )
                     except Exception as e:
                         logger.debug(f"URL archiving failed: {e}")
 

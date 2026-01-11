@@ -535,6 +535,31 @@ class Database:
             )
             return [(row["id"], row["title"]) for row in cursor.fetchall()]
 
+    def get_recent_published_titles(self, days: int = 30) -> list[tuple[int, str]]:
+        """Get published story IDs and titles from the last N days for deduplication.
+
+        This specifically returns only published stories, which is useful for
+        preventing similar content from being posted within a configurable window.
+
+        Args:
+            days: Number of days to look back (default: 30)
+
+        Returns:
+            List of (id, title) tuples from published stories in the last N days.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, title FROM stories
+                WHERE publish_status = 'published'
+                AND published_time >= datetime('now', '-' || ? || ' days')
+                ORDER BY published_time DESC
+                """,
+                (days,),
+            )
+            return [(row["id"], row["title"]) for row in cursor.fetchall()]
+
     def update_story(self, story: Story) -> bool:
         """Update an existing story."""
         if story.id is None:
@@ -1110,6 +1135,51 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
+    def test_database_published_titles():
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            from datetime import datetime
+
+            db = Database(db_path)
+            # Add an unpublished story
+            story1 = Story(
+                title="Unpublished Story",
+                summary="Test summary",
+                source_links=["https://example.com"],
+                quality_score=7,
+            )
+            story1_id = db.add_story(story1)
+
+            # Add a story that will be published
+            story2 = Story(
+                title="Published Story",
+                summary="Test summary 2",
+                source_links=["https://example2.com"],
+                quality_score=8,
+            )
+            story2_id = db.add_story(story2)
+
+            # Mark story2 as published using update_story
+            story2_from_db = db.get_story(story2_id)
+            assert story2_from_db is not None
+            story2_from_db.publish_status = "published"
+            story2_from_db.published_time = datetime.now()
+            db.update_story(story2_from_db)
+
+            # Get published titles
+            published = db.get_recent_published_titles(days=30)
+            # Should only return the published story
+            assert len(published) == 1
+            assert published[0][1] == "Published Story"
+
+            # Get all recent titles
+            all_titles = db.get_recent_story_titles(days=90)
+            # Should return both stories
+            assert len(all_titles) == 2
+        finally:
+            os.unlink(db_path)
+
     suite.add_test("Story dataclass", test_story_dataclass)
     suite.add_test("Story to_dict", test_story_to_dict)
     suite.add_test("Story from_row and _parse_datetime", test_story_from_row)
@@ -1121,5 +1191,6 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     suite.add_test("Database delete story", test_database_delete_story)
     suite.add_test("Database statistics", test_database_statistics)
     suite.add_test("Database state", test_database_state)
+    suite.add_test("Database published titles", test_database_published_titles)
 
     return suite
