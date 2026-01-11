@@ -36,6 +36,7 @@ TEST_MODULES = [
     ("cache", "Cache"),
     ("image_quality", "Image Quality"),
     ("image_style", "Image Style"),
+    ("notifications", "Notifications"),
 ]
 
 
