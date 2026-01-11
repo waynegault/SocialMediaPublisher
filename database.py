@@ -44,19 +44,16 @@ class Story:
     hashtags: list[str] = field(
         default_factory=list
     )  # Hashtags for LinkedIn posts (max 3)
-    # Relevant people extracted during story search - consolidated list for LinkedIn lookup
-    # [{"name": "Dr. Jane Smith", "company": "MIT", "position": "Lead Researcher", "linkedin_profile": ""}]
-    relevant_people: list[dict] = field(default_factory=list)
 
     # --- 3. ENRICHMENT (LinkedIn profile lookup) ---
     enrichment_status: str = "pending"  # pending, enriched, skipped, error
     # Organizations mentioned in the story (just names)
     organizations: list[str] = field(default_factory=list)  # ["BASF", "MIT", "IChemE"]
-    # People mentioned directly in the story
-    story_people: list[dict] = field(
-        default_factory=list
-    )  # [{"name": "Dr. Jane Smith", "title": "Lead Researcher", "affiliation": "MIT"}]
-    # Key leaders from the organizations (CEO, CTO, etc.)
+    # People mentioned directly in the story (PRIMARY field for @mentions)
+    # [{"name": "Dr. Jane Smith", "title": "Lead Researcher", "affiliation": "MIT", "linkedin_profile": "", "linkedin_urn": ""}]
+    story_people: list[dict] = field(default_factory=list)
+    # Key leaders from the organizations (CEO, CTO, etc.) - for secondary @mentions
+    # [{"name": "John Doe", "title": "CEO", "organization": "BASF", "linkedin_profile": "", "linkedin_urn": ""}]
     org_leaders: list[dict] = field(
         default_factory=list
     )  # [{"name": "John Doe", "title": "CEO", "organization": "BASF"}]
@@ -96,7 +93,7 @@ class Story:
     )  # DEPRECATED - use story_people
     linkedin_profiles: list[dict] = field(
         default_factory=list
-    )  # DEPRECATED - use relevant_people.linkedin_profile
+    )  # DEPRECATED - use story_people.linkedin_profile
 
     def to_dict(self) -> dict:
         """Convert story to dictionary (organized by workflow sequence)."""
@@ -114,7 +111,6 @@ class Story:
             "quality_justification": self.quality_justification,
             "category": self.category,
             "hashtags": self.hashtags,
-            "relevant_people": self.relevant_people,
             # 3. Enrichment
             "enrichment_status": self.enrichment_status,
             "organizations": self.organizations,
@@ -228,9 +224,6 @@ class Story:
             else [],
             org_leaders=json.loads(row["org_leaders"])
             if "org_leaders" in keys and row["org_leaders"]
-            else [],
-            relevant_people=json.loads(row["relevant_people"])
-            if "relevant_people" in keys and row["relevant_people"]
             else [],
             # Promotion message
             promotion=row["promotion"] if "promotion" in keys else None,
@@ -413,10 +406,6 @@ class Database:
             self._migrate_add_column(
                 cursor, "linkedin_handles", "TEXT DEFAULT '[]'", existing_columns
             )
-            # Relevant people from story generation - consolidated list for LinkedIn lookup
-            self._migrate_add_column(
-                cursor, "relevant_people", "TEXT DEFAULT '[]'", existing_columns
-            )
             # Promotion message for LinkedIn posts
             self._migrate_add_column(cursor, "promotion", "TEXT", existing_columns)
             # Image alt text for accessibility
@@ -458,7 +447,7 @@ class Database:
                 (title, summary, source_links, acquire_date, quality_score,
                  category, quality_justification, image_path, verification_status,
                  publish_status, hashtags, company_mention_enrichment,
-                 enrichment_status, relevant_people)
+                 enrichment_status, story_people)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -475,7 +464,7 @@ class Database:
                     json.dumps(story.hashtags),
                     story.company_mention_enrichment,
                     story.enrichment_status,
-                    json.dumps(story.relevant_people),
+                    json.dumps(story.story_people),
                 ),
             )
             story_id = cursor.lastrowid or 0
@@ -583,7 +572,6 @@ class Database:
                     organizations = ?,
                     story_people = ?,
                     org_leaders = ?,
-                    relevant_people = ?,
                     company_mention_enrichment = ?,
                     individuals = ?,
                     linkedin_profiles = ?
@@ -617,7 +605,6 @@ class Database:
                     json.dumps(story.organizations),
                     json.dumps(story.story_people),
                     json.dumps(story.org_leaders),
-                    json.dumps(story.relevant_people),
                     story.company_mention_enrichment,
                     json.dumps(story.individuals),
                     json.dumps(story.linkedin_profiles),

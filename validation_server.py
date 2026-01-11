@@ -22,8 +22,8 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Story Validation Interface for Social Media Publisher">
-    <title>Story Validation - Social Media Publisher</title>
+    <meta name="description" content="Human Story Review Interface for Social Media Publisher">
+    <title>Human Story Review - Social Media Publisher</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='15' y='10' width='70' height='85' rx='8' fill='%231a1a2e' stroke='%2300d4ff' stroke-width='4'/><rect x='30' y='5' width='40' height='15' rx='4' fill='%2300d4ff'/><path d='M30 45 L45 60 L70 35' stroke='%2300c853' stroke-width='8' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
     <style>
         /* Skip to main content link for keyboard users */
@@ -224,12 +224,52 @@ HTML_TEMPLATE = """
             padding: 12px;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             font-size: 1rem;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            overflow-y: auto;
+            border: 3px solid transparent;
+            transition: border-color 0.3s ease;
+            position: relative;
+        }
+
+        .linkedin-preview.story-accepted {
+            border-color: #4caf50;
+        }
+
+        .linkedin-preview.story-rejected {
+            border-color: #f44336;
+        }
+
+        .linkedin-preview.story-accepted::before,
+        .linkedin-preview.story-rejected::before {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            padding: 4px 12px;
+            border-radius: 4px;
+            z-index: 10;
+        }
+
+        .linkedin-preview.story-accepted::before {
+            content: '✓ ACCEPTED';
+            background: #4caf50;
+            color: white;
+        }
+
+        .linkedin-preview.story-rejected::before {
+            content: '✗ REJECTED';
+            background: #f44336;
+            color: white;
         }
 
         .linkedin-header {
             display: flex;
             gap: 10px;
             margin-bottom: 10px;
+            flex-shrink: 0;
         }
 
         .linkedin-avatar {
@@ -261,6 +301,7 @@ HTML_TEMPLATE = """
             font-weight: 600;
             color: #000;
             margin-bottom: 8px;
+            flex-shrink: 0;
         }
 
         .linkedin-summary {
@@ -269,36 +310,71 @@ HTML_TEMPLATE = """
             color: #333;
             margin-bottom: 10px;
             white-space: pre-wrap;
+            flex-shrink: 0;
         }
 
         .linkedin-image {
             width: 100%;
-            max-height: 280px;
             border-radius: 6px;
             margin-bottom: 10px;
             object-fit: cover;
             object-position: center top;
+            flex: 0 1 auto;
+            min-height: 80px;
+            max-height: 180px;
+        }
+
+        /* Show full image height in edit mode */
+        .preview-section.edit-mode .linkedin-image {
+            max-height: 400px;
         }
 
         .linkedin-mentions {
-            font-size: 0.8rem;
+            font-size: 1rem;
+            line-height: 1.4;
             color: #0077b5;
             margin-bottom: 4px;
+            flex-shrink: 0;
         }
 
         .linkedin-hashtags {
-            font-size: 0.8rem;
+            font-size: 1rem;
+            line-height: 1.4;
             color: #0077b5;
             margin-bottom: 4px;
+            flex-shrink: 0;
         }
 
         .linkedin-promotion {
-            font-size: 0.8rem;
-            color: #666;
-            font-style: italic;
-            padding-top: 6px;
-            border-top: 1px solid #eee;
-            margin-top: 6px;
+            font-size: 1rem;
+            line-height: 1.4;
+            color: #333;
+            white-space: pre-wrap;
+            margin-top: 10px;
+            flex-shrink: 0;
+        }
+
+        .linkedin-sources {
+            font-size: 1rem;
+            line-height: 1.4;
+            color: #333;
+            margin-top: 10px;
+            flex-shrink: 0;
+        }
+
+        .linkedin-sources a {
+            color: #0077b5;
+            text-decoration: none;
+            word-break: break-all;
+        }
+
+        .linkedin-sources a:hover {
+            text-decoration: underline;
+        }
+
+        .linkedin-spacer {
+            height: 1.5em;
+            flex-shrink: 0;
         }
 
         .linkedin-footer {
@@ -308,6 +384,7 @@ HTML_TEMPLATE = """
             border-top: 1px solid #eee;
             color: #666;
             font-size: 1rem;
+            flex-shrink: 0;
         }
 
         .linkedin-footer span {
@@ -489,15 +566,26 @@ HTML_TEMPLATE = """
 
         .details-grid {
             display: flex;
-            flex-wrap: wrap;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .details-row {
+            display: flex;
+            flex-wrap: nowrap;
             gap: 8px 16px;
-            align-items: center;
+            align-items: flex-start;
+        }
+
+        .detail-item.fixed-width {
+            width: 200px;
+            flex-shrink: 0;
         }
 
         .detail-item {
             display: inline-flex;
             flex-direction: row;
-            align-items: center;
+            align-items: baseline;
             gap: 8px;
             background: linear-gradient(145deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
             padding: 6px 12px;
@@ -513,6 +601,10 @@ HTML_TEMPLATE = """
 
         .detail-item.full-width {
             flex-basis: 100%;
+        }
+
+        .detail-item.flex-grow {
+            flex: 1;
         }
 
         .detail-label {
@@ -592,10 +684,10 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <a href="#main-content" class="skip-link">Skip to main content</a>
-    <div class="container" role="application" aria-label="Story Validation Application">
+    <div class="container" role="application" aria-label="Human Story Review Application">
         <header role="banner">
             <div>
-                <h1>📋 Story Validation</h1>
+                <h1>📋 Human Story Review</h1>
                 <span class="story-counter" id="storyCounter" aria-live="polite">Loading...</span>
             </div>
             <div class="top-buttons" id="topButtons" role="toolbar" aria-label="Story actions">
@@ -712,6 +804,14 @@ HTML_TEMPLATE = """
             const story = stories[currentIndex];
             const preview = document.getElementById('linkedinPreview');
 
+            // Apply visual feedback class based on verification status
+            preview.classList.remove('story-accepted', 'story-rejected');
+            if (story.verification_status === 'approved') {
+                preview.classList.add('story-accepted');
+            } else if (story.verification_status === 'rejected') {
+                preview.classList.add('story-rejected');
+            }
+
             // Status badge
             let statusClass = 'status-pending';
             let statusText = story.verification_status;
@@ -748,37 +848,49 @@ HTML_TEMPLATE = """
                 <div class="story-details-panel">
                     <h3>📊 Story Details</h3>
                     <div class="details-grid">
-                        <div class="detail-item">
-                            <span class="detail-label">Quality Score</span>
-                            <span class="detail-value score">${story.quality_score}/10</span>
+                        <div class="details-row">
+                            <div class="detail-item fixed-width">
+                                <span class="detail-label">Quality Score</span>
+                                <span class="detail-value score">${story.quality_score}/10</span>
+                            </div>
+                            <div class="detail-item flex-grow">
+                                <span class="detail-label">Quality Justification</span>
+                                <span class="detail-value justification">${story.quality_justification ? escapeHtml(story.quality_justification) : 'No justification provided'}</span>
+                            </div>
                         </div>
-                        <div class="detail-item">
-                            <span class="detail-label">AI Verification</span>
-                            <span class="detail-value"><span class="status-badge ${verificationBadgeClass}">${story.verification_status || 'pending'}</span></span>
+                        <div class="details-row">
+                            <div class="detail-item fixed-width">
+                                <span class="detail-label">AI Verification</span>
+                                <span class="detail-value"><span class="status-badge ${verificationBadgeClass}">${story.verification_status || 'pending'}</span></span>
+                            </div>
+                            ${story.verification_reason ? `
+                            <div class="detail-item flex-grow">
+                                <span class="detail-label">Verification Reason</span>
+                                <span class="detail-value reason">${escapeHtml(story.verification_reason)}</span>
+                            </div>` : ''}
                         </div>
-                        <div class="detail-item full-width">
-                            <span class="detail-label">Quality Justification</span>
-                            <span class="detail-value justification">${story.quality_justification ? escapeHtml(story.quality_justification) : 'No justification provided'}</span>
-                        </div>
-                        ${story.verification_reason ? `
-                        <div class="detail-item full-width">
-                            <span class="detail-label">Verification Reason</span>
-                            <span class="detail-value reason">${escapeHtml(story.verification_reason)}</span>
-                        </div>` : ''}
-                        <div class="detail-item">
-                            <span class="detail-label">Publish Status</span>
-                            <span class="detail-value"><span class="status-badge ${publishBadgeClass}">${story.publish_status || 'unpublished'}</span></span>
-                        </div>
-                        <div class="detail-item">
-                            <span class="detail-label">Scheduled Time</span>
-                            <span class="detail-value">${story.scheduled_time ? new Date(story.scheduled_time).toLocaleString() : 'Not scheduled'}</span>
+                        <div class="details-row">
+                            <div class="detail-item fixed-width">
+                                <span class="detail-label">Publish Status</span>
+                                <span class="detail-value"><span class="status-badge ${publishBadgeClass}">${story.publish_status || 'unpublished'}</span></span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Scheduled Time</span>
+                                <span class="detail-value">${story.scheduled_time ? new Date(story.scheduled_time).toLocaleString() : 'Not scheduled'}</span>
+                            </div>
                         </div>
                     </div>
                 </div>
             `;
 
-            // Build mentions string from relevant_people with URNs
-            const mentions = (story.relevant_people || [])
+            // Build mentions string from story_people (directly mentioned) with URNs
+            const storyPeopleMentions = (story.story_people || [])
+                .filter(p => p.linkedin_urn || p.linkedin_profile)
+                .map(p => '@' + p.name)
+                .join(' ');
+
+            // Build mentions string from org_leaders (institution leaders) with URNs
+            const orgLeaderMentions = (story.org_leaders || [])
                 .filter(p => p.linkedin_urn || p.linkedin_profile)
                 .map(p => '@' + p.name)
                 .join(' ');
@@ -801,7 +913,16 @@ HTML_TEMPLATE = """
                 imageHtml = '<img class="linkedin-image" src="/image/' + imagePath + '" alt="' + escapedAltText + '" onerror="this.style.display=' + "'none'" + '">';
             }
 
-            // Reordered: Author -> Image -> Title -> Summary -> Promotion -> Hashtags -> Mentions
+            // Build sources HTML
+            let sourcesHtml = '';
+            if (story.source_links && story.source_links.length > 0) {
+                const sourceLinks = story.source_links
+                    .map(url => `<a href="${escapeHtml(url)}" target="_blank">${escapeHtml(url)}</a>`)
+                    .join('<br>');
+                sourcesHtml = `<div class="linkedin-sources"><strong>Source:</strong><br>${sourceLinks}</div>`;
+            }
+
+            // Reordered: Author -> Image -> Title -> Summary -> Promotion -> Sources -> (spacing) -> Hashtags -> Mentions
             preview.innerHTML = `
                 <div class="linkedin-header">
                     <div class="linkedin-avatar">{{ author_initial }}</div>
@@ -817,8 +938,13 @@ HTML_TEMPLATE = """
                 <div class="linkedin-summary">${escapeHtml(story.summary)}</div>
 
                 ${story.promotion ? `<div class="linkedin-promotion">${escapeHtml(story.promotion)}</div>` : ''}
+                ${sourcesHtml}
+
+                ${(hashtags || storyPeopleMentions || orgLeaderMentions) ? '<div class="linkedin-spacer"></div>' : ''}
                 ${hashtags ? `<div class="linkedin-hashtags">${escapeHtml(hashtags)}</div>` : ''}
-                ${mentions ? `<div class="linkedin-mentions">${escapeHtml(mentions)}</div>` : ''}
+                ${storyPeopleMentions ? `<div class="linkedin-mentions">${escapeHtml(storyPeopleMentions)}</div>` : ''}
+                ${(storyPeopleMentions && orgLeaderMentions) ? '<div class="linkedin-spacer"></div>' : ''}
+                ${orgLeaderMentions ? `<div class="linkedin-mentions linkedin-org-leaders">${escapeHtml(orgLeaderMentions)}</div>` : ''}
 
                 <div class="linkedin-footer">
                     <span>👍 Like</span>
@@ -840,9 +966,12 @@ HTML_TEMPLATE = """
             document.getElementById('editTitle').value = story.title || '';
             document.getElementById('editSummary').value = story.summary || '';
             document.getElementById('editHashtags').value = (story.hashtags || []).join(', ');
-            document.getElementById('editMentions').value = (story.relevant_people || [])
-                .filter(p => p.linkedin_urn || p.linkedin_profile)
-                .map(p => '@' + p.name).join(', ');
+            // Combine story_people and org_leaders for edit display
+            const allMentions = [
+                ...(story.story_people || []).filter(p => p.linkedin_urn || p.linkedin_profile).map(p => '@' + p.name),
+                ...(story.org_leaders || []).filter(p => p.linkedin_urn || p.linkedin_profile).map(p => '@' + p.name)
+            ];
+            document.getElementById('editMentions').value = allMentions.join(', ');
             document.getElementById('editPromotion').value = story.promotion || '';
 
             if (story.scheduled_time) {
@@ -1346,7 +1475,8 @@ class ValidationServer:
             "verification_reason": safe_get(row, "verification_reason"),
             "scheduled_time": safe_get(row, "scheduled_time"),
             "publish_status": safe_get(row, "publish_status", "unpublished"),
-            "relevant_people": parse_json_field(safe_get(row, "relevant_people")),
+            "story_people": parse_json_field(safe_get(row, "story_people")),
+            "org_leaders": parse_json_field(safe_get(row, "org_leaders")),
             "promotion": safe_get(row, "promotion"),
         }
 
@@ -1368,7 +1498,7 @@ class ValidationServer:
                     print(f"   Port {self.port} is in use, trying another...")
                 self.port += 1
         else:
-            print(f"   Could not find an available port. Try again later.")
+            print("   Could not find an available port. Try again later.")
             return
 
         if self.port != original_port:
@@ -1433,7 +1563,7 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert HTML_TEMPLATE is not None
         assert len(HTML_TEMPLATE) > 1000  # Should be substantial HTML
         assert "<!DOCTYPE html>" in HTML_TEMPLATE
-        assert "Story Validation" in HTML_TEMPLATE
+        assert "Human Story Review" in HTML_TEMPLATE
 
     def test_html_has_required_buttons():
         assert "Accept" in HTML_TEMPLATE

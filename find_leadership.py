@@ -8,15 +8,24 @@ import base64
 from typing import Optional
 
 # Import undetected-chromedriver for CAPTCHA-resistant browser automation
-try:
-    import undetected_chromedriver as uc  # type: ignore
-    from selenium.webdriver.common.by import By
+from typing import Any
 
+# Type stubs for optional dependencies
+uc: Any = None
+By: Any = None
+UC_AVAILABLE = False
+
+try:
+    import undetected_chromedriver as _uc
+    from selenium.webdriver.common.by import By as _By
+
+    uc = _uc
+    By = _By
     UC_AVAILABLE = True
 except ImportError:
-    UC_AVAILABLE = False
     print(
-        "WARNING: undetected-chromedriver not installed - pip install undetected-chromedriver selenium"
+        "WARNING: undetected-chromedriver not installed - "
+        "pip install undetected-chromedriver selenium"
     )
 
 # Key roles for different org types
@@ -60,23 +69,34 @@ def get_organizations_from_db():
     """Get unique organizations from the database."""
     conn = sqlite3.connect("content_engine.db")
     cursor = conn.cursor()
+    # Check story_people and org_leaders for organizations
     cursor.execute(
-        "SELECT relevant_people FROM stories WHERE relevant_people IS NOT NULL"
+        "SELECT story_people, org_leaders FROM stories WHERE story_people IS NOT NULL OR org_leaders IS NOT NULL"
     )
     rows = cursor.fetchall()
 
     orgs = set()
-    for (people_json,) in rows:
-        if not people_json:
-            continue
-        try:
-            people = json.loads(people_json)
-            for person in people:
-                company = person.get("company", "") or person.get("affiliation", "")
-                if company:
-                    orgs.add(company)
-        except Exception:
-            pass
+    for story_people_json, org_leaders_json in rows:
+        # Process story_people
+        if story_people_json:
+            try:
+                people = json.loads(story_people_json)
+                for person in people:
+                    company = person.get("company", "") or person.get("affiliation", "")
+                    if company:
+                        orgs.add(company)
+            except Exception:
+                pass
+        # Process org_leaders
+        if org_leaders_json:
+            try:
+                people = json.loads(org_leaders_json)
+                for person in people:
+                    company = person.get("company", "") or person.get("affiliation", "")
+                    if company:
+                        orgs.add(company)
+            except Exception:
+                pass
 
     conn.close()
     return sorted(orgs)

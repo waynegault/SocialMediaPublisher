@@ -1251,12 +1251,13 @@ class StorySearcher:
                 else:
                     organizations = []
 
-                # Extract relevant_people (list of dicts with name, company, position, linkedin_profile)
-                relevant_people = data.get("relevant_people", [])
-                if isinstance(relevant_people, list):
+                # Extract story_people from AI response
+                # These are people directly mentioned in the story
+                story_people_raw = data.get("story_people", [])
+                if isinstance(story_people_raw, list):
                     # Validate and normalize each person entry
                     validated_people = []
-                    for person in relevant_people:
+                    for person in story_people_raw:
                         if isinstance(person, dict) and person.get("name"):
                             validated_people.append(
                                 {
@@ -1268,9 +1269,9 @@ class StorySearcher:
                                     ).strip(),
                                 }
                             )
-                    relevant_people = validated_people
+                    story_people = validated_people
                 else:
-                    relevant_people = []
+                    story_people = []
 
                 story = Story(
                     title=title,
@@ -1284,7 +1285,7 @@ class StorySearcher:
                     publish_status="unpublished",
                     hashtags=hashtags,
                     organizations=organizations,
-                    relevant_people=relevant_people,
+                    story_people=story_people,  # Store in story_people (new primary field)
                 )
 
                 self.db.add_story(story)

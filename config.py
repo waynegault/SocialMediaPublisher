@@ -138,7 +138,8 @@ class Config:
     # Negative prompt - describes what to AVOID in generated images
     IMAGE_NEGATIVE_PROMPT: str = _get_str(
         "IMAGE_NEGATIVE_PROMPT",
-        "text, watermark, logo, blurry, low quality, artifacts, jpeg artifacts, "
+        "text, words, letters, numbers, labels, signs, writing, captions, titles, "
+        "watermark, logo, blurry, low quality, artifacts, jpeg artifacts, "
         "cartoon, illustration, anime, drawing, painting, sketch, abstract, "
         "deformed, distorted, disfigured, bad anatomy, unrealistic proportions, "
         "stock photo watermark, grainy, out of focus, overexposed, underexposed",
@@ -216,6 +217,13 @@ AVOID:
 - Any technology or setting not mentioned in the story
 - Explicit company logos or trademarks
 
+CRITICAL - NO TEXT IN IMAGE:
+- NEVER include any text, words, labels, signs, or writing in the image
+- Do NOT describe equipment labels, control panel text, safety signs, or any readable text
+- AI-generated text contains spelling errors that undermine professionalism
+- Focus on visual elements only - equipment shapes, lighting, colors, materials
+- If you mention a control panel, describe buttons and gauges, NOT text labels
+
 BAD IMAGE PROMPT EXAMPLE (too generic):
 "Industrial worker in factory with machinery and equipment in background"
 
@@ -229,6 +237,8 @@ STYLE: {image_style}
 CRITICAL OUTPUT FORMAT:
 - MUST start with "A photo of..." (this triggers photorealistic rendering)
 - Write ONLY the image prompt. Maximum 80 words.
+- NEVER include any text, labels, signs, or writing - AI cannot spell correctly
+- Describe visual elements only (shapes, colors, equipment) - NOT readable text
 - End with photography/camera style keywords like "shot with professional camera, editorial quality"
 - The prompt MUST specifically describe the technology/process from the story headline - not generic industrial imagery.""",
     )
@@ -260,7 +270,7 @@ REQUIREMENTS:
   * quality_score: 1-10 rating (see scoring rubric below)
   * quality_justification: Brief explanation of the score
   * hashtags: Array of 1-3 relevant hashtags (without # symbol, e.g., ["ChemicalEngineering", "Sustainability"])
-  * relevant_people: Array of people objects (see format below) - people mentioned in the story AND key leaders from organizations
+  * story_people: Array of people objects (see format below) - people mentioned in the story AND key leaders from organizations
 
 QUALITY SCORE RUBRIC:
 - 10: Breakthrough with major industry implications, from top-tier source
@@ -284,8 +294,8 @@ CRITICAL - INCLUDE NAMES IN SUMMARY:
 - If the story is about a company development, name the company AND any executives mentioned
 - Read the source article THOROUGHLY to extract actual names - they are usually in quotes or linked to profiles
 
-RELEVANT PEOPLE - MANDATORY EXTRACTION:
-For EVERY story, identify and include in relevant_people:
+STORY PEOPLE - MANDATORY EXTRACTION:
+For EVERY story, identify and include in story_people:
 1. People MENTIONED in the story (researchers, engineers, scientists, executives quoted)
 2. Authors of any research papers or studies mentioned (senior author, lead author, co-authors)
 2. Key leaders from ANY organizations/universities mentioned in the story:
@@ -299,7 +309,7 @@ This reduces the need to mention all people in the summary itself.
 CRITICAL - NO PLACEHOLDERS:
 - Extract REAL names from the article - never use "TBA", "Unknown", "N/A", or placeholder text
 - If a person's name is explicitly mentioned in the article, include them
-- If you cannot find real names, leave relevant_people as an empty array []
+- If you cannot find real names, leave story_people as an empty array []
 - Academic stories usually mention researchers by name - look carefully
 - Include the researcher's full name, their institution, and their role
 - Example: If article mentions "Siddharth Deshpande, assistant professor" at "University of Rochester"
@@ -340,7 +350,7 @@ RESPOND WITH ONLY THIS JSON FORMAT:
       "quality_justification": "Highly relevant topic, reputable source, timely",
       "hashtags": ["ChemicalEngineering", "Innovation"],
       "organizations": ["MIT", "BASF"],
-      "relevant_people": [
+      "story_people": [
         {{"name": "Dr. Jane Smith", "company": "MIT", "position": "Lead Researcher", "linkedin_profile": ""}},
         {{"name": "John Doe", "company": "BASF", "position": "CEO", "linkedin_profile": ""}}
       ]
@@ -354,11 +364,11 @@ ORGANIZATIONS - ALWAYS EXTRACT:
 - Examples: ["Singapore PUB", "NEWater", "MIT", "BASF", "U.S. Department of Energy"]
 - Organizations enable later lookup of leadership profiles on LinkedIn
 
-IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real URLs. Write ALL summaries in first person. ALWAYS populate relevant_people with people from the story AND key leaders from mentioned organizations. ALWAYS populate organizations with ALL institutions mentioned.""",
+IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real URLs. Write ALL summaries in first person. ALWAYS populate story_people with people from the story AND key leaders from mentioned organizations. ALWAYS populate organizations with ALL institutions mentioned.""",
     )
 
     # Verification prompt - used to verify story suitability for publication
-    # Placeholders: {search_prompt}, {story_title}, {story_summary}, {story_sources}, {relevant_people_count}, {linkedin_profiles_found}, {summary_word_limit}, {promotion_message}
+    # Placeholders: {search_prompt}, {story_title}, {story_summary}, {story_sources}, {people_count}, {linkedin_profiles_found}, {summary_word_limit}, {promotion_message}
     VERIFICATION_PROMPT: str = _get_str(
         "VERIFICATION_PROMPT",
         """You are a strict editorial review board for a professional engineering-focused LinkedIn publication.
@@ -375,7 +385,7 @@ PROMOTION MESSAGE (appended to post):
 {promotion_message}
 
 LINKEDIN PROFILE STATUS:
-Relevant people identified: {relevant_people_count}
+People identified: {people_count}
 LinkedIn profiles found: {linkedin_profiles_found}
 
 EVALUATION CRITERIA:
@@ -391,22 +401,31 @@ EVALUATION CRITERIA:
 
 PROMOTION MESSAGE EVALUATION:
 10. PROMOTION ALIGNMENT: Does the promotion message connect authentically to the story's topic/technology/industry?
-11. PROMOTION TONE: Is the promotion professional and confident WITHOUT being:
+11. PROMOTION TONE: Is the promotion professional, dignified, and confident WITHOUT being:
     - Sycophantic (excessive flattery or fawning)
     - Begging or desperate-sounding
     - Self-demeaning or apologetic
     - Overly humble or submissive
-12. PROMOTION QUALITY: Does it maintain professional gravitas while expressing genuine interest in opportunities?
+    - Pushy, aggressive, or demanding
+12. PROMOTION EFFECTIVENESS: Is it an effective call to action that:
+    - Clearly signals availability for opportunities
+    - Invites connection or conversation
+    - Demonstrates genuine interest in the field/technology
+    - Would encourage recruiters or hiring managers to reach out
+13. PROMOTION QUALITY: Does it maintain professional gravitas while being approachable and personable?
 
 BAD PROMOTION EXAMPLES (should REJECT):
-- "I would be so grateful if anyone could help me find a job, I really need this opportunity!"
-- "Your company is absolutely amazing and I'd do anything to work there!"
-- "I know I'm just a graduate but maybe someone might consider giving me a chance?"
+- "I would be so grateful if anyone could help me find a job, I really need this opportunity!" (desperate, begging)
+- "Your company is absolutely amazing and I'd do anything to work there!" (sycophantic)
+- "I know I'm just a graduate but maybe someone might consider giving me a chance?" (self-demeaning)
+- "HIRE ME! DM for my CV!" (pushy, unprofessional)
+- "Passionate about sustainability." (vague, no call to action)
 
 GOOD PROMOTION EXAMPLES (should APPROVE):
-- "🎓 MEng Chemical Engineer with keen interest in carbon capture technologies. Open to opportunities in this space."
-- "Hydrogen engineering enthusiast actively exploring roles in clean energy. Let's connect."
-- "Process engineer seeking to contribute to innovative sustainable technology projects."
+- "MEng Chemical Engineer exploring opportunities in carbon capture. I'd welcome a conversation with teams working in this space."
+- "Hydrogen engineering enthusiast actively seeking roles in clean energy. Open to connecting with hiring managers in electrolysis or fuel cell development."
+- "Process engineer looking to contribute to innovative sustainable projects. If your team is building in this area, I'd love to hear from you."
+- "Fascinated by this approach to catalyst design. Currently seeking process engineering roles — feel free to reach out or connect."
 
 IMAGE EVALUATION (if an image is provided):
 13. IMAGE PROFESSIONALISM: Is the image credible and appropriate for a serious engineering context?
@@ -430,9 +449,10 @@ Summary: "What interests me about Dr. Chen's work at MIT is the practical engine
 Reason: Technical headline, first-person perspective, engineering analysis, specific details, critical thinking
 
 DECISION RULES:
-- APPROVE only if ALL primary criteria (1-9) AND promotion criteria (10-12) are satisfied
+- APPROVE only if ALL primary criteria (1-9) AND promotion criteria (10-13) are satisfied
 - REJECT if ANY primary criterion is weak or unmet
-- REJECT if promotion message sounds sycophantic, begging, or self-demeaning
+- REJECT if promotion message sounds sycophantic, begging, self-demeaning, or lacks a clear call to action
+- REJECT if promotion is vague without inviting engagement or connection
 - When uncertain, REJECT
 
 Respond with ONLY one of these exact words:
@@ -486,7 +506,7 @@ TASK:
    - quality_score: 1-10 rating (see scoring rubric below)
    - quality_justification: Brief explanation of the score
    - hashtags: Array of 1-3 relevant hashtags (without # symbol)
-   - relevant_people: Array of people objects (see format below) - people mentioned AND key org leaders
+   - story_people: Array of people objects (see format below) - people mentioned AND key org leaders
 
 QUALITY SCORE RUBRIC:
 - 10: Breakthrough with major industry implications, from top-tier source
@@ -503,8 +523,8 @@ CRITICAL - INCLUDE NAMES IN SUMMARY:
 - If company development, name the company AND any executives mentioned
 - Read the source article carefully to extract actual names
 
-RELEVANT PEOPLE - MANDATORY EXTRACTION:
-For EVERY story, identify and include in relevant_people:
+STORY PEOPLE - MANDATORY EXTRACTION:
+For EVERY story, identify and include in story_people:
 1. People MENTIONED in the story (researchers, engineers, scientists, executives quoted)
 2. Key leaders from ALL organizations/universities mentioned in the story:
    - CEO, President, Managing Director, Founder, Owner
@@ -516,7 +536,7 @@ For EVERY story, identify and include in relevant_people:
 CRITICAL - NO PLACEHOLDERS:
 - Extract REAL names from the article - never use "TBA", "Unknown", "N/A", or placeholder text
 - If a person's name is explicitly mentioned in the article, include them
-- If you cannot find real names, leave relevant_people as an empty array []
+- If you cannot find real names, leave story_people as an empty array []
 - Academic stories usually mention researchers by name - look carefully
 
 WRITING STYLE FOR SUMMARIES:
@@ -552,7 +572,7 @@ Example:
       "quality_score": 8,
       "quality_justification": "Highly relevant, reputable source",
       "hashtags": ["ChemicalEngineering", "Innovation"],
-      "relevant_people": [
+      "story_people": [
         {{"name": "Dr. John Doe", "company": "Dow Chemical", "position": "Lead Researcher", "linkedin_profile": ""}},
         {{"name": "Jane Smith", "company": "Dow Chemical", "position": "CEO", "linkedin_profile": ""}}
       ]
@@ -560,7 +580,7 @@ Example:
   ]
 }}
 
-Return ONLY the JSON object. Write ALL summaries in first person. ALWAYS populate relevant_people.""",
+Return ONLY the JSON object. Write ALL summaries in first person. ALWAYS populate story_people.""",
     )
 
     # LinkedIn mention search prompt - finds LinkedIn profiles for story entities

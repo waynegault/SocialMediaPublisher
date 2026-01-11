@@ -326,10 +326,8 @@ Stories are stored in SQLite with the following fields:
 - `linkedin_post_id`: LinkedIn's post identifier
 - `enrichment_status`: pending/enriched/skipped
 - `organizations`: JSON array of organization names mentioned in story
-- `story_people`: JSON array of people mentioned in story (name, title, affiliation)
+- `story_people`: JSON array of people mentioned directly in story (name, title, affiliation)
 - `org_leaders`: JSON array of key executives from organizations (name, title, org)
-- `relevant_people`: JSON array of people for LinkedIn lookup (name, company, position, linkedin_profile)
-  - Populated during story generation with people from the story AND key org leaders
 - `linkedin_handles`: JSON array of verified LinkedIn profiles with @ handles
 - `promotion`: Personalized job-seeking message aligned to story content
 

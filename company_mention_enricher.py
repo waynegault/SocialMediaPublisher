@@ -112,13 +112,13 @@ class CompanyMentionEnricher:
 
     def enrich_pending_stories(self) -> tuple[int, int]:
         """
-        Enrich all pending stories with LinkedIn profiles for relevant_people.
+        Enrich all pending stories with LinkedIn profiles for story_people and org_leaders.
 
         The enrichment process now works as follows:
-        1. During story generation, relevant_people is populated with people mentioned
+        1. During story generation, story_people is populated with people mentioned
            in the story AND key leaders from mentioned organizations
         2. This method finds LinkedIn profiles for those people
-        3. If relevant_people is empty, fall back to AI extraction
+        3. If story_people is empty, fall back to AI extraction
 
         Returns tuple of (enriched_count, skipped_count).
         """
@@ -138,20 +138,20 @@ class CompanyMentionEnricher:
             try:
                 logger.info(f"[{i}/{total}] Enriching: {story.title}")
 
-                # Check if we have relevant_people from story generation
-                if story.relevant_people:
+                # Check if we have story_people from story generation
+                if story.story_people:
                     logger.info(
-                        f"  Using {len(story.relevant_people)} people from story generation"
+                        f"  Using {len(story.story_people)} people from story generation"
                     )
 
-                    # Find LinkedIn profiles for relevant_people
+                    # Find LinkedIn profiles for story_people
                     people_for_lookup = [
                         {
                             "name": p.get("name", ""),
                             "title": p.get("position", ""),
                             "affiliation": p.get("company", ""),
                         }
-                        for p in story.relevant_people
+                        for p in story.story_people
                         if p.get("name")
                     ]
 
@@ -160,13 +160,13 @@ class CompanyMentionEnricher:
                             people_for_lookup
                         )
 
-                        # Update relevant_people with found LinkedIn profiles
+                        # Update story_people with found LinkedIn profiles
                         if linkedin_profiles:
                             profiles_by_name = {
                                 h.get("name", "").lower(): h for h in linkedin_profiles
                             }
                             updated_people = []
-                            for person in story.relevant_people:
+                            for person in story.story_people:
                                 name_lower = person.get("name", "").lower()
                                 if name_lower in profiles_by_name:
                                     profile = profiles_by_name[name_lower]
@@ -174,7 +174,7 @@ class CompanyMentionEnricher:
                                         "linkedin_url", ""
                                     )
                                 updated_people.append(person)
-                            story.relevant_people = updated_people
+                            story.story_people = updated_people
 
                         logger.info(
                             f"  ✓ Found {len(linkedin_profiles)} LinkedIn profiles"
@@ -184,11 +184,11 @@ class CompanyMentionEnricher:
                                 f"    → {profile.get('name', '')}: {profile.get('linkedin_url', '')}"
                             )
 
-                    # Also populate organizations from relevant_people companies
+                    # Also populate organizations from story_people companies
                     orgs = list(
                         set(
                             p.get("company", "")
-                            for p in story.relevant_people
+                            for p in story.story_people
                             if p.get("company")
                         )
                     )
@@ -199,9 +199,9 @@ class CompanyMentionEnricher:
                     enriched += 1
 
                 else:
-                    # Fall back to AI extraction if no relevant_people
+                    # Fall back to AI extraction if no story_people
                     logger.info(
-                        "  No relevant_people from story generation, using AI extraction..."
+                        "  No story_people from story generation, using AI extraction..."
                     )
                     result = self._extract_orgs_and_people(story)
 
@@ -583,9 +583,9 @@ Return ONLY valid JSON, no explanation."""
 
     def populate_linkedin_mentions(self) -> tuple[int, int]:
         """
-        Look up and store URNs directly in relevant_people.linkedin_urn.
+        Look up and store URNs directly in story_people.linkedin_urn and org_leaders.linkedin_urn.
 
-        This streamlined approach stores URNs within relevant_people rather
+        This streamlined approach stores URNs within story_people and org_leaders rather
         than duplicating data in a separate linkedin_mentions column.
 
         Returns tuple of (enriched_count, skipped_count).
@@ -611,8 +611,10 @@ Return ONLY valid JSON, no explanation."""
                 try:
                     logger.info(f"[{i}/{total}] Looking up URNs for: {story.title}")
 
-                    if not story.relevant_people:
-                        logger.info("  ⏭ No relevant people")
+                    # Combine story_people and org_leaders for lookup
+                    all_people = (story.story_people or []) + (story.org_leaders or [])
+                    if not all_people:
+                        logger.info("  ⏭ No people to look up")
                         skipped += 1
                         continue
 
@@ -620,7 +622,7 @@ Return ONLY valid JSON, no explanation."""
                     # 1. Has personal profile URL but no URN
                     # 2. Has organization profile (wrong type - needs personal profile search)
                     people_needing_lookup = []
-                    for p in story.relevant_people:
+                    for p in all_people:
                         profile = p.get("linkedin_profile", "")
                         urn = p.get("linkedin_urn", "")
                         profile_type = p.get("linkedin_profile_type", "")
@@ -716,7 +718,7 @@ Return ONLY valid JSON, no explanation."""
                                     logger.info(f"    ✗ {name}: No URN found")
                             time.sleep(2.0)
 
-                    # Save updated relevant_people
+                    # Save updated story_people and org_leaders
                     self.db.update_story(story)
 
                     if urns_found > 0:
@@ -908,18 +910,19 @@ Return ONLY valid JSON, no explanation."""
         stories = []
         with self.db._get_connection() as conn:
             cursor = conn.cursor()
-            # Stories with relevant_people containing linkedin_profile
+            # Stories with story_people or org_leaders containing linkedin_profile
             cursor.execute("""
                 SELECT * FROM stories
-                WHERE relevant_people IS NOT NULL
-                AND relevant_people LIKE '%linkedin_profile%'
+                WHERE (story_people LIKE '%linkedin_profile%')
+                   OR (org_leaders LIKE '%linkedin_profile%')
                 ORDER BY id DESC
             """)
             for row in cursor.fetchall():
                 story = Story.from_row(row)
-                if story.relevant_people:
+                all_people = (story.story_people or []) + (story.org_leaders or [])
+                if all_people:
                     needs_lookup = False
-                    for p in story.relevant_people:
+                    for p in all_people:
                         has_profile = bool(p.get("linkedin_profile"))
                         has_urn = bool(p.get("linkedin_urn"))
                         profile_type = p.get("linkedin_profile_type", "")
@@ -1471,11 +1474,11 @@ Return ONLY valid JSON, no explanation."""
             )
             with_people = cursor.fetchone()[0]
 
-            # Count stories with LinkedIn URNs in relevant_people
+            # Count stories with LinkedIn URNs in story_people or org_leaders
             cursor.execute(
                 """SELECT COUNT(*) FROM stories
                    WHERE enrichment_status = 'enriched'
-                   AND relevant_people LIKE '%linkedin_urn%'"""
+                   AND (story_people LIKE '%linkedin_urn%' OR org_leaders LIKE '%linkedin_urn%')"""
             )
             with_urns = cursor.fetchone()[0]
 
