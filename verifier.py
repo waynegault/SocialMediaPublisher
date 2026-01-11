@@ -160,7 +160,9 @@ class ContentVerifier:
             try:
                 source_result = self.source_verifier.verify_story_sources(story)
                 if not source_result.is_verified:
-                    reason = f"Source verification failed: {source_result.recommendation}"
+                    reason = (
+                        f"Source verification failed: {source_result.recommendation}"
+                    )
                     logger.warning(f"  Source verification failed: {reason}")
                     return (False, reason)
                 logger.debug(
