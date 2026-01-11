@@ -43,6 +43,7 @@ TEST_MODULES = [
     ("analytics_db", "Analytics Data Warehouse"),
     ("migrations", "Database Migrations"),
     ("events", "Event System"),
+    ("di", "Dependency Injection"),
 ]
 
 
