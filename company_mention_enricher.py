@@ -8,6 +8,7 @@ it defaults to NO_COMPANY_MENTION.
 import json
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from google import genai  # type: ignore
 from openai import OpenAI
@@ -17,6 +18,9 @@ import re
 from api_client import api_client
 from config import Config
 from database import Database, Story
+
+if TYPE_CHECKING:
+    from linkedin_profile_lookup import LinkedInCompanyLookup
 
 logger = logging.getLogger(__name__)
 
@@ -144,12 +148,15 @@ class CompanyMentionEnricher:
                         f"  Using {len(story.story_people)} people from story generation"
                     )
 
-                    # Find LinkedIn profiles for story_people
+                    # Find LinkedIn profiles for story_people with enhanced context
                     people_for_lookup = [
                         {
                             "name": p.get("name", ""),
                             "title": p.get("position", ""),
                             "affiliation": p.get("company", ""),
+                            "role_type": p.get("role_type", ""),
+                            "department": p.get("department", ""),
+                            "location": p.get("location", ""),
                         }
                         for p in story.story_people
                         if p.get("name")
@@ -157,7 +164,9 @@ class CompanyMentionEnricher:
 
                     if people_for_lookup:
                         linkedin_profiles = self._find_linkedin_profiles_batch(
-                            people_for_lookup
+                            people_for_lookup,
+                            story_title=story.title,
+                            story_category=story.category,
                         )
 
                         # Update story_people with found LinkedIn profiles
@@ -406,20 +415,29 @@ Return ONLY valid JSON, no explanation."""
 
                 all_leaders = []
                 for org in story.organizations:
-                    leaders = self._get_org_leaders(org)
+                    # Pass story context for context-aware leader selection
+                    leaders = self._get_org_leaders(
+                        org,
+                        story_category=story.category,
+                        story_title=story.title,
+                    )
                     if leaders:
                         all_leaders.extend(leaders)
                         logger.info(f"  ✓ {org}: {len(leaders)} leaders found")
                     else:
                         logger.info(f"  ⏭ {org}: No leaders found")
 
-                # Look up LinkedIn profiles for org_leaders (same as story_people)
+                # Look up LinkedIn profiles for org_leaders using enhanced matching
                 if all_leaders:
+                    # Build enhanced lookup list with all available context
                     people_for_lookup = [
                         {
                             "name": leader.get("name", ""),
                             "title": leader.get("title", ""),
                             "affiliation": leader.get("organization", ""),
+                            "role_type": leader.get("role_type", ""),
+                            "department": leader.get("department", ""),
+                            "location": leader.get("location", ""),
                         }
                         for leader in all_leaders
                         if leader.get("name")
@@ -427,7 +445,9 @@ Return ONLY valid JSON, no explanation."""
 
                     if people_for_lookup:
                         linkedin_profiles = self._find_linkedin_profiles_batch(
-                            people_for_lookup
+                            people_for_lookup,
+                            story_title=story.title,
+                            story_category=story.category,
                         )
 
                         # Update org_leaders with found LinkedIn profiles
@@ -467,9 +487,28 @@ Return ONLY valid JSON, no explanation."""
         )
         return (enriched, skipped)
 
-    def _get_org_leaders(self, organization_name: str) -> list[dict]:
-        """Get key leaders for an organization using AI."""
-        prompt = Config.ORG_LEADERS_PROMPT.format(organization_name=organization_name)
+    def _get_org_leaders(
+        self,
+        organization_name: str,
+        story_category: str = "",
+        story_title: str = "",
+    ) -> list[dict]:
+        """Get key leaders for an organization using AI with story context.
+
+        Args:
+            organization_name: Name of the organization to find leaders for
+            story_category: Category of the story (Research, Business, etc.)
+            story_title: Title of the story for additional context
+
+        Returns:
+            List of leader dictionaries with name, title, organization, role_type, etc.
+        """
+        # Format prompt with story context for context-aware leader selection
+        prompt = Config.ORG_LEADERS_PROMPT.format(
+            organization_name=organization_name,
+            story_category=story_category or "General",
+            story_title=story_title or "N/A",
+        )
 
         try:
             response_text = self._get_ai_response(prompt)
@@ -483,7 +522,16 @@ Return ONLY valid JSON, no explanation."""
                 response_text = re.sub(r"\n?```$", "", response_text)
 
             data = json.loads(response_text)
-            return data.get("leaders", [])
+            leaders = data.get("leaders", [])
+
+            # Ensure each leader has required fields with defaults
+            for leader in leaders:
+                leader.setdefault("role_type", "executive")
+                leader.setdefault("department", "")
+                leader.setdefault("location", "")
+                leader.setdefault("linkedin_profile", "")
+
+            return leaders
 
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse leaders JSON: {e}")
@@ -509,17 +557,30 @@ Return ONLY valid JSON, no explanation."""
                 stories.append(Story.from_row(row))
         return stories
 
-    def _find_linkedin_profiles_batch(self, people: list[dict]) -> list[dict]:
+    def _find_linkedin_profiles_batch(
+        self,
+        people: list[dict],
+        story_title: str = "",
+        story_category: str = "",
+    ) -> list[dict]:
         """
         Search for LinkedIn profiles for a batch of people using Gemini with Google Search.
 
         Uses Google Search grounding to find real LinkedIn profile URLs.
         Returns list of profiles with verified URLs.
+
+        Args:
+            people: List of person dictionaries with name, title, affiliation
+            story_title: Optional story title for context
+            story_category: Optional story category for context
+
+        Returns:
+            List of validated profile dictionaries
         """
         if not people:
             return []
 
-        # Build the people list for the prompt
+        # Build the people list for the prompt with enhanced context
         people_lines = []
         for i, person in enumerate(people, 1):
             name = person.get("name", "")
@@ -527,21 +588,45 @@ Return ONLY valid JSON, no explanation."""
                 continue
             title = person.get("title", "")
             affiliation = person.get("affiliation", "")
-            if title and affiliation:
-                people_lines.append(f"{i}. {name} - {title} at {affiliation}")
-            elif affiliation:
-                people_lines.append(f"{i}. {name} - {affiliation}")
-            elif title:
-                people_lines.append(f"{i}. {name} - {title}")
-            else:
-                people_lines.append(f"{i}. {name}")
+            role_type = person.get("role_type", "")
+            department = person.get("department", "")
+            location = person.get("location", "")
+
+            # Build a detailed line for each person
+            parts = [f"{i}. {name}"]
+            if title:
+                parts.append(f"({title})")
+            if affiliation:
+                parts.append(f"at {affiliation}")
+            if department:
+                parts.append(f"in {department}")
+            if location:
+                parts.append(f"from {location}")
+            if role_type:
+                parts.append(f"[{role_type}]")
+
+            people_lines.append(" ".join(parts))
 
         if not people_lines:
             return []
 
         people_list_text = "\n".join(people_lines)
+
+        # Build story context for better matching
+        story_context = ""
+        if story_title or story_category:
+            context_parts = []
+            if story_category:
+                context_parts.append(f"Category: {story_category}")
+            if story_title:
+                context_parts.append(f"Title: {story_title}")
+            story_context = "\n".join(context_parts)
+        else:
+            story_context = "No additional story context available"
+
         prompt = Config.LINKEDIN_PROFILE_SEARCH_PROMPT.format(
-            people_list=people_list_text
+            people_list=people_list_text,
+            story_context=story_context,
         )
 
         try:
@@ -613,6 +698,146 @@ Return ONLY valid JSON, no explanation."""
         except Exception as e:
             logger.error(f"Error finding LinkedIn profiles: {e}")
             return []
+
+    def _find_profile_with_fallback(
+        self,
+        person: dict,
+        org_linkedin_urls: dict[str, str],
+        lookup: "LinkedInCompanyLookup",
+    ) -> tuple[str, str, bool]:
+        """
+        Find LinkedIn profile for a person with organization fallback.
+
+        This method implements the high-precision profile matching strategy:
+        1. Search for person's LinkedIn profile
+        2. If found with high confidence, use it
+        3. If not found OR low confidence, fall back to organization profile
+
+        Args:
+            person: Person dictionary with name, company, position, etc.
+            org_linkedin_urls: Cache of organization name -> LinkedIn URL
+            lookup: LinkedInCompanyLookup instance
+
+        Returns:
+            Tuple of (linkedin_url, match_type, is_person_profile)
+            - linkedin_url: The URL (person or org)
+            - match_type: "person", "org_fallback", or "none"
+            - is_person_profile: True if this is a personal profile
+        """
+        from profile_matcher import (
+            ProfileMatcher,
+            PersonContext,
+            RoleType,
+            create_person_context,
+        )
+
+        name = person.get("name", "")
+        org_name = person.get("company", "") or person.get("organization", "")
+
+        if not name:
+            return ("", "none", False)
+
+        # Create person context from dictionary
+        person_context = create_person_context(person)
+
+        # Get org LinkedIn URL (cached or look up)
+        org_url = None
+        if org_name:
+            if org_name in org_linkedin_urls:
+                org_url = org_linkedin_urls[org_name]
+            else:
+                # Look up org LinkedIn page
+                url, slug = lookup.search_company(org_name)
+                if url:
+                    org_linkedin_urls[org_name] = url
+                    org_url = url
+                    logger.debug(f"Found org LinkedIn page: {org_name} -> {url}")
+
+        # Use ProfileMatcher for high-precision matching
+        matcher = ProfileMatcher(linkedin_lookup=lookup)
+        result = matcher.match_person(person_context, org_fallback_url=org_url)
+
+        if result.is_person_profile() and result.matched_profile:
+            return (result.matched_profile.linkedin_url, "person", True)
+        elif result.confidence.value == "org_fallback" and result.org_linkedin_url:
+            logger.info(f"  → Using org fallback for {name}: {result.org_linkedin_url}")
+            return (result.org_linkedin_url, "org_fallback", False)
+        else:
+            return ("", "none", False)
+
+    def find_profiles_with_fallback(self, story: Story) -> dict:
+        """
+        Find LinkedIn profiles for all people in a story with org fallback.
+
+        This enhanced method uses multi-signal scoring and falls back to
+        organization profiles when personal profiles can't be confidently matched.
+
+        Args:
+            story: Story object with story_people, org_leaders, and organizations
+
+        Returns:
+            Dictionary with:
+            - person_profiles: List of people with matched personal profiles
+            - org_fallbacks: List of people using org profile fallback
+            - org_urls: Mapping of org name -> LinkedIn URL
+        """
+        from linkedin_profile_lookup import LinkedInCompanyLookup
+
+        result = {
+            "person_profiles": [],
+            "org_fallbacks": [],
+            "org_urls": {},
+            "total_matched": 0,
+        }
+
+        all_people = (story.story_people or []) + (story.org_leaders or [])
+        if not all_people:
+            return result
+
+        logger.info(f"Finding profiles with fallback for {len(all_people)} people")
+
+        # Pre-fetch org LinkedIn pages
+        org_urls = {}
+        with LinkedInCompanyLookup(genai_client=self.client) as lookup:
+            # Look up organization pages first (for fallback)
+            for org in story.organizations or []:
+                url, slug = lookup.search_company(org)
+                if url:
+                    org_urls[org] = url
+                    logger.debug(f"  Org page: {org} -> {url}")
+
+            # Now match each person
+            for person in all_people:
+                name = person.get("name", "")
+                if not name:
+                    continue
+
+                linkedin_url, match_type, is_person = self._find_profile_with_fallback(
+                    person, org_urls, lookup
+                )
+
+                if is_person:
+                    result["person_profiles"].append(
+                        {
+                            **person,
+                            "linkedin_profile": linkedin_url,
+                            "profile_type": "person",
+                        }
+                    )
+                elif match_type == "org_fallback":
+                    result["org_fallbacks"].append(
+                        {
+                            **person,
+                            "linkedin_profile": linkedin_url,
+                            "profile_type": "org_fallback",
+                        }
+                    )
+
+        result["org_urls"] = org_urls
+        result["total_matched"] = len(result["person_profiles"]) + len(
+            result["org_fallbacks"]
+        )
+        return result
 
     def populate_linkedin_mentions(self) -> tuple[int, int]:
         """

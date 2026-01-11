@@ -610,14 +610,14 @@ HTML_TEMPLATE = """
 
         .details-row {
             display: grid;
-            grid-template-columns: 200px 1fr;
+            grid-template-columns: 280px 1fr;
             gap: 16px;
             align-items: center;
             min-height: 36px;
         }
 
         .detail-item.fixed-width {
-            width: 200px;
+            width: 280px;
             flex-shrink: 0;
             display: flex;
             align-items: center;
@@ -944,8 +944,8 @@ HTML_TEMPLATE = """
             <div class="top-buttons" id="topButtons" role="toolbar" aria-label="Story actions">
                 <button class="btn btn-accept" onclick="acceptStory()" aria-label="Accept this story for publication (A)" title="Mark this story as APPROVED for publication. Use after reviewing the content, image, and promotion message. Keyboard: A">✓ Accept</button>
                 <button class="btn btn-reject" onclick="rejectStory()" aria-label="Reject this story (R)" title="Mark this story as REJECTED. It will not be published. Use for low-quality or irrelevant content. Keyboard: R">✗ Reject</button>
-                <button class="btn btn-publish" onclick="publishStory()" aria-label="Publish this story to LinkedIn (P)" id="publishBtn" title="Publish this approved story to LinkedIn immediately. Story must be approved first. Keyboard: P">🚀 Publish</button>
                 <button class="btn btn-edit" onclick="toggleEdit()" aria-label="Edit story details (E)" aria-expanded="false" id="editToggleBtn" title="Open the edit panel to modify the title, summary, hashtags, or promotion message. Keyboard: E">✎ Edit</button>
+                <button class="btn btn-publish" onclick="publishStory()" aria-label="Publish this story to LinkedIn (P)" id="publishBtn" title="Publish this approved story to LinkedIn immediately. Story must be approved first. Keyboard: P">🚀 Publish</button>
                 <button class="btn btn-close" onclick="closeValidator()" aria-label="Close validator and return to menu" title="Close this review interface and return to the main menu. All changes are saved automatically.">Close</button>
             </div>
         </header>
