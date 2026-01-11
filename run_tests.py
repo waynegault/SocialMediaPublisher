@@ -35,6 +35,7 @@ TEST_MODULES = [
     ("ab_testing", "A/B Testing"),
     ("cache", "Cache"),
     ("image_quality", "Image Quality"),
+    ("image_style", "Image Style"),
 ]
 
 
