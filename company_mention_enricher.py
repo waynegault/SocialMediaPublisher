@@ -28,23 +28,48 @@ logger = logging.getLogger(__name__)
 NO_COMPANY_MENTION = "NO_COMPANY_MENTION"
 
 
-def validate_linkedin_url(url: str) -> bool:
+def validate_linkedin_url(url: str, strict: bool = False) -> bool:
     """
-    Validate that a LinkedIn URL returns a valid profile page.
+    Validate that a LinkedIn URL appears to be a valid profile URL.
 
-    Performs a HEAD request to check if the URL:
-    1. Is accessible (returns 200 OK)
-    2. Does not redirect to a login/error page
+    By default (strict=False), only validates URL format since LinkedIn blocks
+    unauthenticated HEAD/GET requests. Full validation happens later when
+    visiting the profile with an authenticated browser session.
+
+    When strict=True, performs HTTP validation (may fail due to LinkedIn blocks).
 
     Args:
         url: The LinkedIn profile URL to validate
+        strict: If True, perform HTTP request validation (may be blocked by LinkedIn)
 
     Returns:
-        True if the URL appears to be a valid, accessible profile
+        True if the URL appears to be a valid LinkedIn profile URL
     """
     if not url or "linkedin.com/in/" not in url:
         return False
 
+    # Extract the username/slug from the URL
+    import re
+    match = re.search(r"linkedin\.com/in/([\w\-]+)", url)
+    if not match:
+        return False
+    
+    slug = match.group(1)
+    
+    # Basic format validation - reject obviously invalid slugs
+    if len(slug) < 2 or len(slug) > 100:
+        return False
+    
+    # Reject common error page slugs
+    invalid_slugs = {"login", "authwall", "error", "404", "unavailable", "uas"}
+    if slug.lower() in invalid_slugs:
+        return False
+    
+    # If not strict mode, accept the URL based on format alone
+    if not strict:
+        return True
+
+    # Strict mode: perform HTTP validation (may be blocked by LinkedIn)
     try:
         # Use headers that mimic a browser to avoid blocks
         headers = {
@@ -1015,23 +1040,28 @@ Return ONLY valid JSON, no explanation."""
         # Clean name - remove parentheses for cleaner search
         clean_name = regex.sub(r"\([^)]*\)", "", name).strip()
 
+        # Extract first and last name for validation
+        name_parts = clean_name.lower().split()
+        first_name = name_parts[0] if name_parts else ""
+        last_name = name_parts[-1] if len(name_parts) > 1 else ""
+
         # Also extract the part in parentheses if present (e.g., "Harry (Shih-I) Tan" -> "Shih-I Tan")
         alt_name = None
         paren_match = regex.search(r"\(([^)]+)\)", name)
         if paren_match:
             parts = name.split()
             if len(parts) > 1:
-                last_name = parts[-1]
-                alt_name = f"{paren_match.group(1)} {last_name}"
+                last_name_orig = parts[-1]
+                alt_name = f"{paren_match.group(1)} {last_name_orig}"
 
         # Extract location hint from company name
         location = self._extract_location_hint(company)
 
-        # Build search query - use location context for better results
+        # Build search query - use "linkedin" in quotes to ensure it's always included
         if location:
-            query = f'"{clean_name}" {location} site:linkedin.com/in'
+            query = f'"{clean_name}" {location} "linkedin" site:linkedin.com/in'
         else:
-            query = f'"{clean_name}" "{company}" site:linkedin.com/in'
+            query = f'"{clean_name}" "{company}" "linkedin" site:linkedin.com/in'
 
         search_url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
 
@@ -1055,18 +1085,39 @@ Return ONLY valid JSON, no explanation."""
                     seen.add(url_clean)
                     unique_urls.append(url_clean)
 
-            if unique_urls:
-                # Return first result
-                url = unique_urls[0]
-                logger.debug(f"Found LinkedIn URL: {url}")
-                return url
+            # Validate each URL to ensure name matches before accepting
+            for url in unique_urls:
+                # Try to get page title/text to validate name
+                try:
+                    driver.get(url)
+                    time.sleep(1.5)
+                    page_text = driver.page_source.lower()
+                    
+                    # Check if both first and last name appear on the profile page
+                    if first_name and last_name:
+                        if first_name in page_text and last_name in page_text:
+                            logger.debug(f"Found validated LinkedIn URL: {url}")
+                            return url
+                        else:
+                            logger.debug(f"Skipping {url} - name mismatch (expected {first_name} {last_name})")
+                    elif first_name:
+                        if first_name in page_text:
+                            logger.debug(f"Found LinkedIn URL (first name match): {url}")
+                            return url
+                    else:
+                        # No name parts to validate, accept first result
+                        logger.debug(f"Found LinkedIn URL (no validation): {url}")
+                        return url
+                except Exception as e:
+                    logger.debug(f"Error validating {url}: {e}")
+                    continue
 
             # Try alternate search with alt_name if first search failed
             if alt_name:
                 if location:
-                    query2 = f'"{alt_name}" {location} site:linkedin.com/in'
+                    query2 = f'"{alt_name}" {location} "linkedin" site:linkedin.com/in'
                 else:
-                    query2 = f'"{alt_name}" "{company}" site:linkedin.com/in'
+                    query2 = f'"{alt_name}" "{company}" "linkedin" site:linkedin.com/in'
 
                 search_url2 = (
                     f"https://www.google.com/search?q={urllib.parse.quote(query2)}"
@@ -1087,7 +1138,7 @@ Return ONLY valid JSON, no explanation."""
 
             # Try with position as last resort
             if position:
-                query3 = f'"{clean_name}" {position} site:linkedin.com/in'
+                query3 = f'"{clean_name}" {position} "linkedin" site:linkedin.com/in'
                 search_url3 = (
                     f"https://www.google.com/search?q={urllib.parse.quote(query3)}"
                 )

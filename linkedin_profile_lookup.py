@@ -1846,10 +1846,11 @@ NOT_FOUND"""
             # ============================================================
             # HIERARCHY LEVEL 2: Try to find department-specific page
             # ============================================================
-            department = self._extract_department_name(position)
+            # Use actual department field first; only parse from position as fallback
+            dept_for_lookup = department if department else self._extract_department_name(position)
 
-            if department:
-                dept_cache_key = f"{department}@{company}"
+            if dept_for_lookup:
+                dept_cache_key = f"{dept_for_lookup}@{company}"
 
                 if dept_cache_key not in department_cache:
                     # Get parent org slug if available
@@ -1858,10 +1859,10 @@ NOT_FOUND"""
                         parent_slug = company_data[company][1]
 
                     logger.info(
-                        f"Level 2: Looking for department page: {department} at {company}"
+                        f"Level 2: Looking for department page: {dept_for_lookup} at {company}"
                     )
                     dept_url, dept_slug = self.search_department(
-                        department, company, parent_slug
+                        dept_for_lookup, company, parent_slug
                     )
 
                     if dept_url:
