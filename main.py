@@ -481,8 +481,18 @@ Social Media Publisher - Debug Menu
    26. View LinkedIn Analytics
    27. Refresh All Analytics
 
+  Advanced Tools:
+   29. Launch Dashboard (Web GUI)
+   30. View A/B Tests
+   31. Analyze Post Optimization
+   32. Check Story Originality
+   33. View Source Credibility
+   34. Analyze Trends & Freshness
+   35. Analyze Intent Classification
+   36. Test Notifications
+
   Danger Zone:
-   28. Reset (delete database and images)
+   37. Reset (delete database and images)
 
    0. Exit
 ============================================================
@@ -564,8 +574,25 @@ Social Media Publisher - Debug Menu
             _view_linkedin_analytics(engine)
         elif choice == "27":
             _refresh_linkedin_analytics(engine)
+        # Advanced Tools
+        elif choice == "29":
+            _launch_dashboard(engine)
+        elif choice == "30":
+            _view_ab_tests(engine)
+        elif choice == "31":
+            _analyze_post_optimization(engine)
+        elif choice == "32":
+            _check_story_originality(engine)
+        elif choice == "33":
+            _view_source_credibility(engine)
+        elif choice == "34":
+            _analyze_trends(engine)
+        elif choice == "35":
+            _analyze_intent_classification(engine)
+        elif choice == "36":
+            _test_notifications(engine)
         # Danger Zone
-        elif choice == "28":
+        elif choice == "37":
             _reset_all(engine)
         else:
             print("Invalid choice. Please try again.")
@@ -2392,6 +2419,565 @@ def _refresh_linkedin_analytics(engine: ContentEngine) -> None:
     # Show updated analytics
     print("\nUpdated analytics:")
     _view_linkedin_analytics(engine)
+
+
+def _launch_dashboard(engine: ContentEngine) -> None:
+    """Launch the web-based dashboard for real-time monitoring."""
+    print("\n--- Launch Dashboard ---")
+    print("Starting the web dashboard for real-time pipeline monitoring.")
+
+    try:
+        from dashboard import DashboardServer
+
+        dashboard = DashboardServer(engine.db, port=5001)
+        print("\nDashboard starting at: http://localhost:5001")
+        print("Press Ctrl+C to stop the dashboard and return to menu.\n")
+        dashboard.run(debug=False)
+    except ImportError as e:
+        print(f"\nError: Could not import dashboard module: {e}")
+        print("Make sure Flask is installed: pip install flask")
+    except KeyboardInterrupt:
+        print("\n\nDashboard stopped.")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Dashboard launch failed")
+
+
+def _view_ab_tests(engine: ContentEngine) -> None:
+    """View and manage A/B tests."""
+    print("\n--- A/B Testing ---")
+
+    try:
+        from ab_testing import ABTestManager
+
+        manager = ABTestManager()
+        all_tests = manager.get_all_tests()
+
+        if not all_tests:
+            print("\nNo A/B tests found.")
+            print(
+                "\nA/B tests are automatically created when content variants are generated."
+            )
+            print("Tests track engagement metrics for different content approaches.")
+            return
+
+        active_tests = [t for t in all_tests if t.is_active]
+        completed_tests = [t for t in all_tests if not t.is_active]
+
+        print(f"\nTotal tests: {len(all_tests)}")
+        print(f"  Active: {len(active_tests)}")
+        print(f"  Completed: {len(completed_tests)}")
+
+        if active_tests:
+            print("\n--- Active Tests ---")
+            for test in active_tests[:5]:
+                print(f"\n[{test.id}] {test.name}")
+                print(f"    Type: {test.variant_type.value}")
+                print(f"    Created: {test.created_at.strftime('%Y-%m-%d')}")
+                print(f"    Variants: {len(test.variants)}")
+
+                # Get summary if available
+                summary = manager.get_test_summary(test.id)
+                if summary:
+                    print(f"    Samples: {summary.total_assignments}")
+                    if summary.recommendation:
+                        print(f"    Recommendation: {summary.recommendation}")
+
+        if completed_tests:
+            print("\n--- Recently Completed Tests ---")
+            for test in completed_tests[:3]:
+                print(f"\n[{test.id}] {test.name}")
+                print(f"    Winner: {test.winner_id or 'Not declared'}")
+
+    except ImportError as e:
+        print(f"\nError: Could not import ab_testing module: {e}")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("A/B test view failed")
+
+
+def _analyze_post_optimization(engine: ContentEngine) -> None:
+    """Analyze and optimize a story's LinkedIn post content."""
+    print("\n--- Post Optimization Analysis ---")
+
+    try:
+        from linkedin_optimizer import LinkedInOptimizer
+
+        optimizer = LinkedInOptimizer()
+
+        # Get a story to analyze
+        stories = engine.db.get_approved_unpublished_stories(limit=10)
+        if not stories:
+            stories = engine.db.get_published_stories()[:10]
+
+        if not stories:
+            print("\nNo stories available to analyze.")
+            return
+
+        print("\nSelect a story to analyze:")
+        for i, story in enumerate(stories[:10], 1):
+            title = (story.title or "Untitled")[:50]
+            print(f"  {i}. [{story.id}] {title}")
+
+        choice = input("\nEnter number (or 'q' to cancel): ").strip()
+        if choice.lower() == "q" or not choice:
+            print("Cancelled.")
+            return
+
+        try:
+            idx = int(choice) - 1
+            if idx < 0 or idx >= len(stories):
+                print("Invalid selection.")
+                return
+            story = stories[idx]
+        except ValueError:
+            print("Invalid input.")
+            return
+
+        # Build the post content as it would appear on LinkedIn
+        content = f"{story.summary or ''}\n\n{story.promotion or ''}"
+
+        print(f"\n--- Analyzing: {story.title} ---\n")
+
+        # Get analysis
+        analysis = optimizer.analyze_post(content)
+
+        print(f"Readability Score: {analysis.readability_score:.1%}")
+        print(f"Has Strong Hook: {'Yes' if analysis.has_hook else 'No'}")
+        print(f"Has Call-to-Action: {'Yes' if analysis.has_cta else 'No'}")
+        print(
+            f"Post Length: {analysis.optimized_length} chars ({analysis.paragraph_count} paragraphs)"
+        )
+
+        if analysis.warnings:
+            print("\nWarnings:")
+            for warning in analysis.warnings:
+                print(f"  ⚠ {warning}")
+
+        if analysis.suggestions:
+            print("\nSuggestions:")
+            for suggestion in analysis.suggestions:
+                print(f"  → {suggestion}")
+
+        # Show optimization summary
+        print("\n" + optimizer.get_optimization_summary(content))
+
+    except ImportError as e:
+        print(f"\nError: Could not import linkedin_optimizer module: {e}")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Post optimization analysis failed")
+
+
+def _check_story_originality(engine: ContentEngine) -> None:
+    """Check originality of stories against their sources."""
+    print("\n--- Story Originality Check ---")
+
+    try:
+        from originality_checker import OriginalityChecker
+
+        checker = OriginalityChecker(
+            client=engine.genai_client,
+            local_client=engine.local_client,
+        )
+
+        # Get stories to check
+        with engine.db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, title, summary, sources
+                FROM stories
+                WHERE summary IS NOT NULL
+                ORDER BY id DESC LIMIT 10
+            """)
+            rows = cursor.fetchall()
+
+        if not rows:
+            print("\nNo stories with summaries to check.")
+            return
+
+        print("\nSelect a story to check originality:")
+        for i, row in enumerate(rows, 1):
+            title = (row["title"] or "Untitled")[:50]
+            print(f"  {i}. [{row['id']}] {title}")
+
+        print(f"  a. Check all {len(rows)} stories")
+
+        choice = (
+            input("\nEnter number, 'a' for all, or 'q' to cancel: ").strip().lower()
+        )
+        if choice == "q" or not choice:
+            print("Cancelled.")
+            return
+
+        stories_to_check = []
+        if choice == "a":
+            stories_to_check = rows
+        else:
+            try:
+                idx = int(choice) - 1
+                if idx < 0 or idx >= len(rows):
+                    print("Invalid selection.")
+                    return
+                stories_to_check = [rows[idx]]
+            except ValueError:
+                print("Invalid input.")
+                return
+
+        for row in stories_to_check:
+            story = engine.db.get_story(row["id"])
+            if not story:
+                continue
+
+            print(f"\n--- Checking: [{story.id}] {story.title[:50]} ---")
+
+            result = checker.check_story_originality(story)
+
+            print(f"  Originality Score: {1 - result.similarity_score:.0%}")
+            print(f"  Is Original: {'Yes' if result.is_original else 'No'}")
+            print(f"  N-gram Overlap: {result.ngram_overlap_score:.0%}")
+
+            if result.flagged_phrases:
+                print("  Flagged Phrases:")
+                for phrase in result.flagged_phrases[:5]:
+                    print(f"    ⚠ {phrase}")
+
+            print(f"  Recommendation: {result.recommendation}")
+
+    except ImportError as e:
+        print(f"\nError: Could not import originality_checker module: {e}")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Originality check failed")
+
+
+def _view_source_credibility(engine: ContentEngine) -> None:
+    """View source credibility analysis for stories."""
+    print("\n--- Source Credibility Analysis ---")
+
+    try:
+        from source_verifier import SourceVerifier
+
+        verifier = SourceVerifier()
+
+        # Get stories with sources
+        with engine.db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, title, sources
+                FROM stories
+                WHERE sources IS NOT NULL AND sources != '[]'
+                ORDER BY id DESC LIMIT 10
+            """)
+            rows = cursor.fetchall()
+
+        if not rows:
+            print("\nNo stories with sources to analyze.")
+            return
+
+        print("\nSelect a story to analyze sources:")
+        for i, row in enumerate(rows, 1):
+            title = (row["title"] or "Untitled")[:50]
+            print(f"  {i}. [{row['id']}] {title}")
+
+        print(f"  a. Analyze all {len(rows)} stories")
+
+        choice = (
+            input("\nEnter number, 'a' for all, or 'q' to cancel: ").strip().lower()
+        )
+        if choice == "q" or not choice:
+            print("Cancelled.")
+            return
+
+        stories_to_check = []
+        if choice == "a":
+            stories_to_check = rows
+        else:
+            try:
+                idx = int(choice) - 1
+                if idx < 0 or idx >= len(rows):
+                    print("Invalid selection.")
+                    return
+                stories_to_check = [rows[idx]]
+            except ValueError:
+                print("Invalid input.")
+                return
+
+        for row in stories_to_check:
+            story = engine.db.get_story(row["id"])
+            if not story:
+                continue
+
+            print(f"\n--- Sources for: [{story.id}] {story.title[:50]} ---")
+
+            result = verifier.verify_story_sources(story)
+
+            print(f"  Average Credibility: {result.average_credibility:.0%}")
+            print(f"  Sources Checked: {len(result.source_results)}")
+            print(
+                f"  Has Primary Source: {'Yes' if result.has_primary_source else 'No'}"
+            )
+
+            for src_result in result.source_results:
+                credibility_icon = (
+                    "✓"
+                    if src_result.credibility_score >= 0.7
+                    else "⚠"
+                    if src_result.credibility_score >= 0.4
+                    else "✗"
+                )
+                tier_str = (
+                    f"Tier {src_result.tier}" if src_result.tier > 0 else "Unknown"
+                )
+                print(f"\n  {credibility_icon} {src_result.domain}")
+                print(f"      Score: {src_result.credibility_score:.0%} | {tier_str}")
+                if src_result.notes:
+                    print(f"      Notes: {', '.join(src_result.notes)}")
+
+            # Show summary
+            print(f"\n  Summary: {verifier.get_source_summary(story)}")
+
+    except ImportError as e:
+        print(f"\nError: Could not import source_verifier module: {e}")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Source credibility analysis failed")
+
+
+def _analyze_trends(engine: ContentEngine) -> None:
+    """Analyze trending topics and content freshness."""
+    print("\n--- Trend & Freshness Analysis ---")
+
+    try:
+        from trend_detector import TrendDetector
+
+        detector = TrendDetector()
+
+        # Get recent stories
+        with engine.db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, title, summary, acquire_date
+                FROM stories
+                WHERE summary IS NOT NULL
+                ORDER BY acquire_date DESC LIMIT 15
+            """)
+            rows = cursor.fetchall()
+
+        if not rows:
+            print("\nNo stories to analyze.")
+            return
+
+        print(f"\nAnalyzing {len(rows)} recent stories for trends...\n")
+
+        trending_stories = []
+        fresh_stories = []
+
+        for row in rows:
+            story = engine.db.get_story(row["id"])
+            if not story or not story.summary:
+                continue
+
+            content = f"{story.title or ''} {story.summary or ''}"
+
+            # Check for trending topics
+            trending_topics = detector.detect_trending_topics(content)
+            boost, matched_topics = detector.calculate_trending_boost(content)
+
+            # Calculate freshness (returns float, not FreshnessScore)
+            freshness_score = detector.calculate_freshness_score(story.acquire_date)
+
+            title_short = (story.title or "Untitled")[:45]
+
+            if trending_topics:
+                trending_stories.append((story, trending_topics, boost))
+            if freshness_score >= 0.7:
+                fresh_stories.append((story, freshness_score))
+
+            # Show each story's analysis
+            trend_icon = "🔥" if boost > 0.1 else "  "
+            fresh_icon = "⚡" if freshness_score >= 0.7 else "  "
+            print(f"[{story.id}] {title_short}...")
+            print(
+                f"    {trend_icon} Trend boost: +{boost:.0%} | {fresh_icon} Freshness: {freshness_score:.0%}"
+            )
+            if matched_topics:
+                print(f"       Topics: {', '.join(matched_topics[:3])}")
+
+        # Summary
+        print("\n" + "=" * 60)
+        print(f"Trending Stories: {len(trending_stories)}")
+        print(f"Fresh Stories (>70%): {len(fresh_stories)}")
+
+        if trending_stories:
+            print("\nTop Trending:")
+            for story, topics, boost in sorted(
+                trending_stories, key=lambda x: x[2], reverse=True
+            )[:3]:
+                print(f"  🔥 [{story.id}] {story.title[:40]}... (+{boost:.0%})")
+
+    except ImportError as e:
+        print(f"\nError: Could not import trend_detector module: {e}")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Trend analysis failed")
+
+
+def _analyze_intent_classification(engine: ContentEngine) -> None:
+    """Analyze story intent and career alignment."""
+    print("\n--- Intent Classification Analysis ---")
+
+    try:
+        from intent_classifier import IntentClassifier
+
+        classifier = IntentClassifier()
+
+        # Get recent stories
+        with engine.db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, title, summary
+                FROM stories
+                WHERE summary IS NOT NULL
+                ORDER BY id DESC LIMIT 15
+            """)
+            rows = cursor.fetchall()
+
+        if not rows:
+            print("\nNo stories to classify.")
+            return
+
+        print(f"\nClassifying {len(rows)} stories...\n")
+
+        intent_counts: dict[str, int] = {}
+        career_aligned = 0
+        results = []
+
+        for row in rows:
+            title = row["title"] or ""
+            summary = row["summary"] or ""
+
+            result = classifier.classify(title, summary)
+            results.append((row, result))
+
+            # Track intents
+            for intent in result.top_intents:
+                intent_name = intent.value
+                intent_counts[intent_name] = intent_counts.get(intent_name, 0) + 1
+
+            # Track career alignment
+            if classifier.is_career_aligned(title, summary):
+                career_aligned += 1
+
+            # Display
+            title_short = title[:45] if title else "Untitled"
+            top_intent = (
+                result.top_intents[0].value if result.top_intents else "unknown"
+            )
+            confidence = max((s.score for s in result.all_scores), default=0)
+            aligned_icon = "✓" if classifier.is_career_aligned(title, summary) else " "
+
+            print(f"[{row['id']}] {title_short}...")
+            print(
+                f"    {aligned_icon} Intent: {top_intent} ({confidence:.0%}) | Career Score: {result.career_alignment_score:.0%}"
+            )
+
+        # Summary
+        print("\n" + "=" * 60)
+        print("Intent Distribution:")
+        for intent, count in sorted(
+            intent_counts.items(), key=lambda x: x[1], reverse=True
+        ):
+            bar = "█" * count
+            print(f"  {intent:<20} {bar} ({count})")
+
+        print(
+            f"\nCareer Aligned: {career_aligned}/{len(rows)} ({100 * career_aligned // len(rows)}%)"
+        )
+
+        # Show intent legend
+        print("\nIntent Types:")
+        print("  • skill_showcase: Demonstrates expertise")
+        print("  • network_building: Encourages connections")
+        print("  • thought_leadership: Establishes authority")
+        print("  • industry_awareness: Shows market knowledge")
+
+    except ImportError as e:
+        print(f"\nError: Could not import intent_classifier module: {e}")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Intent classification failed")
+
+
+def _test_notifications(engine: ContentEngine) -> None:
+    """Test the notification system."""
+    print("\n--- Test Notifications ---")
+
+    try:
+        from notifications import (
+            Notification,
+            ConsoleChannel,
+            SlackChannel,
+        )
+
+        print("\nAvailable notification channels:")
+        print("  1. Console (always available)")
+        print("  2. Slack (requires SLACK_WEBHOOK_URL)")
+        print("  3. Email (requires SMTP configuration)")
+
+        # Test console notification
+        print("\n--- Testing Console Channel ---")
+        console = ConsoleChannel()
+
+        test_notification = Notification(
+            event_type="test",
+            title="Test Notification",
+            message="This is a test notification from Social Media Publisher.",
+            priority="normal",
+            data={"source": "menu_test", "timestamp": datetime.now().isoformat()},
+        )
+
+        result = console.send(test_notification)
+        if result.success:
+            print("✓ Console notification sent successfully")
+        else:
+            print(f"✗ Console notification failed: {result.error}")
+
+        # Check if Slack is configured
+        from config import Config as AppConfig
+
+        slack_url = getattr(AppConfig, "SLACK_WEBHOOK_URL", None)
+        if slack_url:
+            print("\n--- Testing Slack Channel ---")
+            confirm = input("Send test notification to Slack? (y/n): ").strip().lower()
+            if confirm == "y":
+                try:
+                    slack = SlackChannel(webhook_url=slack_url)
+                    result = slack.send(test_notification)
+                    if result.success:
+                        print("✓ Slack notification sent successfully")
+                    else:
+                        print(f"✗ Slack notification failed: {result.error}")
+                except Exception as e:
+                    print(f"✗ Slack error: {e}")
+        else:
+            print("\n⚠ Slack not configured (SLACK_WEBHOOK_URL not set)")
+
+        # Check if Email is configured
+        smtp_host = getattr(AppConfig, "SMTP_HOST", None)
+        if smtp_host:
+            print("\n--- Testing Email Channel ---")
+            print("Email notification is configured but requires recipient address.")
+        else:
+            print("\n⚠ Email not configured (SMTP_HOST not set)")
+
+        print("\n--- Notification Test Complete ---")
+
+    except ImportError as e:
+        print(f"\nError: Could not import notifications module: {e}")
+    except Exception as e:
+        print(f"\nError: {e}")
+        logger.exception("Notification test failed")
 
 
 def _reset_all(engine: ContentEngine) -> None:
