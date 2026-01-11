@@ -25,9 +25,13 @@
 
 - [x] **TASK 4.5**: Pydantic config validation (`config.py` - `SettingsModel` with field validators, range constraints, type coercion at import time)
 
+### Content Quality Improvements
+
+- [x] **TASK 3.4**: Plagiarism & Originality Checking (`originality_checker.py` - word similarity, n-gram overlap detection, LLM assessment, citation formatting; integrated with `verifier.py`)
+
 ### Test Status
 
-- **163 tests passing** ✅
+- **178 tests passing** ✅
 
 ---
 
