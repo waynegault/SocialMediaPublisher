@@ -250,9 +250,9 @@ class ProfileMatcher:
     profiles when individual profiles cannot be confidently matched.
     """
 
-    # Score thresholds
-    HIGH_CONFIDENCE_THRESHOLD = 6.0
-    MEDIUM_CONFIDENCE_THRESHOLD = 4.0
+    # Score thresholds - lowered to accept more valid matches
+    HIGH_CONFIDENCE_THRESHOLD = 4.0  # Name + Org match = 6, so this is reasonable
+    MEDIUM_CONFIDENCE_THRESHOLD = 2.0  # Accept with just org match
 
     # Signal weights - POSITIVE
     WEIGHT_NAME_MATCH = 3.0
@@ -262,65 +262,29 @@ class ProfileMatcher:
     WEIGHT_LOCATION_MATCH = 1.0
     WEIGHT_ROLE_TYPE_INDICATOR = 0.5
 
-    # Signal weights - NEGATIVE
+    # Signal weights - NEGATIVE (still strict to avoid false positives)
     WEIGHT_WRONG_FIELD = -5.0
     WEIGHT_WRONG_COUNTRY = -4.0
     WEIGHT_INCOMPATIBLE_ROLE = -3.0
     WEIGHT_CONFLICTING_ORG = -2.0
-    WEIGHT_COMMON_NAME_NO_SIGNALS = -1.0
+    WEIGHT_COMMON_NAME_NO_SIGNALS = -0.5  # Reduced penalty
 
-    # Common name list (names that need more signals to match)
+    # Common FIRST names only (not ethnic surnames which are distinctive when paired)
+    # Removed: Chinese, Korean, Indian surnames - they're distinctive with first names
     COMMON_NAMES = {
         "john",
         "james",
         "michael",
         "david",
         "robert",
-        "william",
-        "richard",
-        "joseph",
-        "thomas",
-        "charles",
         "mary",
-        "patricia",
         "jennifer",
-        "linda",
-        "elizabeth",
-        "barbara",
-        "susan",
-        "jessica",
         "sarah",
-        "karen",
-        "li",
-        "wang",
-        "zhang",
-        "chen",
-        "liu",
-        "yang",
-        "huang",
-        "zhao",
-        "wu",
-        "zhou",
-        "kumar",
-        "singh",
-        "sharma",
-        "patel",
-        "gupta",
-        "kim",
-        "lee",
-        "park",
-        "jung",
-        "choi",
         "smith",
         "johnson",
         "williams",
         "brown",
         "jones",
-        "miller",
-        "davis",
-        "wilson",
-        "anderson",
-        "taylor",
     }
 
     # Wrong field indicators by expected role type

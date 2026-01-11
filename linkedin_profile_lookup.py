@@ -1159,58 +1159,24 @@ NOT_FOUND"""
         search_query = " ".join(parts)
         logger.debug(f"UC Chrome Bing search: {search_query}")
 
-        # Common names that require higher confidence scores
-        COMMON_NAMES = {
+        # Common FULL names or extremely common first names that need extra signals
+        # Note: We removed ethnic surnames (Wang, Zhang, Kim, Patel, etc.) because
+        # when combined with first names they're usually distinctive enough.
+        # Only flag the most generic Western first names that could match anyone.
+        COMMON_FIRST_NAMES = {
             "john",
             "james",
             "michael",
             "david",
             "robert",
-            "william",
-            "richard",
-            "joseph",
-            "thomas",
-            "charles",
             "mary",
-            "patricia",
             "jennifer",
-            "linda",
-            "elizabeth",
-            "barbara",
-            "susan",
-            "jessica",
             "sarah",
-            "karen",
-            "li",
-            "wang",
-            "zhang",
-            "chen",
-            "liu",
-            "yang",
-            "huang",
-            "zhao",
-            "wu",
-            "zhou",
-            "kumar",
-            "singh",
-            "sharma",
-            "patel",
-            "gupta",
-            "kim",
-            "lee",
-            "park",
-            "jung",
-            "choi",
             "smith",
             "johnson",
             "williams",
             "brown",
             "jones",
-            "miller",
-            "davis",
-            "wilson",
-            "anderson",
-            "taylor",
         }
 
         try:
@@ -1224,8 +1190,10 @@ NOT_FOUND"""
             first_name = name_parts[0] if name_parts else ""
             last_name = name_parts[-1] if len(name_parts) >= 2 else ""
 
-            # Check if this is a common name (requires higher confidence)
-            is_common_name = first_name in COMMON_NAMES or last_name in COMMON_NAMES
+            # Check if this is a very common Western name (requires slightly higher confidence)
+            is_common_name = (
+                first_name in COMMON_FIRST_NAMES or last_name in COMMON_FIRST_NAMES
+            )
 
             # Build context matching keywords from all available metadata
             context_keywords = set()
@@ -1541,10 +1509,11 @@ NOT_FOUND"""
             # - Location match: +1
             # - Role type match: +1
             # - Keyword matches: +1 each
-            # Use higher threshold for common names to avoid false positives
-            MIN_CONFIDENCE_SCORE = 2
+            # Lowered thresholds - org match alone (score=2) should be sufficient
+            # Common names need just slightly more confirmation
+            MIN_CONFIDENCE_SCORE = 1  # Just name + any signal
             MIN_CONFIDENCE_SCORE_COMMON_NAME = (
-                4  # Require more signals for common names
+                2  # Common names need org match or 2 other signals
             )
 
             threshold = (
@@ -1558,10 +1527,16 @@ NOT_FOUND"""
                     f"Found profile via UC Chrome: {best_match} (score={best_score}, threshold={threshold})"
                 )
                 return best_match
+            elif best_match and best_score >= 0:
+                # Accept even marginally positive scores rather than lose valid profiles
+                logger.info(
+                    f"Accepting marginal match: {best_match} (score={best_score}, threshold was {threshold})"
+                )
+                return best_match
             elif best_match:
                 logger.info(
-                    f"Rejecting {'common name ' if is_common_name else ''}low-confidence match: "
-                    f"{best_match} (score={best_score} < {threshold})"
+                    f"Rejecting {'common name ' if is_common_name else ''}negative-score match: "
+                    f"{best_match} (score={best_score})"
                 )
 
             logger.debug("No matching LinkedIn profile found via UC Chrome")
