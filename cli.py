@@ -78,7 +78,10 @@ class Colors:
             try:
                 import os
 
-                return os.environ.get("TERM") is not None or os.environ.get("ANSICON") is not None
+                return (
+                    os.environ.get("TERM") is not None
+                    or os.environ.get("ANSICON") is not None
+                )
             except Exception:
                 return False
         return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
@@ -127,7 +130,11 @@ class ProgressBar:
         else:
             percent = int(100 * self.current / self.total)
 
-        filled = int(self.width * self.current / self.total) if self.total > 0 else self.width
+        filled = (
+            int(self.width * self.current / self.total)
+            if self.total > 0
+            else self.width
+        )
         bar = self.fill * filled + self.empty * (self.width - filled)
 
         # Calculate ETA
