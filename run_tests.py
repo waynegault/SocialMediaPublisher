@@ -29,6 +29,7 @@ TEST_MODULES = [
     ("find_leadership", "Find Leadership"),
     ("originality_checker", "Originality Checker"),
     ("source_verifier", "Source Verifier"),
+    ("linkedin_optimizer", "LinkedIn Optimizer"),
 ]
 
 
