@@ -221,21 +221,18 @@ class LinkedInPublisher:
         # Title and summary
         text_parts = [story.title, "", story.summary, ""]
 
+        # Promotion message (if present)
+        if story.promotion:
+            text_parts.append(story.promotion)
+            text_parts.append("")
+
         # Source links
         sources = story.source_links[:3]  # Limit to 3 sources
         if sources:
-            text_parts.append("Sources:")
+            text_parts.append("Source:")
             for source in sources:
-                text_parts.append(f"• {source}")
+                text_parts.append(source)
             text_parts.append("")
-
-        # Add LinkedIn mentions from relevant_people (people with URNs)
-        mentions = self._get_mentions_from_relevant_people(story)
-        if mentions:
-            mentions_text = self._format_mentions(mentions)
-            if mentions_text:
-                text_parts.append(mentions_text)
-                text_parts.append("")
 
         # Add hashtags (max 3)
         if story.hashtags:
@@ -243,28 +240,33 @@ class LinkedInPublisher:
             text_parts.append(hashtag_str)
             text_parts.append("")
 
-        # Signature block
-        if Config.SIGNATURE_BLOCK:
-            text_parts.append(Config.SIGNATURE_BLOCK.strip())
-            text_parts.append("")
+        # Add LinkedIn mentions from story_people (directly mentioned in story)
+        story_people_mentions = self._get_mentions_from_people_list(story.story_people)
+        if story_people_mentions:
+            mentions_text = self._format_mentions(story_people_mentions)
+            if mentions_text:
+                text_parts.append(mentions_text)
+                text_parts.append("")
 
-        # Job opportunity postscript
-        if Config.INCLUDE_OPPORTUNITY_MESSAGE:
-            opportunity_msg = get_random_opportunity_message()
-            text_parts.append(opportunity_msg)
+        # Add LinkedIn mentions from org_leaders (institution leaders) with paragraph separation
+        org_leader_mentions = self._get_mentions_from_people_list(story.org_leaders)
+        if org_leader_mentions:
+            mentions_text = self._format_mentions(org_leader_mentions)
+            if mentions_text:
+                text_parts.append(mentions_text)
+                text_parts.append("")
 
         return "\n".join(text_parts)
 
-    def _get_mentions_from_relevant_people(self, story: Story) -> list[dict]:
+    def _get_mentions_from_people_list(self, people_list: list[dict]) -> list[dict]:
         """
-        Generate mentions list from relevant_people with linkedin_urn.
+        Generate mentions list from a list of people dicts.
 
-        This provides backward compatibility by generating the mentions format
-        that _format_mentions expects, but from the streamlined relevant_people data.
+        Works with both story_people and org_leaders formats.
         """
         mentions = []
-        if story.relevant_people:
-            for person in story.relevant_people:
+        if people_list:
+            for person in people_list:
                 if person.get("linkedin_urn") or person.get("linkedin_profile"):
                     mentions.append(
                         {

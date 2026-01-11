@@ -17,12 +17,16 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 # Import undetected-chromedriver for CAPTCHA-resistant browser automation
-try:
-    import undetected_chromedriver as uc  # type: ignore
+# Type stubs for optional dependencies
+uc: Any = None
+UC_AVAILABLE = False
 
+try:
+    import undetected_chromedriver as _uc
+
+    uc = _uc
     UC_AVAILABLE = True
 except ImportError:
-    UC_AVAILABLE = False
     logger.warning(
         "undetected-chromedriver not installed - pip install undetected-chromedriver"
     )
@@ -148,7 +152,8 @@ class LinkedInCompanyLookup:
                 use_subprocess=False,  # More stable on Windows
                 suppress_welcome=True,
             )
-            self._uc_driver.set_page_load_timeout(30)
+            if self._uc_driver is not None:
+                self._uc_driver.set_page_load_timeout(30)
             logger.debug("Created new UC Chrome driver session")
             return self._uc_driver
 
@@ -1303,7 +1308,7 @@ NOT_FOUND"""
 
     def populate_company_profiles(
         self,
-        relevant_people: list[dict],
+        people: list[dict],
         delay_between_requests: float = 1.0,
     ) -> tuple[int, int, dict[str, tuple[str, Optional[str]]]]:
         """
@@ -1315,7 +1320,7 @@ NOT_FOUND"""
         3. Parent organization page
 
         Args:
-            relevant_people: List of person dicts with name, company, position, linkedin_profile
+            people: List of person dicts with name, company, position, linkedin_profile
             delay_between_requests: Seconds to wait between API calls (rate limiting)
 
         Returns:
@@ -1328,13 +1333,13 @@ NOT_FOUND"""
 
         # First, look up parent organizations (needed as fallback)
         companies = set()
-        for person in relevant_people:
+        for person in people:
             company = person.get("company", "").strip()
             if company:
                 companies.add(company)
 
         if not companies:
-            logger.info("No companies found in relevant_people")
+            logger.info("No companies found in people list")
             return (0, 0, {})
 
         companies_found = 0
@@ -1366,7 +1371,7 @@ NOT_FOUND"""
         person_cache: dict[str, Optional[str]] = {}
 
         # Process each person with hierarchical lookup
-        for person in relevant_people:
+        for person in people:
             name = person.get("name", "").strip()
             company = person.get("company", "").strip()
             position = person.get("position", "").strip()

@@ -187,6 +187,9 @@ class ImageGenerator:
                     image_path, alt_text = result
                     story.image_path = image_path
                     story.image_alt_text = alt_text
+                    # Reset verification status so the new image gets verified
+                    story.verification_status = "pending"
+                    story.verification_reason = None
                     self.db.update_story(story)
                     success_count += 1
                     self._rate_limiter.on_success(endpoint="imagen")
@@ -381,14 +384,18 @@ class ImageGenerator:
 
             # Generate image using text_to_image - this is FREE for FLUX.1-schnell
             # Note: negative_prompt is ignored by FLUX models but works with SD/SDXL
-            kwargs = {"prompt": prompt, "model": model}
+            # Build kwargs with proper typing to avoid Pylance errors
             if Config.HF_NEGATIVE_PROMPT and "flux" not in model.lower():
-                kwargs["negative_prompt"] = Config.HF_NEGATIVE_PROMPT
                 logger.debug(
                     f"Using negative prompt: {Config.HF_NEGATIVE_PROMPT[:50]}..."
                 )
-
-            image = client.text_to_image(**kwargs)
+                image = client.text_to_image(
+                    prompt=prompt,
+                    model=model,
+                    negative_prompt=Config.HF_NEGATIVE_PROMPT,
+                )
+            else:
+                image = client.text_to_image(prompt=prompt, model=model)
 
             # Add AI watermark to the image
             watermarked_image = add_ai_watermark(image)
@@ -759,17 +766,25 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
 
     def test_cleanup_orphaned_images():
         """Test orphaned image cleanup."""
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            db_path = f.name
-        try:
-            db = Database(db_path)
-            gen = ImageGenerator(db, None, None)  # type: ignore
-            # Should not crash even with no orphaned images
-            cleaned = gen.cleanup_orphaned_images()
-            assert isinstance(cleaned, int)
-            assert cleaned >= 0
-        finally:
-            os.unlink(db_path)
+        # Use a temp directory to avoid deleting real images
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+                db_path = f.name
+            try:
+                db = Database(db_path)
+                gen = ImageGenerator(db, None, None)  # type: ignore
+                # Mock the image directory to use temp dir instead of real Config.IMAGE_DIR
+                original_image_dir = Config.IMAGE_DIR
+                Config.IMAGE_DIR = temp_dir
+                try:
+                    # Should not crash even with no orphaned images
+                    cleaned = gen.cleanup_orphaned_images()
+                    assert isinstance(cleaned, int)
+                    assert cleaned >= 0
+                finally:
+                    Config.IMAGE_DIR = original_image_dir
+            finally:
+                os.unlink(db_path)
 
     def test_get_stories_with_images_count():
         """Test stories with images count."""

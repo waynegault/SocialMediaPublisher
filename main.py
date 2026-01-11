@@ -291,17 +291,18 @@ Title: {title}
 Summary: {summary[:500]}
 
 REQUIREMENTS:
-1. Reference the specific technology, company, industry, or theme from the story
-2. Briefly mention MEng Process & Chemical Engineering background
-3. Include ONE clear call-to-action from this list:
+1. Write in FIRST PERSON (use "I", "my", "I'm")
+2. Reference the specific technology, company, industry, or theme from the story
+3. Briefly mention MEng Process & Chemical Engineering background
+4. Include ONE clear call-to-action from this list:
    - Ask followers to tag someone who should connect with you
    - Invite people to DM you about opportunities
    - Ask if anyone knows of openings in this area
    - Encourage people to follow for more insights
    - Ask for introductions to contacts in this space
-4. Maintain professional confidence - show expertise and genuine interest
-5. Keep it to 1-2 sentences, max 250 characters
-6. Do NOT include emojis
+5. Maintain professional confidence - show expertise and genuine interest
+6. Keep it to 1-2 sentences, max 250 characters
+7. Do NOT include emojis
 
 STYLE EXAMPLES (match this tone and include CTA):
 {examples_text}
@@ -465,25 +466,23 @@ Social Media Publisher - Debug Menu
    15. Retry Rejected Stories (regenerate image + re-verify)
 
   Component Testing:
-   16. Test Story Search
-   17. LinkedIn Profile Enrichment (profiles + @mentions)
-   18. Test Image Generation
-   19. Assign Promotion Message to Stories
-   20. Test Content Verification
-   21. Test Scheduling
-   22. Human Validation (Web GUI)
-   23. Test LinkedIn Connection
-   24. Send LinkedIn Connection Requests
-   25. Test LinkedIn Publish (due stories)
-   26. Publish One Scheduled Story Now
-   27. Run Unit Tests
+   16. Search, Enrich & Assign Promotions
+   17. Test Image Generation
+   18. Test Content Verification
+   19. Test Scheduling
+   20. Human Validation (Web GUI)
+   21. Test LinkedIn Connection
+   22. Send LinkedIn Connection Requests
+   23. Test LinkedIn Publish (due stories)
+   24. Publish One Scheduled Story Now
+   25. Run Unit Tests
 
   Analytics:
-   28. View LinkedIn Analytics
-   29. Refresh All Analytics
+   26. View LinkedIn Analytics
+   27. Refresh All Analytics
 
   Danger Zone:
-   30. Reset (delete database and images)
+   28. Reset (delete database and images)
 
    0. Exit
 ============================================================
@@ -543,34 +542,30 @@ Social Media Publisher - Debug Menu
         elif choice == "16":
             _test_search(engine)
         elif choice == "17":
-            _test_enrichment(engine)
-        elif choice == "18":
             _test_image_generation(engine)
-        elif choice == "19":
-            _assign_promotion_message(engine)
-        elif choice == "20":
+        elif choice == "18":
             _test_verification(engine)
-        elif choice == "21":
+        elif choice == "19":
             _test_scheduling(engine)
-        elif choice == "22":
+        elif choice == "20":
             _human_validation(engine)
-        elif choice == "23":
+        elif choice == "21":
             _test_linkedin_connection(engine)
-        elif choice == "24":
+        elif choice == "22":
             _send_linkedin_connections(engine)
-        elif choice == "25":
+        elif choice == "23":
             _test_linkedin_publish(engine)
-        elif choice == "26":
+        elif choice == "24":
             _test_publish_one_story(engine)
-        elif choice == "27":
+        elif choice == "25":
             _run_unit_tests()
         # Analytics
-        elif choice == "28":
+        elif choice == "26":
             _view_linkedin_analytics(engine)
-        elif choice == "29":
+        elif choice == "27":
             _refresh_linkedin_analytics(engine)
         # Danger Zone
-        elif choice == "30":
+        elif choice == "28":
             _reset_all(engine)
         else:
             print("Invalid choice. Please try again.")
@@ -582,8 +577,8 @@ Social Media Publisher - Debug Menu
 
 
 def _test_search(engine: ContentEngine) -> None:
-    """Test the story search component."""
-    print("\n--- Testing Story Search ---")
+    """Search for stories, enrich with LinkedIn profiles/URNs, and assign promotions."""
+    print("\n--- Story Search, Enrichment & Promotions ---")
     print(f"Search prompt: {Config.SEARCH_PROMPT[:80]}...")
     print(f"Lookback days: {Config.SEARCH_LOOKBACK_DAYS}")
     print(f"Use last checked date: {Config.USE_LAST_CHECKED_DATE}")
@@ -592,8 +587,10 @@ def _test_search(engine: ContentEngine) -> None:
         start_date = engine.searcher.get_search_start_date()
         print(f"Searching for stories since: {start_date}")
 
+        # Step 1: Search for stories
+        print("\n[Step 1/4] Searching for stories...")
         new_count = engine.searcher.search_and_process()
-        print(f"\nResult: Found and saved {new_count} new stories")
+        print(f"  → Found and saved {new_count} new stories")
 
         if new_count > 0:
             print("\nNewly saved stories (by quality score):")
@@ -608,6 +605,25 @@ def _test_search(engine: ContentEngine) -> None:
                 # Sort by quality score descending (highest first)
                 for row in sorted(rows, key=lambda r: r[2], reverse=True):
                     print(f"  - [{row[0]}] {row[1][:60]}... (Score: {row[2]})")
+
+        # Step 2: Find LinkedIn profiles for all people needing them
+        print("\n[Step 2/4] Finding LinkedIn profiles...")
+        _run_profile_lookup_silent(engine)
+
+        # Step 3: Extract URNs for @mentions
+        print("\n[Step 3/4] Extracting LinkedIn URNs for @mentions...")
+        _run_urn_extraction_silent(engine)
+
+        # Step 4: Assign promotion messages
+        print("\n[Step 4/4] Assigning promotion messages...")
+        _run_promotion_assignment_silent(engine)
+
+        # Show summary
+        print("\n" + "=" * 60)
+        print("Search, Enrichment & Promotions Complete")
+        print("=" * 60)
+        _show_enrichment_summary(engine)
+
     except RuntimeError as e:
         if "quota exceeded" in str(e).lower():
             print(f"\n[!] API Quota Exceeded: {e}")
@@ -620,6 +636,120 @@ def _test_search(engine: ContentEngine) -> None:
     except Exception as e:
         print(f"\nError: {e}")
         logger.exception("Search test failed")
+
+
+def _get_stories_needing_profile_lookup(engine: ContentEngine) -> list:
+    """Get all stories that have people needing LinkedIn profile lookup."""
+    import json as json_module
+
+    stories_needing_profiles = []
+    with engine.db._get_connection() as conn:
+        cursor = conn.cursor()
+        # Check both story_people and org_leaders (the new primary fields)
+        cursor.execute("""
+            SELECT id, story_people, org_leaders FROM stories
+            WHERE (story_people IS NOT NULL AND story_people != '[]')
+               OR (org_leaders IS NOT NULL AND org_leaders != '[]')
+        """)
+        for row in cursor.fetchall():
+            story_people = (
+                json_module.loads(row["story_people"]) if row["story_people"] else []
+            )
+            org_leaders = (
+                json_module.loads(row["org_leaders"]) if row["org_leaders"] else []
+            )
+            all_people = story_people + org_leaders
+            # Check if any people need profiles
+            needs_lookup = any(
+                not (p.get("linkedin_profile") or "").strip() for p in all_people
+            )
+            if needs_lookup:
+                story = engine.db.get_story(row["id"])
+                if story:
+                    stories_needing_profiles.append(story)
+    return stories_needing_profiles
+
+
+def _run_profile_lookup_silent(engine: ContentEngine) -> int:
+    """Run LinkedIn profile lookup without verbose output. Returns count of stories processed."""
+    # Use a single query to get stories with people needing profiles
+    stories_needing_profiles = _get_stories_needing_profile_lookup(engine)
+
+    if not stories_needing_profiles:
+        print("  → All people already have LinkedIn profiles")
+        return 0
+
+    print(f"  → Looking up profiles for {len(stories_needing_profiles)} stories...")
+    _lookup_linkedin_profiles_for_people(engine, stories_needing_profiles)
+    return len(stories_needing_profiles)
+
+
+def _run_urn_extraction_silent(engine: ContentEngine) -> tuple[int, int]:
+    """Run URN extraction without verbose output. Returns (enriched, pending) counts."""
+    import json as json_module
+
+    # Check how many people need URN extraction across story_people and org_leaders
+    pending = 0
+    with engine.db._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT story_people, org_leaders FROM stories
+            WHERE (story_people LIKE '%linkedin_profile%')
+               OR (org_leaders LIKE '%linkedin_profile%')
+        """)
+        for row in cursor.fetchall():
+            story_people = (
+                json_module.loads(row["story_people"]) if row["story_people"] else []
+            )
+            org_leaders = (
+                json_module.loads(row["org_leaders"]) if row["org_leaders"] else []
+            )
+            for p in story_people + org_leaders:
+                if p.get("linkedin_profile") and not p.get("linkedin_urn"):
+                    pending += 1
+
+    if pending == 0:
+        print("  → All people already have URNs")
+        return 0, 0
+
+    print(f"  → Extracting URNs for {pending} people...")
+
+    try:
+        enriched, skipped = engine.enricher.populate_linkedin_mentions()
+        print(f"  → {enriched} stories updated, {skipped} skipped")
+        return enriched, pending
+    except Exception as e:
+        print(f"  → Error: {e}")
+        logger.exception("URN extraction failed")
+        return 0, pending
+
+
+def _run_promotion_assignment_silent(engine: ContentEngine) -> int:
+    """Assign promotion messages to stories without verbose output. Returns count assigned."""
+    # Count stories needing promotion
+    with engine.db._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM stories
+            WHERE promotion IS NULL OR promotion = ''
+        """)
+        count = cursor.fetchone()["count"]
+
+    if count == 0:
+        print("  → All stories already have promotion messages")
+        return 0
+
+    print(f"  → Assigning promotions to {count} stories...")
+
+    try:
+        assigned = engine._assign_promotions_batch(require_image=False, verbose=False)
+        print(f"  → {assigned} stories updated with promotions")
+        return assigned
+    except Exception as e:
+        print(f"  → Error: {e}")
+        logger.exception("Promotion assignment failed")
+        return 0
 
 
 def _test_image_generation(engine: ContentEngine) -> None:
@@ -775,6 +905,9 @@ def _check_and_fix_missing_images(engine: ContentEngine) -> int:
             print(f"  [REGENERATE] Story {story.id}: image missing, will regenerate")
             print(f"      {story.title}")
             story.image_path = None
+            # Reset verification so the new image will be verified
+            story.verification_status = "pending"
+            story.verification_reason = None
             engine.db.update_story(story)
             regenerate_count += 1
             updated_count += 1
@@ -786,6 +919,9 @@ def _check_and_fix_missing_images(engine: ContentEngine) -> int:
             )
             print(f"      {story.title}")
             story.image_path = None
+            # Reset verification for expired stories too
+            story.verification_status = "pending"
+            story.verification_reason = None
             engine.db.update_story(story)
             expired_count += 1
             updated_count += 1
@@ -928,7 +1064,7 @@ def _test_verification(engine: ContentEngine) -> None:
     # Create a LinkedIn lookup callback for auto-retry on insufficient coverage
     def linkedin_lookup_callback(stories_to_process: list) -> None:
         """Callback to run LinkedIn profile lookup for stories with insufficient coverage."""
-        _lookup_linkedin_profiles_for_relevant_people(engine, stories_to_process)
+        _lookup_linkedin_profiles_for_people(engine, stories_to_process)
 
     try:
         approved, rejected = engine.verifier.verify_pending_content(
@@ -956,28 +1092,36 @@ def _test_verification(engine: ContentEngine) -> None:
 
 
 def _get_stories_needing_linkedin_profiles(engine: ContentEngine) -> list:
-    """Get stories that have relevant_people with missing LinkedIn profiles."""
+    """Get stories that have story_people or org_leaders with missing LinkedIn profiles."""
     import json as json_module
 
     stories_needing_profiles = []
     with engine.db._get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, title, relevant_people
+            SELECT id, title, story_people, org_leaders
             FROM stories
-            WHERE relevant_people IS NOT NULL
-              AND relevant_people != '[]'
+            WHERE (story_people IS NOT NULL AND story_people != '[]')
+               OR (org_leaders IS NOT NULL AND org_leaders != '[]')
         """)
         for row in cursor.fetchall():
             try:
-                relevant_people = json_module.loads(row["relevant_people"])
-                if not relevant_people:
+                story_people = (
+                    json_module.loads(row["story_people"])
+                    if row["story_people"]
+                    else []
+                )
+                org_leaders = (
+                    json_module.loads(row["org_leaders"]) if row["org_leaders"] else []
+                )
+                all_people = story_people + org_leaders
+                if not all_people:
                     continue
 
                 # Check if any person is missing a LinkedIn profile
                 people_needing_lookup = [
                     p
-                    for p in relevant_people
+                    for p in all_people
                     if not (p.get("linkedin_profile") or "").strip()
                 ]
                 if people_needing_lookup:
@@ -991,11 +1135,11 @@ def _get_stories_needing_linkedin_profiles(engine: ContentEngine) -> list:
     return stories_needing_profiles
 
 
-def _lookup_linkedin_profiles_for_relevant_people(
+def _lookup_linkedin_profiles_for_people(
     engine: ContentEngine,
     stories: list,
 ) -> None:
-    """Look up LinkedIn company pages for organizations in relevant_people."""
+    """Look up LinkedIn company pages for organizations in story_people and org_leaders."""
     from linkedin_profile_lookup import LinkedInCompanyLookup
 
     # Use Gemini to search for company LinkedIn pages
@@ -1018,17 +1162,20 @@ def _lookup_linkedin_profiles_for_relevant_people(
 
     try:
         for story in stories:
-            # If story has no relevant_people, try to extract them using AI
-            if not story.relevant_people:
+            # Combine story_people and org_leaders for lookup
+            all_people = (story.story_people or []) + (story.org_leaders or [])
+
+            # If story has no people, try to extract them using AI
+            if not all_people:
                 print(f"\n[{story.id}] {story.title[:60]}...")
-                print("  No relevant_people - extracting with AI...")
+                print("  No people - extracting with AI...")
                 result = engine.enricher._extract_orgs_and_people(story)
                 if result:
                     people = result.get("story_people", [])
                     orgs = result.get("organizations", [])
                     if people:
-                        # Convert story_people format to relevant_people format
-                        story.relevant_people = [
+                        # Store in story_people (the new primary field)
+                        story.story_people = [
                             {
                                 "name": p.get("name", ""),
                                 "company": p.get("affiliation", ""),
@@ -1041,8 +1188,9 @@ def _lookup_linkedin_profiles_for_relevant_people(
                         story.organizations = orgs
                         story.enrichment_status = "enriched"
                         engine.db.update_story(story)
+                        all_people = story.story_people
                         print(
-                            f"  ✓ Extracted {len(story.relevant_people)} people, {len(orgs)} organizations"
+                            f"  ✓ Extracted {len(story.story_people)} people, {len(orgs)} organizations"
                         )
                     else:
                         print("  ⚠ No people found in story")
@@ -1053,9 +1201,9 @@ def _lookup_linkedin_profiles_for_relevant_people(
 
             print(f"\n[{story.id}] {story.title[:60]}...")
 
-            # Get unique companies from this story's relevant_people
+            # Get unique companies from story_people and org_leaders
             companies = set()
-            for person in story.relevant_people:
+            for person in all_people:
                 company = person.get("company", "").strip()
                 if (
                     company
@@ -1070,26 +1218,38 @@ def _lookup_linkedin_profiles_for_relevant_people(
 
             print(f"  Looking up {len(companies)} company LinkedIn page(s)...")
 
-            found, not_found, company_data = lookup.populate_company_profiles(
-                story.relevant_people,
-                delay_between_requests=1.5,
-            )
+            # Look up profiles for story_people first, then org_leaders
+            story_updated = False
+            if story.story_people:
+                found, not_found, company_data = lookup.populate_company_profiles(
+                    story.story_people,
+                    delay_between_requests=1.5,
+                )
+                all_company_data.update(company_data)
+                if found > 0:
+                    story_updated = True
+                total_companies_found += found
+                total_companies_not_found += not_found
+
+            if story.org_leaders:
+                found, not_found, company_data = lookup.populate_company_profiles(
+                    story.org_leaders,
+                    delay_between_requests=1.5,
+                )
+                all_company_data.update(company_data)
+                if found > 0:
+                    story_updated = True
+                total_companies_found += found
+                total_companies_not_found += not_found
 
             # Track companies that weren't found
-            for person in story.relevant_people:
+            for person in all_people:
                 company = person.get("company", "").strip()
-                if (
-                    company
-                    and company not in company_data
-                    and company not in all_company_data
-                ):
+                if company and company not in all_company_data:
                     all_companies_not_found.add(company)
 
-            # Merge into our master list
-            all_company_data.update(company_data)
-
             # Track people results
-            for person in story.relevant_people:
+            for person in all_people:
                 person_info = {
                     "name": person.get("name", "Unknown"),
                     "company": person.get("company", ""),
@@ -1103,21 +1263,19 @@ def _lookup_linkedin_profiles_for_relevant_people(
                 else:
                     people_without_profiles.append(person_info)
 
-            if found > 0:
+            if story_updated:
                 # Update the story in the database
                 engine.db.update_story(story)
                 stories_updated += 1
-                print(f"  ✓ Found {found} company page(s), {not_found} not found")
+                profiles_found = sum(1 for p in all_people if p.get("linkedin_profile"))
+                print(f"  ✓ Found profiles for {profiles_found} people")
 
                 # Show what was found
-                for company, (url, slug) in company_data.items():
+                for company, (url, slug) in all_company_data.items():
                     slug_display = f" (slug: {slug})" if slug else ""
                     print(f"    • {company}: {url}{slug_display}")
             else:
-                print(f"  ✗ No company pages found ({not_found} searched)")
-
-            total_companies_found += found
-            total_companies_not_found += not_found
+                print("  ✗ No company pages found")
     finally:
         # Clean up resources
         lookup.close()
@@ -1187,8 +1345,9 @@ def _test_enrichment(engine: ContentEngine) -> None:
     with engine.db._get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, relevant_people FROM stories
-            WHERE relevant_people IS NOT NULL AND relevant_people != '[]'
+            SELECT id, story_people, org_leaders FROM stories
+            WHERE (story_people IS NOT NULL AND story_people != '[]')
+               OR (org_leaders IS NOT NULL AND org_leaders != '[]')
         """)
         rows = cursor.fetchall()
 
@@ -1200,9 +1359,13 @@ def _test_enrichment(engine: ContentEngine) -> None:
     people_with_urns = 0
 
     for row in rows:
-        people = (
-            json_module.loads(row["relevant_people"]) if row["relevant_people"] else []
+        story_people = (
+            json_module.loads(row["story_people"]) if row["story_people"] else []
         )
+        org_leaders = (
+            json_module.loads(row["org_leaders"]) if row["org_leaders"] else []
+        )
+        people = story_people + org_leaders
         total_people += len(people)
 
         has_profile = False
@@ -1221,12 +1384,12 @@ def _test_enrichment(engine: ContentEngine) -> None:
             with_urns += 1
 
     if total_stories == 0:
-        print("No stories with relevant_people. Search for stories first (Choice 16).")
+        print("No stories with people. Search for stories first (Choice 16).")
         return
 
     # Show current status
     print("Current Status:")
-    print(f"  Stories with relevant_people: {total_stories}")
+    print(f"  Stories with people: {total_stories}")
     print(f"  People with LinkedIn profiles: {people_with_profiles}/{total_people}")
     print(f"  People with URNs (ready for @mention): {people_with_urns}/{total_people}")
 
@@ -1256,82 +1419,120 @@ def _test_enrichment(engine: ContentEngine) -> None:
 
 
 def _show_enrichment_summary(engine: ContentEngine) -> None:
-    """Show summary of enrichment status."""
+    """Show comprehensive summary of enrichment status."""
     import json as json_module
 
     with engine.db._get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, title, relevant_people
-            FROM stories
-            WHERE relevant_people IS NOT NULL AND relevant_people != '[]'
-            ORDER BY id DESC LIMIT 5
-        """)
-        rows = cursor.fetchall()
 
-    if rows:
-        print("\nRecent stories with people:")
-        for row in rows:
-            people = (
-                json_module.loads(row["relevant_people"])
-                if row["relevant_people"]
-                else []
+        # Get overall stats in one query
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN (story_people IS NOT NULL AND story_people != '[]') OR (org_leaders IS NOT NULL AND org_leaders != '[]') THEN 1 ELSE 0 END) as with_people,
+                SUM(CASE WHEN promotion IS NOT NULL AND promotion != '' THEN 1 ELSE 0 END) as with_promotion,
+                SUM(CASE WHEN image_path IS NOT NULL AND image_path != '' THEN 1 ELSE 0 END) as with_image,
+                SUM(CASE WHEN verification_status = 'approved' THEN 1 ELSE 0 END) as approved
+            FROM stories
+        """)
+        stats = cursor.fetchone()
+        total = stats["total"] or 0
+        with_people = stats["with_people"] or 0
+        with_promotion = stats["with_promotion"] or 0
+        with_image = stats["with_image"] or 0
+        approved = stats["approved"] or 0
+
+        # Count LinkedIn enrichment details
+        cursor.execute("""
+            SELECT story_people, org_leaders FROM stories
+            WHERE (story_people IS NOT NULL AND story_people != '[]')
+               OR (org_leaders IS NOT NULL AND org_leaders != '[]')
+        """)
+        total_people = 0
+        with_profiles = 0
+        with_urns = 0
+        for row in cursor.fetchall():
+            story_people = (
+                json_module.loads(row["story_people"]) if row["story_people"] else []
             )
-            with_urn = sum(1 for p in people if p.get("linkedin_urn"))
-            print(
-                f"  [{row['id']}] {row['title'][:45]}... ({with_urn}/{len(people)} @mentions ready)"
+            org_leaders = (
+                json_module.loads(row["org_leaders"]) if row["org_leaders"] else []
             )
+            for p in story_people + org_leaders:
+                total_people += 1
+                if p.get("linkedin_profile"):
+                    with_profiles += 1
+                if p.get("linkedin_urn"):
+                    with_urns += 1
+
+    # Display summary
+    print(f"\nStories: {total} total")
+    print(f"  • With people: {with_people}")
+    print(f"  • With promotion message: {with_promotion}")
+    print(f"  • With image: {with_image}")
+    print(f"  • Approved: {approved}")
+
+    if total_people > 0:
+        print(f"\nLinkedIn Enrichment: {total_people} people identified")
+        print(
+            f"  • With LinkedIn profiles: {with_profiles} ({100 * with_profiles // total_people}%)"
+        )
+        print(
+            f"  • With URNs for @mentions: {with_urns} ({100 * with_urns // total_people}%)"
+        )
+
+    # Show what's missing/next steps
+    missing = []
+    if with_people < total:
+        missing.append(f"{total - with_people} stories need people extraction")
+    if with_profiles < total_people:
+        missing.append(f"{total_people - with_profiles} people need LinkedIn profiles")
+    if with_urns < with_profiles:
+        missing.append(f"{with_profiles - with_urns} profiles need URN extraction")
+    if with_promotion < total:
+        missing.append(f"{total - with_promotion} stories need promotion messages")
+
+    if missing:
+        print("\nNext steps:")
+        for m in missing:
+            print(f"  ⚠ {m}")
+    else:
+        print("\n✓ All enrichment complete!")
 
 
 def _run_profile_lookup(engine: ContentEngine) -> None:
     """Run LinkedIn profile lookup for stories needing profiles."""
-    # Get stories needing profile lookup
-    stories_needing_profiles = []
-    with engine.db._get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id FROM stories
-            WHERE relevant_people IS NOT NULL AND relevant_people != '[]'
-        """)
-        for row in cursor.fetchall():
-            story = engine.db.get_story(row["id"])
-            if story and story.relevant_people:
-                # Check if any people need profiles
-                needs_lookup = any(
-                    not (p.get("linkedin_profile") or "").strip()
-                    for p in story.relevant_people
-                )
-                if needs_lookup:
-                    stories_needing_profiles.append(story)
+    stories_needing_profiles = _get_stories_needing_profile_lookup(engine)
 
     if not stories_needing_profiles:
         print("✓ All stories already have LinkedIn profiles.")
         return
 
     print(f"Looking up profiles for {len(stories_needing_profiles)} stories...")
-    _lookup_linkedin_profiles_for_relevant_people(engine, stories_needing_profiles)
+    _lookup_linkedin_profiles_for_people(engine, stories_needing_profiles)
 
 
 def _run_mention_extraction(engine: ContentEngine) -> None:
     """Run URN extraction for people with profiles but no URNs."""
     import json as json_module
 
-    # Check how many people need URN extraction
+    # Check how many people need URN extraction across story_people and org_leaders
     pending = 0
     with engine.db._get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT relevant_people FROM stories
-            WHERE relevant_people IS NOT NULL
-            AND relevant_people LIKE '%linkedin_profile%'
+            SELECT story_people, org_leaders FROM stories
+            WHERE (story_people LIKE '%linkedin_profile%')
+               OR (org_leaders LIKE '%linkedin_profile%')
         """)
         for row in cursor.fetchall():
-            people = (
-                json_module.loads(row["relevant_people"])
-                if row["relevant_people"]
-                else []
+            story_people = (
+                json_module.loads(row["story_people"]) if row["story_people"] else []
             )
-            for p in people:
+            org_leaders = (
+                json_module.loads(row["org_leaders"]) if row["org_leaders"] else []
+            )
+            for p in story_people + org_leaders:
                 if p.get("linkedin_profile") and not p.get("linkedin_urn"):
                     pending += 1
 
@@ -1473,17 +1674,6 @@ def _test_scheduling(engine: ContentEngine) -> None:
             logger.exception("Pipeline failed during scheduling")
             return
 
-    confirm = (
-        input(
-            f"\nSchedule ALL {available} stories (up to {Config.MAX_STORIES_PER_DAY}/day)? (y/n): "
-        )
-        .strip()
-        .lower()
-    )
-    if confirm != "y":
-        print("Cancelled.")
-        return
-
     try:
         scheduled = engine.scheduler.schedule_stories(schedule_all=True)
         print(f"\nResult: Scheduled {len(scheduled)} new stories")
@@ -1562,9 +1752,9 @@ def _send_linkedin_connections(engine: ContentEngine) -> None:
     with engine.db._get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT relevant_people FROM stories
-            WHERE relevant_people IS NOT NULL
-            AND relevant_people LIKE '%linkedin_urn%'
+            SELECT story_people, org_leaders FROM stories
+            WHERE (story_people LIKE '%linkedin_urn%')
+               OR (org_leaders LIKE '%linkedin_urn%')
         """)
         rows = cursor.fetchall()
 
@@ -1572,8 +1762,11 @@ def _send_linkedin_connections(engine: ContentEngine) -> None:
 
     for row in rows:
         try:
-            people_list = json.loads(row["relevant_people"])
-            for person in people_list:
+            story_people = (
+                json.loads(row["story_people"]) if row["story_people"] else []
+            )
+            org_leaders = json.loads(row["org_leaders"]) if row["org_leaders"] else []
+            for person in story_people + org_leaders:
                 urn = person.get("linkedin_urn", "")
                 if urn and urn.startswith("urn:li:person:"):
                     # Deduplicate by URN

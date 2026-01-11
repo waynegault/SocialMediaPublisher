@@ -90,9 +90,10 @@ class ContentVerifier:
                     try:
                         linkedin_lookup_callback([story])
                         # Refresh the story from database after lookup
-                        refreshed_story = self.db.get_story(story.id)
-                        if refreshed_story:
-                            story = refreshed_story
+                        if story.id is not None:
+                            refreshed_story = self.db.get_story(story.id)
+                            if refreshed_story:
+                                story = refreshed_story
                         # Re-validate LinkedIn profiles after lookup
                         linkedin_valid, linkedin_msg = self._validate_linkedin_profiles(
                             story
@@ -266,17 +267,16 @@ class ContentVerifier:
 
     def _build_verification_prompt(self, story: Story) -> str:
         """Build the verification prompt for a story."""
-        # Count relevant people and LinkedIn profiles found
-        relevant_people_count = (
-            len(story.relevant_people) if story.relevant_people else 0
-        )
+        # Count people from story_people and org_leaders
+        all_people = (story.story_people or []) + (story.org_leaders or [])
+        people_count = len(all_people)
         linkedin_profiles_found = 0
 
-        # Count LinkedIn profiles in relevant_people
-        if story.relevant_people:
+        # Count LinkedIn profiles in story_people and org_leaders
+        if all_people:
             linkedin_profiles_found = sum(
                 1
-                for p in story.relevant_people
+                for p in all_people
                 if (p.get("linkedin_urn") or p.get("linkedin_profile"))
                 and str(p.get("linkedin_urn") or p.get("linkedin_profile", "")).strip()
             )
@@ -291,7 +291,7 @@ class ContentVerifier:
             story_title=story.title,
             story_summary=story.summary,
             story_sources=", ".join(story.source_links[:3]),
-            relevant_people_count=relevant_people_count,
+            people_count=people_count,
             linkedin_profiles_found=linkedin_profiles_found,
             summary_word_limit=Config.SUMMARY_WORD_COUNT,
             promotion_message=promotion_message,
@@ -306,13 +306,14 @@ class ContentVerifier:
         - At least 1 relevant person identified
         - At least 1 LinkedIn profile found (50% coverage minimum)
         """
-        relevant_count = len(story.relevant_people) if story.relevant_people else 0
+        all_people = (story.story_people or []) + (story.org_leaders or [])
+        relevant_count = len(all_people)
         linkedin_count = 0
 
-        if story.relevant_people:
+        if all_people:
             linkedin_count = sum(
                 1
-                for p in story.relevant_people
+                for p in all_people
                 if (p.get("linkedin_urn") or p.get("linkedin_profile"))
                 and str(p.get("linkedin_urn") or p.get("linkedin_profile", "")).strip()
             )
