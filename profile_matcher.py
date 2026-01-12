@@ -44,6 +44,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+from text_utils import COMMON_FIRST_NAMES, CONTEXT_STOPWORDS, build_context_keywords
+
 logger = logging.getLogger(__name__)
 
 
@@ -121,40 +123,13 @@ class PersonContext:
 
     def get_context_keywords(self) -> set[str]:
         """Get keywords for matching from all available context."""
-        keywords = set()
-        # Organization keywords
-        if self.organization:
-            keywords.update(w.lower() for w in self.organization.split() if len(w) > 2)
-        # Department keywords
-        if self.department:
-            keywords.update(w.lower() for w in self.department.split() if len(w) > 3)
-        # Position keywords
-        if self.position:
-            keywords.update(w.lower() for w in self.position.split() if len(w) > 4)
-        # Research area keywords
-        if self.research_area:
-            keywords.update(w.lower() for w in self.research_area.split() if len(w) > 3)
-        # Industry keywords
-        if self.industry:
-            keywords.update(w.lower() for w in self.industry.split() if len(w) > 3)
-
-        # Remove common stopwords
-        stopwords = {
-            "the",
-            "and",
-            "for",
-            "with",
-            "from",
-            "center",
-            "centre",
-            "department",
-            "division",
-            "school",
-            "institute",
-            "research",
-        }
-        keywords -= stopwords
-        return keywords
+        return build_context_keywords(
+            company=self.organization,
+            department=self.department,
+            position=self.position,
+            research_area=self.research_area,
+            industry=self.industry,
+        )
 
 
 @dataclass
@@ -269,23 +244,8 @@ class ProfileMatcher:
     WEIGHT_CONFLICTING_ORG = -2.0
     WEIGHT_COMMON_NAME_NO_SIGNALS = -0.5  # Reduced penalty
 
-    # Common FIRST names only (not ethnic surnames which are distinctive when paired)
-    # Removed: Chinese, Korean, Indian surnames - they're distinctive with first names
-    COMMON_NAMES = {
-        "john",
-        "james",
-        "michael",
-        "david",
-        "robert",
-        "mary",
-        "jennifer",
-        "sarah",
-        "smith",
-        "johnson",
-        "williams",
-        "brown",
-        "jones",
-    }
+    # Use shared common names constant from text_utils
+    COMMON_NAMES = COMMON_FIRST_NAMES
 
     # Wrong field indicators by expected role type
     WRONG_FIELD_INDICATORS = {

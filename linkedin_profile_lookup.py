@@ -118,52 +118,23 @@ class PersonSearchContext:
     context_keywords: set[str] = field(default_factory=set)
 
 
-# Common first/last names that need extra matching signals
-COMMON_FIRST_NAMES = frozenset(
-    {
-        "john",
-        "james",
-        "michael",
-        "david",
-        "robert",
-        "mary",
-        "jennifer",
-        "sarah",
-        "smith",
-        "johnson",
-        "williams",
-        "brown",
-        "jones",
-    }
+# Import shared constants from text_utils
+from text_utils import (
+    COMMON_FIRST_NAMES,
+    CONTEXT_STOPWORDS,
+    build_context_keywords,
+    is_common_name,
 )
 
 
 def _build_context_keywords(ctx: PersonSearchContext) -> set[str]:
     """Build context keywords from search context for matching."""
-    keywords: set[str] = set()
-
-    if ctx.company:
-        keywords.update(w.lower() for w in ctx.company.split() if len(w) > 2)
-    if ctx.department:
-        keywords.update(w.lower() for w in ctx.department.split() if len(w) > 3)
-    if ctx.position:
-        keywords.update(w.lower() for w in ctx.position.split() if len(w) > 4)
-    if ctx.research_area:
-        keywords.update(w.lower() for w in ctx.research_area.split() if len(w) > 3)
-
-    # Remove common stopwords
-    stopwords = {
-        "the",
-        "and",
-        "for",
-        "with",
-        "from",
-        "research",
-        "center",
-        "centre",
-        "department",
-    }
-    return keywords - stopwords
+    return build_context_keywords(
+        company=ctx.company,
+        department=ctx.department,
+        position=ctx.position,
+        research_area=ctx.research_area,
+    )
 
 
 def _calculate_contradiction_penalty(
@@ -1827,26 +1798,6 @@ NOT_FOUND"""
         search_query = " ".join(parts)
         logger.debug(f"UC Chrome Google search: {search_query}")
 
-        # Common FULL names or extremely common first names that need extra signals
-        # Note: We removed ethnic surnames (Wang, Zhang, Kim, Patel, etc.) because
-        # when combined with first names they're usually distinctive enough.
-        # Only flag the most generic Western first names that could match anyone.
-        COMMON_FIRST_NAMES = {
-            "john",
-            "james",
-            "michael",
-            "david",
-            "robert",
-            "mary",
-            "jennifer",
-            "sarah",
-            "smith",
-            "johnson",
-            "williams",
-            "brown",
-            "jones",
-        }
-
         try:
             # Use Google Search (better LinkedIn results than Bing)
             import urllib.parse
@@ -1870,43 +1821,15 @@ NOT_FOUND"""
                 )
 
             # Check if this is a very common Western name (requires slightly higher confidence)
-            is_common_name = (
-                first_name in COMMON_FIRST_NAMES or last_name in COMMON_FIRST_NAMES
-            )
+            name_is_common = is_common_name(first_name, last_name)
 
             # Build context matching keywords from all available metadata
-            context_keywords = set()
-            if company:
-                context_keywords.update(
-                    w.lower() for w in company.split() if len(w) > 2
-                )
-            if department:
-                context_keywords.update(
-                    w.lower() for w in department.split() if len(w) > 3
-                )
-            if position:
-                # Add significant words from position
-                context_keywords.update(
-                    w.lower() for w in position.split() if len(w) > 4
-                )
-            if research_area:
-                context_keywords.update(
-                    w.lower() for w in research_area.split() if len(w) > 3
-                )
-
-            # Remove common stopwords from context keywords
-            stopwords = {
-                "the",
-                "and",
-                "for",
-                "with",
-                "from",
-                "research",
-                "center",
-                "centre",
-                "department",
-            }
-            context_keywords -= stopwords
+            context_keywords = build_context_keywords(
+                company=company,
+                department=department,
+                position=position,
+                research_area=research_area,
+            )
 
             # Extract LinkedIn URLs directly from page source (most reliable for Google)
             page_source = driver.page_source
@@ -2275,7 +2198,7 @@ NOT_FOUND"""
 
             if is_single_name:
                 threshold = MIN_CONFIDENCE_SCORE_SINGLE_NAME
-            elif is_common_name:
+            elif name_is_common:
                 threshold = MIN_CONFIDENCE_SCORE_COMMON_NAME
             else:
                 threshold = MIN_CONFIDENCE_SCORE
