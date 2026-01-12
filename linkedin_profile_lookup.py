@@ -1303,6 +1303,8 @@ NOT_FOUND"""
         Uses Playwright with Bing search as the primary method (most reliable),
         with a two-pass strategy: first requiring org match, then without.
 
+        Results are cached to avoid redundant searches for the same person.
+
         Args:
             name: Person's name (e.g., "Suzanne Farid")
             company: Company or organization they work at (e.g., "UCL")
@@ -1317,6 +1319,21 @@ NOT_FOUND"""
         """
         if not name or not company:
             return None
+
+        # Build cache key from name and company (primary identifiers)
+        # Include department and location for specificity
+        cache_key = f"{name.lower().strip()}@{company.lower().strip()}|{(department or '').lower().strip()}|{(location or '').lower().strip()}"
+
+        # Check cache first
+        if cache_key in self._person_cache:
+            cached_url = self._person_cache[cache_key]
+            if cached_url:
+                logger.info(f"Person cache hit: {name} at {company} -> {cached_url}")
+            else:
+                logger.debug(
+                    f"Person cache hit (not found previously): {name} at {company}"
+                )
+            return cached_url
 
         start_time = time.time()
 
@@ -1371,6 +1388,8 @@ NOT_FOUND"""
             logger.info(
                 f"Found person profile: {name} -> {profile_url} ({elapsed:.1f}s)"
             )
+            # Cache the successful result
+            self._person_cache[cache_key] = profile_url
             return profile_url
 
         # Fallback to Gemini search (skip if disabled due to low success rate)
@@ -1378,6 +1397,8 @@ NOT_FOUND"""
             elapsed = time.time() - start_time
             self._timing_stats["person_search"].append(elapsed)
             logger.debug(f"Skipping Gemini fallback (disabled) for {name}")
+            # Cache the negative result to avoid re-searching
+            self._person_cache[cache_key] = None
             return None
 
         result = self._search_person_gemini(
@@ -1386,6 +1407,9 @@ NOT_FOUND"""
 
         elapsed = time.time() - start_time
         self._timing_stats["person_search"].append(elapsed)
+
+        # Cache the result (found or not found)
+        self._person_cache[cache_key] = result
         return result
 
     def _search_person_gemini(
@@ -2417,9 +2441,7 @@ NOT_FOUND"""
             if i < len(companies) - 1:
                 time.sleep(delay_between_requests)
 
-        # Use instance-level caches to remember results across multiple stories
-        # This avoids re-searching for the same person/department appearing in multiple articles
-        person_cache = self._person_cache
+        # Department cache for fallback searches
         department_cache = self._department_cache
 
         # Process each person with hierarchical lookup
@@ -2445,37 +2467,21 @@ NOT_FOUND"""
             # HIERARCHY LEVEL 1: Try to find the individual's personal profile
             # ============================================================
             if name:
-                # Include department and location in cache key for better specificity
-                person_cache_key = f"{name}@{company}|{department}|{location}"
+                # search_person handles caching internally now
+                logger.info(
+                    f"Level 1: Searching for personal profile: {name} at {company}"
+                )
+                person_url = self.search_person(
+                    name,
+                    company,
+                    position=position or None,
+                    department=department or None,
+                    location=location or None,
+                    role_type=role_type or None,
+                    research_area=research_area or None,
+                )
+                time.sleep(delay_between_requests)
 
-                if person_cache_key in person_cache:
-                    # Cache hit - avoid redundant search
-                    cached_url = person_cache[person_cache_key]
-                    if cached_url:
-                        logger.info(
-                            f"Level 1: Cache hit for {name} at {company} -> {cached_url}"
-                        )
-                    else:
-                        logger.debug(
-                            f"Level 1: Cache hit (not found) for {name} at {company}"
-                        )
-                else:
-                    logger.info(
-                        f"Level 1: Searching for personal profile: {name} at {company}"
-                    )
-                    person_url = self.search_person(
-                        name,
-                        company,
-                        position=position or None,
-                        department=department or None,
-                        location=location or None,
-                        role_type=role_type or None,
-                        research_area=research_area or None,
-                    )
-                    person_cache[person_cache_key] = person_url
-                    time.sleep(delay_between_requests)
-
-                person_url = person_cache[person_cache_key]
                 if person_url:
                     person["linkedin_profile"] = person_url
                     # Extract slug from personal profile URL
