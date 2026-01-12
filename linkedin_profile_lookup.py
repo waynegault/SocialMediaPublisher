@@ -1663,7 +1663,12 @@ NOT_FOUND"""
         return None
 
     def _validate_profile_name(
-        self, driver: Any, profile_url: str, first_name: str, last_name: str
+        self,
+        driver: Any,
+        profile_url: str,
+        first_name: str,
+        last_name: str,
+        company: Optional[str] = None,
     ) -> bool:
         """Visit a LinkedIn profile page and validate that the name matches.
 
@@ -1675,6 +1680,7 @@ NOT_FOUND"""
             profile_url: LinkedIn profile URL to validate
             first_name: Expected first name (lowercase)
             last_name: Expected last name (lowercase)
+            company: Expected company/org (for single-name validation)
 
         Returns:
             True if the profile name matches, False otherwise
@@ -1711,6 +1717,14 @@ NOT_FOUND"""
                 logger.debug(f"Could not extract name from profile page: {profile_url}")
                 return False
 
+            # Get full page text for context matching (for single-name searches)
+            page_text = ""
+            try:
+                body = driver.find_element(By.TAG_NAME, "body")
+                page_text = body.text.lower() if body else ""
+            except Exception:
+                page_text = page_title
+
             # Validate: BOTH first and last name must appear in the profile name
             # Use word boundary matching to avoid partial matches
             if first_name and last_name:
@@ -1730,14 +1744,27 @@ NOT_FOUND"""
                     )
                     return False
             elif first_name:
+                # Single-name search - ALSO require company to appear on profile
                 first_pattern = rf"\b{re.escape(first_name)}\b"
-                if re.search(first_pattern, name_text):
-                    return True
-                else:
+                if not re.search(first_pattern, name_text):
                     logger.debug(
                         f"Profile name mismatch: expected '{first_name}', found '{name_text[:50]}'"
                     )
                     return False
+
+                # For single-name searches, require the company to appear on the profile
+                if company:
+                    company_words = [w.lower() for w in company.split() if len(w) > 3]
+                    company_match = any(word in page_text for word in company_words)
+                    if not company_match:
+                        logger.debug(
+                            f"Profile company mismatch: expected '{company}' not found on profile"
+                        )
+                        return False
+                    logger.debug(
+                        f"Profile validated (single-name): '{name_text[:30]}' with company '{company}'"
+                    )
+                return True
             else:
                 # No name parts to validate - accept
                 return True
@@ -1834,6 +1861,13 @@ NOT_FOUND"""
             name_parts = name_clean.split()
             first_name = name_parts[0] if name_parts else ""
             last_name = name_parts[-1] if len(name_parts) >= 2 else ""
+
+            # Single-name searches are VERY ambiguous - require org match always
+            is_single_name = len(name_parts) == 1
+            if is_single_name:
+                logger.warning(
+                    f"Single-name search '{name}' - will require strong org/context match"
+                )
 
             # Check if this is a very common Western name (requires slightly higher confidence)
             is_common_name = (
@@ -2217,6 +2251,12 @@ NOT_FOUND"""
             # Sort candidates by score (highest first)
             candidates.sort(key=lambda x: x[0], reverse=True)
 
+            # Log all candidates for debugging
+            if candidates:
+                logger.info(f"Found {len(candidates)} candidates for '{name}':")
+                for i, (score, url, kws) in enumerate(candidates[:5]):  # Top 5
+                    logger.info(f"  #{i + 1}: {url} (score={score}, keywords={kws})")
+
             # HIGH PRECISION THRESHOLD: Require minimum score for confidence
             # Score breakdown:
             # - Name in URL slug: +3 (strong signal)
@@ -2229,12 +2269,16 @@ NOT_FOUND"""
             MIN_CONFIDENCE_SCORE_COMMON_NAME = (
                 4  # Common names need name_in_url + at least one other signal
             )
-
-            threshold = (
-                MIN_CONFIDENCE_SCORE_COMMON_NAME
-                if is_common_name
-                else MIN_CONFIDENCE_SCORE
+            MIN_CONFIDENCE_SCORE_SINGLE_NAME = (
+                5  # Single-name searches need name + org match + other signal
             )
+
+            if is_single_name:
+                threshold = MIN_CONFIDENCE_SCORE_SINGLE_NAME
+            elif is_common_name:
+                threshold = MIN_CONFIDENCE_SCORE_COMMON_NAME
+            else:
+                threshold = MIN_CONFIDENCE_SCORE
 
             # Try candidates in order of score until we find a valid one
             for candidate_score, candidate_url, matched_kws in candidates:
@@ -2245,8 +2289,10 @@ NOT_FOUND"""
                     break
 
                 # FINAL VALIDATION: Visit the profile page and verify the name
+                # For single-name searches, also verify the company appears on the profile
+                validation_company = company if is_single_name else None
                 if self._validate_profile_name(
-                    driver, candidate_url, first_name, last_name
+                    driver, candidate_url, first_name, last_name, validation_company
                 ):
                     logger.info(
                         f"Found profile via UC Chrome: {candidate_url} (score={candidate_score}, threshold={threshold})"
@@ -2254,7 +2300,7 @@ NOT_FOUND"""
                     return candidate_url
                 else:
                     logger.info(
-                        f"Rejecting candidate after page validation: {candidate_url} (name mismatch on actual profile), trying next..."
+                        f"Rejecting candidate after page validation: {candidate_url} (name/company mismatch), trying next..."
                     )
 
             if candidates:
