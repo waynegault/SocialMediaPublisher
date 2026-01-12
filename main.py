@@ -1550,10 +1550,15 @@ def _lookup_linkedin_profiles_for_people(
 
     # Cache statistics (shows cross-story caching efficiency)
     cache_stats = lookup.get_cache_stats()
-    total_cached = sum(s["total"] for s in cache_stats.values())
+    total_cached = (
+        cache_stats["person"]["total"]
+        + cache_stats["company"]["total"]
+        + cache_stats["department"]["total"]
+    )
     if total_cached > 0:
         print("\n📊 Cache Statistics (cross-story efficiency):")
-        for cache_type, stats in cache_stats.items():
+        for cache_type in ("person", "company", "department"):
+            stats = cache_stats[cache_type]  # type: ignore[literal-required]
             if stats["total"] > 0:
                 print(
                     f"  • {cache_type.capitalize()}: {stats['total']} entries "
@@ -1562,7 +1567,7 @@ def _lookup_linkedin_profiles_for_people(
 
     # Timing statistics
     timing_stats = lookup.get_timing_stats()
-    total_searches = sum(s["count"] for s in timing_stats.values())
+    total_searches = sum(s["count"] for s in timing_stats.values())  # type: ignore[call-overload]
     if total_searches > 0:
         print("\n⏱️ Search Timing Statistics:")
         for op_type, stats in timing_stats.items():
