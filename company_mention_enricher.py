@@ -1018,232 +1018,44 @@ Return ONLY valid JSON, no explanation."""
     def _search_personal_linkedin(
         self, lookup, name: str, company: str, position: str
     ) -> str | None:
-        """Search for a person's personal LinkedIn profile URL using browser-based Google Search."""
-        import re as regex
-        import urllib.parse
+        """Search for a person's personal LinkedIn profile URL using ProfileMatcher.
 
-        # Get browser driver from lookup
-        driver = lookup._get_uc_driver()
-        if not driver:
-            logger.warning("Cannot search for LinkedIn - browser driver not available")
-            return None
+        This method delegates to ProfileMatcher for high-precision profile matching,
+        ensuring consistent search behavior across the codebase.
 
-        # Clean name - remove parentheses for cleaner search
-        clean_name = regex.sub(r"\([^)]*\)", "", name).strip()
+        Args:
+            lookup: LinkedInCompanyLookup instance
+            name: Person's name
+            company: Company/organization name
+            position: Job title/position
 
-        # Extract first and last name for validation
-        name_parts = clean_name.lower().split()
-        first_name = name_parts[0] if name_parts else ""
-        last_name = name_parts[-1] if len(name_parts) > 1 else ""
+        Returns:
+            LinkedIn profile URL if found with high confidence, None otherwise
+        """
+        from profile_matcher import ProfileMatcher, PersonContext, RoleType, create_person_context
 
-        # Also extract the part in parentheses if present (e.g., "Harry (Shih-I) Tan" -> "Shih-I Tan")
-        alt_name = None
-        paren_match = regex.search(r"\(([^)]+)\)", name)
-        if paren_match:
-            parts = name.split()
-            if len(parts) > 1:
-                last_name_orig = parts[-1]
-                alt_name = f"{paren_match.group(1)} {last_name_orig}"
-
-        # Extract location hint from company name
-        location = self._extract_location_hint(company)
-
-        # Build search query - use "linkedin" in quotes to ensure it's always included
-        if location:
-            query = f'"{clean_name}" {location} "linkedin" site:linkedin.com/in'
-        else:
-            query = f'"{clean_name}" "{company}" "linkedin" site:linkedin.com/in'
-
-        search_url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
-
-        try:
-            logger.debug(f"Searching Google: {query}")
-            driver.get(search_url)
-            time.sleep(2)
-
-            # Extract LinkedIn URLs from search results
-            page_source = driver.page_source
-            urls = regex.findall(
-                r"https://www\.linkedin\.com/in/[\w\-]+/?", page_source
-            )
-
-            # Deduplicate
-            seen = set()
-            unique_urls = []
-            for url in urls:
-                url_clean = url.rstrip("/")
-                if url_clean not in seen:
-                    seen.add(url_clean)
-                    unique_urls.append(url_clean)
-
-            # Validate each URL to ensure name matches before accepting
-            for url in unique_urls:
-                # Try to get the profile name from the page to validate
-                try:
-                    driver.get(url)
-                    time.sleep(1.5)
-
-                    # Extract the profile name from the page title or h1
-                    # LinkedIn profile titles are typically "FirstName LastName - Title | LinkedIn"
-                    page_title = driver.title.lower() if driver.title else ""
-
-                    # Also try to get the main profile name heading
-                    profile_name = ""
-                    try:
-                        from selenium.webdriver.common.by import By
-
-                        # Try multiple selectors for the profile name
-                        for selector in [
-                            "h1",
-                            ".text-heading-xlarge",
-                            "[data-generated-suggestion-target]",
-                        ]:
-                            try:
-                                name_elem = driver.find_element(
-                                    By.CSS_SELECTOR, selector
-                                )
-                                if name_elem and name_elem.text:
-                                    profile_name = name_elem.text.lower().strip()
-                                    break
-                            except Exception:
-                                continue
-                    except Exception:
-                        pass
-
-                    # Use profile name if found, otherwise fall back to page title
-                    name_text = profile_name if profile_name else page_title
-
-                    # For validation, check if BOTH first and last name appear in the profile name
-                    # Use word boundary matching to avoid partial matches (e.g., "ning" in "engineering")
-                    if first_name and last_name:
-                        # Check for whole word matches
-                        first_match = regex.search(
-                            rf"\b{regex.escape(first_name)}\b", name_text
-                        )
-                        last_match = regex.search(
-                            rf"\b{regex.escape(last_name)}\b", name_text
-                        )
-
-                        if first_match and last_match:
-                            logger.info(
-                                f"Found validated LinkedIn URL: {url} (name: {name_text[:50]})"
-                            )
-                            return url
-                        else:
-                            logger.debug(
-                                f"Skipping {url} - name mismatch (expected '{first_name} {last_name}', found '{name_text[:50]}')"
-                            )
-                    elif first_name:
-                        first_match = regex.search(
-                            rf"\b{regex.escape(first_name)}\b", name_text
-                        )
-                        if first_match:
-                            logger.info(f"Found LinkedIn URL (first name match): {url}")
-                            return url
-                    else:
-                        # No name parts to validate, accept first result
-                        logger.debug(f"Found LinkedIn URL (no validation): {url}")
-                        return url
-                except Exception as e:
-                    logger.debug(f"Error validating {url}: {e}")
-                    continue
-
-            # Try alternate search with alt_name if first search failed
-            if alt_name:
-                if location:
-                    query2 = f'"{alt_name}" {location} "linkedin" site:linkedin.com/in'
-                else:
-                    query2 = f'"{alt_name}" "{company}" "linkedin" site:linkedin.com/in'
-
-                search_url2 = (
-                    f"https://www.google.com/search?q={urllib.parse.quote(query2)}"
-                )
-                logger.debug(f"Retry search: {query2}")
-                driver.get(search_url2)
-                time.sleep(2)
-
-                page_source = driver.page_source
-                urls = regex.findall(
-                    r"https://www\.linkedin\.com/in/[\w\-]+/?", page_source
-                )
-                for url in urls:
-                    url_clean = url.rstrip("/")
-                    if url_clean not in seen:
-                        logger.debug(f"Found LinkedIn URL (alt): {url_clean}")
-                        return url_clean
-
-            # Try with position as last resort
-            if position:
-                query3 = f'"{clean_name}" {position} "linkedin" site:linkedin.com/in'
-                search_url3 = (
-                    f"https://www.google.com/search?q={urllib.parse.quote(query3)}"
-                )
-                logger.debug(f"Retry with position: {query3}")
-                driver.get(search_url3)
-                time.sleep(2)
-
-                page_source = driver.page_source
-                urls = regex.findall(
-                    r"https://www\.linkedin\.com/in/[\w\-]+/?", page_source
-                )
-                for url in urls:
-                    url_clean = url.rstrip("/")
-                    if url_clean not in seen:
-                        logger.debug(f"Found LinkedIn URL (position): {url_clean}")
-                        return url_clean
-
-            logger.debug(f"No LinkedIn profile found for {name}")
-            return None
-
-        except Exception as e:
-            logger.warning(f"Error searching for personal LinkedIn: {e}")
-            return None
-
-    def _extract_location_hint(self, company: str) -> str:
-        """Extract a location hint from the company/institution name."""
-        location_hints = {
-            "Toronto": "Toronto",
-            "Stanford": "Stanford",
-            "MIT": "Massachusetts",
-            "Harvard": "Boston",
-            "Berkeley": "Berkeley",
-            "UCLA": "Los Angeles",
-            "UIUC": "Urbana",
-            "Illinois Urbana-Champaign": "Urbana",
-            "Urbana-Champaign": "Urbana",
-            "Northwestern": "Evanston",
-            "Michigan": "Ann Arbor",
-            "Penn State": "Pennsylvania",
-            "Waterloo": "Waterloo",
-            "UBC": "Vancouver",
-            "McGill": "Montreal",
-            "Caltech": "Pasadena",
-            "Princeton": "Princeton",
-            "Yale": "New Haven",
-            "Columbia": "New York",
-            "Cornell": "Ithaca",
-            "Duke": "Durham",
-            "Rice": "Houston",
-            "Georgia Tech": "Atlanta",
-            "Carnegie Mellon": "Pittsburgh",
-            "CMU": "Pittsburgh",
-            "Wisconsin": "Madison",
-            "Washington": "Seattle",
-            "UW": "Seattle",
-            "Texas": "Austin",
-            "UT Austin": "Austin",
-            "Chicago": "Chicago",
-            "Oxford": "Oxford",
-            "Cambridge": "Cambridge",
-            "ETH": "Zurich",
-            "EPFL": "Lausanne",
-            "Imperial": "London",
-            "UCL": "London",
+        # Build person dict for create_person_context
+        person_dict = {
+            "name": name,
+            "company": company,
+            "position": position,
         }
-        for key, location in location_hints.items():
-            if key.lower() in company.lower():
-                return location
-        return ""
+        person_context = create_person_context(person_dict)
+
+        # Use ProfileMatcher for consistent high-precision matching
+        matcher = ProfileMatcher(linkedin_lookup=lookup)
+        result = matcher.match_person(person_context, org_fallback_url=None)
+
+        # Only return personal profile URLs, not org fallbacks
+        if result.is_person_profile() and result.matched_profile:
+            logger.debug(
+                f"ProfileMatcher found: {result.matched_profile.linkedin_url} "
+                f"(confidence: {result.confidence.value})"
+            )
+            return result.matched_profile.linkedin_url
+
+        logger.debug(f"ProfileMatcher: No confident match for {name}")
+        return None
 
     def _get_stories_needing_urns(self) -> list[Story]:
         """Get stories with people needing personal LinkedIn URNs.
