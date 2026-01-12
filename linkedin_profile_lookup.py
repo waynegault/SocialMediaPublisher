@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple, TypedDict, cast
 
 import httpx
 from google import genai  # type: ignore
@@ -61,6 +61,295 @@ def _suppress_uc_cleanup_errors() -> None:
 
 # Apply the patch on module load
 _suppress_uc_cleanup_errors()
+
+
+# === TypedDict definitions for structured return types ===
+
+
+class CacheCountStats(TypedDict):
+    """Statistics for a single cache type."""
+
+    total: int
+    found: int
+    not_found: int
+
+
+class AllCacheStats(TypedDict):
+    """Statistics for all cache types."""
+
+    person: CacheCountStats
+    company: CacheCountStats
+    department: CacheCountStats
+
+
+class TimingStats(TypedDict):
+    """Timing statistics for an operation type."""
+
+    avg: float
+    min: float
+    max: float
+    total: float
+    count: int
+
+
+class GeminiStats(TypedDict):
+    """Statistics for Gemini API usage."""
+
+    attempts: int
+    successes: int
+    success_rate: float
+    disabled: bool
+
+
+@dataclass
+class PersonSearchContext:
+    """Context for person LinkedIn profile search."""
+
+    first_name: str
+    last_name: str
+    company: Optional[str] = None
+    department: Optional[str] = None
+    position: Optional[str] = None
+    location: Optional[str] = None
+    role_type: Optional[str] = None
+    research_area: Optional[str] = None
+    require_org_match: bool = True
+    is_common_name: bool = False
+    context_keywords: set[str] = field(default_factory=set)
+
+
+# Common first/last names that need extra matching signals
+COMMON_FIRST_NAMES = frozenset(
+    {
+        "john",
+        "james",
+        "michael",
+        "david",
+        "robert",
+        "mary",
+        "jennifer",
+        "sarah",
+        "smith",
+        "johnson",
+        "williams",
+        "brown",
+        "jones",
+    }
+)
+
+
+def _build_context_keywords(ctx: PersonSearchContext) -> set[str]:
+    """Build context keywords from search context for matching."""
+    keywords: set[str] = set()
+
+    if ctx.company:
+        keywords.update(w.lower() for w in ctx.company.split() if len(w) > 2)
+    if ctx.department:
+        keywords.update(w.lower() for w in ctx.department.split() if len(w) > 3)
+    if ctx.position:
+        keywords.update(w.lower() for w in ctx.position.split() if len(w) > 4)
+    if ctx.research_area:
+        keywords.update(w.lower() for w in ctx.research_area.split() if len(w) > 3)
+
+    # Remove common stopwords
+    stopwords = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "research",
+        "center",
+        "centre",
+        "department",
+    }
+    return keywords - stopwords
+
+
+def _calculate_contradiction_penalty(
+    result_text: str, ctx: PersonSearchContext
+) -> tuple[int, list[str]]:
+    """Calculate penalty score for contradicting signals in search result.
+
+    Returns:
+        Tuple of (penalty_score, list_of_reasons)
+    """
+    penalty = 0
+    reasons: list[str] = []
+
+    # Wrong field of work - unrelated professions
+    if ctx.role_type == "academic":
+        wrong_fields = [
+            "real estate agent",
+            "realtor",
+            "sales manager",
+            "marketing manager",
+            "insurance agent",
+            "financial advisor",
+            "fitness trainer",
+            "hair stylist",
+            "photographer",
+            "life coach",
+        ]
+        for wrong_field in wrong_fields:
+            if wrong_field in result_text:
+                penalty += 3
+                reasons.append(f"wrong field: {wrong_field}")
+
+    elif ctx.role_type == "executive" and ctx.company:
+        # Executive at company X should not show as professor at different org
+        if "professor" in result_text:
+            company_lower = ctx.company.lower()
+            if not any(
+                word in result_text for word in company_lower.split() if len(word) > 3
+            ):
+                penalty += 2
+                reasons.append("professor at different org")
+
+    # Wrong industry indicators
+    if ctx.department or ctx.research_area:
+        expected_terms: set[str] = set()
+        if ctx.department:
+            expected_terms.update(
+                w.lower() for w in ctx.department.split() if len(w) > 4
+            )
+        if ctx.research_area:
+            expected_terms.update(
+                w.lower() for w in ctx.research_area.split() if len(w) > 4
+            )
+
+        science_expected = any(
+            term in expected_terms
+            for term in [
+                "chemical",
+                "engineering",
+                "biology",
+                "chemistry",
+                "physics",
+                "research",
+            ]
+        )
+        if science_expected:
+            unrelated = [
+                "real estate",
+                "retail sales",
+                "hospitality",
+                "food service",
+                "beauty salon",
+            ]
+            for industry in unrelated:
+                if industry in result_text:
+                    penalty += 2
+                    reasons.append(f"unrelated industry: {industry}")
+
+    # Location contradiction - different country
+    if ctx.location:
+        location_parts = [p.strip() for p in ctx.location.lower().split(",")]
+        expected_country = location_parts[-1] if location_parts else ""
+
+        country_conflicts = {
+            "usa": ["india", "china", "brazil", "indonesia", "nigeria", "pakistan"],
+            "uk": ["india", "china", "brazil", "indonesia", "nigeria", "pakistan"],
+            "canada": ["india", "china", "brazil", "indonesia", "nigeria"],
+            "australia": ["india", "china", "brazil", "indonesia"],
+            "germany": ["india", "china", "brazil", "indonesia"],
+        }
+
+        for expected, conflicts in country_conflicts.items():
+            if expected in expected_country:
+                for conflict_country in conflicts:
+                    if conflict_country in result_text:
+                        # Don't penalize if expected location also appears
+                        if not any(
+                            part in result_text
+                            for part in location_parts
+                            if len(part) > 2
+                        ):
+                            penalty += 2
+                            reasons.append(f"location mismatch: {conflict_country}")
+                            break
+
+    return penalty, reasons
+
+
+def _score_linkedin_candidate(
+    linkedin_url: str,
+    result_text: str,
+    ctx: PersonSearchContext,
+) -> tuple[int, list[str], bool]:
+    """Score a LinkedIn profile candidate based on matching signals.
+
+    Args:
+        linkedin_url: The LinkedIn profile URL
+        result_text: Text from the search result
+        ctx: Search context with person details
+
+    Returns:
+        Tuple of (score, matched_keywords, name_in_url)
+    """
+    url_slug = linkedin_url.split("/in/")[-1] if "/in/" in linkedin_url else ""
+    url_text = url_slug.replace("-", " ").lower()
+    result_lower = result_text.lower()
+
+    # Check if name is in URL
+    name_in_url = True
+    if ctx.first_name and ctx.last_name:
+        first_pattern = r"\b" + re.escape(ctx.first_name) + r"\b"
+        last_pattern = r"\b" + re.escape(ctx.last_name) + r"\b"
+        first_in_url = bool(re.search(first_pattern, url_text))
+        last_in_url = bool(re.search(last_pattern, url_text))
+        name_in_url = first_in_url and last_in_url
+
+    score = 0
+    matched: list[str] = []
+
+    # Context keyword matches
+    for keyword in ctx.context_keywords:
+        if keyword in result_lower:
+            score += 1
+            matched.append(keyword)
+
+    # Strong boost for name in URL
+    if name_in_url:
+        score += 3
+        matched.append("name_in_url")
+
+    # Org match
+    if ctx.company:
+        company_lower = ctx.company.lower()
+        company_words = [w for w in company_lower.split() if len(w) > 3]
+        org_matched = any(word in result_lower for word in company_words)
+        org_matched = org_matched or company_lower in result_lower
+        if org_matched:
+            score += 2
+        elif ctx.require_org_match:
+            return -100, [], name_in_url  # Disqualify
+
+    # Location match
+    if ctx.location:
+        location_parts = [p.strip() for p in ctx.location.lower().split(",")]
+        if any(part in result_lower for part in location_parts if len(part) > 2):
+            score += 1
+
+    # Role-type specific matches
+    if ctx.role_type == "academic":
+        academic_indicators = ["professor", "researcher", "phd", "dr.", "university"]
+        if any(ind in result_lower for ind in academic_indicators):
+            score += 1
+    elif ctx.role_type == "executive":
+        exec_indicators = ["ceo", "cto", "cfo", "vp", "president", "director", "chief"]
+        if any(ind in result_lower for ind in exec_indicators):
+            score += 1
+
+    # Apply contradiction penalties
+    penalty, reasons = _calculate_contradiction_penalty(result_lower, ctx)
+    if penalty > 0:
+        score -= penalty
+        logger.debug(
+            f"Contradiction for '{linkedin_url}': {reasons}, penalty={penalty}"
+        )
+
+    return score, matched, name_in_url
 
 
 class LinkedInCompanyLookup:
@@ -128,7 +417,7 @@ class LinkedInCompanyLookup:
         # Load persisted cache on startup
         self._load_cache_from_disk()
 
-    def get_cache_stats(self) -> dict[str, dict[str, int]]:
+    def get_cache_stats(self) -> AllCacheStats:
         """Get statistics about all search caches.
 
         Returns:
@@ -181,7 +470,7 @@ class LinkedInCompanyLookup:
                 result[op_type] = {"count": 0, "total": 0, "avg": 0, "min": 0, "max": 0}
         return result
 
-    def get_gemini_stats(self) -> dict[str, Any]:
+    def get_gemini_stats(self) -> GeminiStats:
         """Get Gemini fallback statistics.
 
         Returns:
@@ -229,7 +518,9 @@ class LinkedInCompanyLookup:
             )
             logger.info(f"Loaded {total} cached entries from {self._cache_file}")
 
-        except Exception as e:
+        except json.JSONDecodeError as e:
+            logger.warning(f"Corrupted cache file, starting fresh: {e}")
+        except OSError as e:
             logger.warning(f"Failed to load cache from disk: {e}")
 
     def save_cache_to_disk(self) -> None:
@@ -256,7 +547,7 @@ class LinkedInCompanyLookup:
             )
             logger.info(f"Saved {total} cache entries to {self._cache_file}")
 
-        except Exception as e:
+        except (OSError, TypeError) as e:
             logger.warning(f"Failed to save cache to disk: {e}")
 
     def get_person_cache_stats(self) -> dict[str, int]:
