@@ -4,6 +4,103 @@ Shared text processing functions used across the codebase.
 """
 
 import re
+from typing import Optional
+
+# Common first/last names that need extra matching signals when searching LinkedIn
+# These generic Western names could match many people, so require more context.
+# Note: Ethnic surnames (Wang, Zhang, Kim, Patel, etc.) are NOT included because
+# when combined with first names they're usually distinctive enough.
+COMMON_FIRST_NAMES: frozenset[str] = frozenset(
+    {
+        "john",
+        "james",
+        "michael",
+        "david",
+        "robert",
+        "mary",
+        "jennifer",
+        "sarah",
+        # Common surnames that are also first names
+        "smith",
+        "johnson",
+        "williams",
+        "brown",
+        "jones",
+    }
+)
+
+# Common stopwords to remove from context keyword matching
+CONTEXT_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "center",
+        "centre",
+        "department",
+        "division",
+        "school",
+        "institute",
+        "research",
+        "university",
+        "college",
+    }
+)
+
+
+def is_common_name(first_name: str, last_name: str = "") -> bool:
+    """Check if a name is common and needs extra matching signals.
+
+    Args:
+        first_name: Person's first name.
+        last_name: Person's last name (optional).
+
+    Returns:
+        True if either name part is in the common names list.
+    """
+    first_lower = first_name.lower() if first_name else ""
+    last_lower = last_name.lower() if last_name else ""
+    return first_lower in COMMON_FIRST_NAMES or last_lower in COMMON_FIRST_NAMES
+
+
+def build_context_keywords(
+    company: Optional[str] = None,
+    department: Optional[str] = None,
+    position: Optional[str] = None,
+    research_area: Optional[str] = None,
+    industry: Optional[str] = None,
+) -> set[str]:
+    """Build context keywords for profile matching from available metadata.
+
+    Args:
+        company: Company/organization name.
+        department: Department name.
+        position: Job title/position.
+        research_area: Research field (for academics).
+        industry: Industry sector.
+
+    Returns:
+        Set of lowercase keywords for matching, with stopwords removed.
+    """
+    keywords: set[str] = set()
+
+    if company:
+        keywords.update(w.lower() for w in company.split() if len(w) > 2)
+    if department:
+        keywords.update(w.lower() for w in department.split() if len(w) > 3)
+    if position:
+        keywords.update(w.lower() for w in position.split() if len(w) > 4)
+    if research_area:
+        keywords.update(w.lower() for w in research_area.split() if len(w) > 3)
+    if industry:
+        keywords.update(w.lower() for w in industry.split() if len(w) > 3)
+
+    # Remove common stopwords
+    keywords -= CONTEXT_STOPWORDS
+
+    return keywords
 
 
 def strip_markdown_code_block(text: str) -> str:
