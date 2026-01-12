@@ -2005,138 +2005,20 @@ NOT_FOUND"""
                             match_score += 1
 
                     # === CONTRADICTION DETECTION ===
-                    # Penalize profiles with indicators of wrong person
-                    contradiction_penalty = 0
-                    contradiction_reasons = []
-
-                    # Wrong field of work - unrelated professions
-                    if role_type == "academic":
-                        # Academic should not be primarily sales, marketing, real estate
-                        wrong_field_indicators = [
-                            "real estate agent",
-                            "realtor",
-                            "sales manager",
-                            "marketing manager",
-                            "insurance agent",
-                            "financial advisor",
-                            "fitness trainer",
-                            "hair stylist",
-                            "photographer",
-                            "life coach",
-                        ]
-                        for wrong_field in wrong_field_indicators:
-                            if wrong_field in result_text:
-                                contradiction_penalty += 3
-                                contradiction_reasons.append(
-                                    f"wrong field: {wrong_field}"
-                                )
-                    elif role_type == "executive":
-                        # Executive at company X should not show as professor
-                        if "professor" in result_text and company:
-                            company_lower = company.lower()
-                            # If they're a professor but not at expected org
-                            if not any(
-                                word in result_text
-                                for word in company_lower.split()
-                                if len(word) > 3
-                            ):
-                                contradiction_penalty += 2
-                                contradiction_reasons.append(
-                                    "professor at different org"
-                                )
-
-                    # Wrong industry indicators
-                    if department or research_area:
-                        # Engineering/science person should not be primarily in unrelated fields
-                        expected_terms = set()
-                        if department:
-                            expected_terms.update(
-                                w.lower() for w in department.split() if len(w) > 4
-                            )
-                        if research_area:
-                            expected_terms.update(
-                                w.lower() for w in research_area.split() if len(w) > 4
-                            )
-
-                        # If we expect engineering/science but find completely different industry
-                        science_expected = any(
-                            term in expected_terms
-                            for term in [
-                                "chemical",
-                                "engineering",
-                                "biology",
-                                "chemistry",
-                                "physics",
-                                "research",
-                            ]
-                        )
-                        if science_expected:
-                            unrelated_industries = [
-                                "real estate",
-                                "retail sales",
-                                "hospitality",
-                                "food service",
-                                "beauty salon",
-                            ]
-                            for industry in unrelated_industries:
-                                if industry in result_text:
-                                    contradiction_penalty += 2
-                                    contradiction_reasons.append(
-                                        f"unrelated industry: {industry}"
-                                    )
-
-                    # Location contradiction - different country/continent
-                    if location:
-                        location_lower = location.lower()
-                        # Extract expected country/region
-                        location_parts = [p.strip() for p in location_lower.split(",")]
-                        expected_country = location_parts[-1] if location_parts else ""
-
-                        # Check for conflicting country indicators
-                        country_conflicts = {
-                            "usa": [
-                                "india",
-                                "china",
-                                "brazil",
-                                "indonesia",
-                                "nigeria",
-                                "pakistan",
-                            ],
-                            "uk": [
-                                "india",
-                                "china",
-                                "brazil",
-                                "indonesia",
-                                "nigeria",
-                                "pakistan",
-                            ],
-                            "canada": [
-                                "india",
-                                "china",
-                                "brazil",
-                                "indonesia",
-                                "nigeria",
-                            ],
-                            "australia": ["india", "china", "brazil", "indonesia"],
-                            "germany": ["india", "china", "brazil", "indonesia"],
-                        }
-
-                        for expected, conflicts in country_conflicts.items():
-                            if expected in expected_country:
-                                for conflict_country in conflicts:
-                                    # Check if the snippet mentions the conflicting country prominently
-                                    if conflict_country in result_text:
-                                        # Don't penalize if expected location also appears
-                                        if not any(
-                                            part in result_text
-                                            for part in location_parts
-                                            if len(part) > 2
-                                        ):
-                                            contradiction_penalty += 2
-                                            contradiction_reasons.append(
-                                                f"location mismatch: {conflict_country}"
-                                            )
-                                            break
+                    # Use helper function to calculate penalties for wrong-person indicators
+                    search_ctx = PersonSearchContext(
+                        first_name=first_name,
+                        last_name=last_name,
+                        company=company,
+                        department=department,
+                        position=position,
+                        location=location,
+                        role_type=role_type,
+                        research_area=research_area,
+                    )
+                    contradiction_penalty, contradiction_reasons = (
+                        _calculate_contradiction_penalty(result_text, search_ctx)
+                    )
 
                     # Apply contradiction penalty
                     if contradiction_penalty > 0:
