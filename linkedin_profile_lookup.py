@@ -5,6 +5,7 @@ import concurrent.futures
 import json
 import logging
 import os
+import random
 import re
 import sys
 import threading
@@ -101,6 +102,17 @@ class GeminiStats(TypedDict):
     disabled: bool
 
 
+def _clean_optional_string(value: Optional[str]) -> Optional[str]:
+    """Clean optional string value, returning None if empty or literal 'None'."""
+    if value is None:
+        return None
+    stripped = str(value).strip()
+    # Filter out empty strings and literal "None" string
+    if not stripped or stripped.lower() == "none":
+        return None
+    return stripped
+
+
 @dataclass
 class PersonSearchContext:
     """Context for person LinkedIn profile search."""
@@ -124,6 +136,11 @@ from text_utils import (
     CONTEXT_STOPWORDS,
     build_context_keywords,
     is_common_name,
+    normalize_name,
+    strip_titles,
+    get_name_variants,
+    is_nickname_of,
+    names_could_match,
 )
 
 
@@ -161,6 +178,11 @@ def _calculate_contradiction_penalty(
             "hair stylist",
             "photographer",
             "life coach",
+            "attorney",
+            "lawyer",
+            ", esq",
+            "law firm",
+            "legal counsel",
         ]
         for wrong_field in wrong_fields:
             if wrong_field in result_text:
@@ -168,11 +190,27 @@ def _calculate_contradiction_penalty(
                 reasons.append(f"wrong field: {wrong_field}")
 
     elif ctx.role_type == "executive" and ctx.company:
+        # Executive at company X should not be an attorney/lawyer
+        lawyer_indicators = [
+            "attorney",
+            "lawyer",
+            ", esq",
+            "law firm",
+            "legal counsel",
+            "partner at law",
+        ]
+        for indicator in lawyer_indicators:
+            if indicator in result_text:
+                # Strong penalty - lawyers are rarely CEOs of non-law companies
+                penalty += 4
+                reasons.append(f"wrong profession: {indicator}")
+                break
+
         # Executive at company X should not show as professor at different org
         if "professor" in result_text:
             company_lower = ctx.company.lower()
             if not any(
-                word in result_text for word in company_lower.split() if len(word) > 3
+                word in result_text for word in company_lower.split() if len(word) > 2
             ):
                 penalty += 2
                 reasons.append("professor at different org")
@@ -260,15 +298,64 @@ def _score_linkedin_candidate(
     """
     url_slug = linkedin_url.split("/in/")[-1] if "/in/" in linkedin_url else ""
     url_text = url_slug.replace("-", " ").lower()
+    # Also keep the raw slug for checking concatenated names like "kellybenkert"
+    url_slug_lower = url_slug.lower()
     result_lower = result_text.lower()
 
-    # Check if name is in URL
+    # Check if name is in URL (including nickname variants and prefix matching)
+    # Handle both separated names (kelly-benkert) and concatenated names (kellybenkert)
     name_in_url = True
+    first_name_in_url = False
+    first_name_exact_match = False  # Track if first name is exact vs fuzzy match
     if ctx.first_name and ctx.last_name:
-        first_pattern = r"\b" + re.escape(ctx.first_name) + r"\b"
-        last_pattern = r"\b" + re.escape(ctx.last_name) + r"\b"
+        first_name_lower = ctx.first_name.lower()
+        last_name_lower = ctx.last_name.lower()
+
+        # Check with word boundaries first (for dash-separated names)
+        first_pattern = r"\b" + re.escape(first_name_lower) + r"\b"
+        last_pattern = r"\b" + re.escape(last_name_lower) + r"\b"
         first_in_url = bool(re.search(first_pattern, url_text))
         last_in_url = bool(re.search(last_pattern, url_text))
+
+        # Track if this is an exact match (word boundary match)
+        first_name_exact_match = first_in_url
+
+        # Also check for concatenated names (e.g., "kellybenkert" contains "kelly" and "benkert")
+        if not first_in_url:
+            first_in_url = first_name_lower in url_slug_lower
+            if first_in_url:
+                first_name_exact_match = (
+                    True  # Substring match is still considered exact
+                )
+        if not last_in_url:
+            last_in_url = last_name_lower in url_slug_lower
+
+        # General name matching: check if URL contains a name that could match
+        # This handles nicknames AND prefix matching (e.g., "Kam" matches "Kathryn" via "Ka" prefix)
+        if not first_in_url:
+            # Extract potential first name from URL (first part before last name or first word)
+            url_parts = url_text.split()
+            # For concatenated slugs, try to extract first name by removing last name
+            if last_name_lower in url_slug_lower:
+                # Find where the last name starts and extract what's before it
+                last_name_pos = url_slug_lower.find(last_name_lower)
+                if last_name_pos > 0:
+                    potential_first = url_slug_lower[:last_name_pos].strip("-_ ")
+                    if potential_first and names_could_match(
+                        first_name_lower, potential_first
+                    ):
+                        first_in_url = True
+                        # This is a fuzzy match, not exact
+                        first_name_exact_match = False
+            # For dash-separated slugs, check each part
+            if not first_in_url and url_parts:
+                for part in url_parts:
+                    if names_could_match(first_name_lower, part):
+                        first_in_url = True
+                        first_name_exact_match = False  # Fuzzy match
+                        break
+
+        first_name_in_url = first_in_url
         name_in_url = first_in_url and last_in_url
 
     score = 0
@@ -280,10 +367,18 @@ def _score_linkedin_candidate(
             score += 1
             matched.append(keyword)
 
-    # Strong boost for name in URL
+    # Strong boost for name in URL - exact matches get higher score
     if name_in_url:
-        score += 3
-        matched.append("name_in_url")
+        if first_name_exact_match:
+            score += 4  # Exact first name match gets +4 (was +3)
+            matched.append("name_in_url_exact")
+        else:
+            score += 2  # Fuzzy first name match (prefix/nickname) gets +2
+            matched.append("name_in_url_fuzzy")
+    elif ctx.last_name and ctx.last_name.lower() in url_text:
+        # Partial boost for last name only in URL (useful for single-name searches)
+        score += 2
+        matched.append("last_name_in_url")
 
     # Org match
     if ctx.company:
@@ -326,6 +421,176 @@ def _score_linkedin_candidate(
 class LinkedInCompanyLookup:
     """Look up LinkedIn company pages using Gemini with Google Search grounding."""
 
+    # === CLASS-LEVEL SHARED STATE ===
+    # Chrome driver is shared across ALL instances to prevent multiple browser windows
+    _shared_uc_driver: Optional[Any] = None
+    _shared_driver_search_count: int = 0
+    _shared_linkedin_login_verified: bool = False
+    _shared_driver_lock = None  # Will be initialized on first use (threading.Lock)
+
+    # === ORGANIZATION NAME ALIASES ===
+    # Maps common abbreviations/variations to canonical organization names
+    # This prevents duplicate searches for "UChicago" vs "University of Chicago"
+    _ORG_ALIASES: dict[str, str] = {
+        # Universities - abbreviations
+        "uchicago": "university of chicago",
+        "u of c": "university of chicago",
+        "mit": "massachusetts institute of technology",
+        "caltech": "california institute of technology",
+        "cal tech": "california institute of technology",
+        "stanford": "stanford university",
+        "harvard": "harvard university",
+        "yale": "yale university",
+        "princeton": "princeton university",
+        "columbia": "columbia university",
+        "cornell": "cornell university",
+        "upenn": "university of pennsylvania",
+        "penn": "university of pennsylvania",
+        "berkeley": "university of california berkeley",
+        "uc berkeley": "university of california berkeley",
+        "ucla": "university of california los angeles",
+        "usc": "university of southern california",
+        "nyu": "new york university",
+        "ut austin": "university of texas at austin",
+        "ut": "university of texas at austin",
+        "gatech": "georgia institute of technology",
+        "georgia tech": "georgia institute of technology",
+        "purdue": "purdue university",
+        "umich": "university of michigan",
+        "u michigan": "university of michigan",
+        "northwestern": "northwestern university",
+        "vanderbilt": "vanderbilt university",
+        "vandy": "vanderbilt university",
+        "iowa state": "iowa state university",
+        "penn state": "pennsylvania state university",
+        "ohio state": "ohio state university",
+        "osu": "ohio state university",
+        "uva": "university of virginia",
+        "unc": "university of north carolina",
+        "duke": "duke university",
+        "rice": "rice university",
+        "cmu": "carnegie mellon university",
+        "carnegie mellon": "carnegie mellon university",
+        "jhu": "johns hopkins university",
+        "johns hopkins": "johns hopkins university",
+        "ucl": "university college london",
+        "oxford": "university of oxford",
+        "cambridge": "university of cambridge",
+        "eth": "eth zurich",
+        "epfl": "ecole polytechnique federale de lausanne",
+        "tsinghua": "tsinghua university",
+        "peking": "peking university",
+        "pku": "peking university",
+        # UChicago variations (Pritzker School etc.)
+        "uchicago pritzker school of molecular engineering": "university of chicago",
+        "pritzker school of molecular engineering": "university of chicago",
+        "pritzker molecular engineering": "university of chicago",
+        # University of Illinois variations
+        "uic": "university of illinois chicago",
+        "uiuc": "university of illinois urbana champaign",
+        "u of i": "university of illinois urbana champaign",
+        "university of illinois at chicago": "university of illinois chicago",
+        "university of illinois at urbana champaign": "university of illinois urbana champaign",
+        "university of illinois at urbana-champaign": "university of illinois urbana champaign",
+        # Argonne and other labs
+        "anl": "argonne national laboratory",
+        "argonne": "argonne national laboratory",
+        # Companies
+        "google": "google llc",
+        "meta": "meta platforms",
+        "facebook": "meta platforms",
+        "amazon": "amazon.com",
+        "aws": "amazon web services",
+        "microsoft": "microsoft corporation",
+        "msft": "microsoft corporation",
+        "apple": "apple inc",
+        "ibm": "international business machines",
+        "ge": "general electric",
+        "gm": "general motors",
+        "jpmorgan": "jpmorgan chase",
+        "jp morgan": "jpmorgan chase",
+        "goldman": "goldman sachs",
+        "mckinsey": "mckinsey & company",
+        "bcg": "boston consulting group",
+        "bain": "bain & company",
+        "deloitte": "deloitte consulting",
+        "pwc": "pricewaterhousecoopers",
+        "ey": "ernst & young",
+        "kpmg": "kpmg international",
+    }
+
+    # === INVALID ORG NAMES (skip searching for these) ===
+    # These are terms that appear as "affiliations" but aren't real organizations
+    # Includes: single generic words, research topics, materials, person names
+    _INVALID_ORG_NAMES: set[str] = {
+        # Generic terms
+        "molecular",
+        "chemistry",
+        "physics",
+        "biology",
+        "research",
+        "science",
+        "engineering",
+        "technology",
+        "materials",
+        "nanotechnology",
+        "computational",
+        "theoretical",
+        "applied",
+        "advanced",
+        "fundamental",
+        # Materials and topics (not organizations)
+        "mxenes",
+        "graphene",
+        "nanoparticles",
+        "nanomaterials",
+        "quantum",
+        "polymers",
+        "catalysis",
+        "electrochemistry",
+        "spectroscopy",
+        "synthesis",
+        # Single words that are person names (false positives from parsing)
+        "jiang",
+        "wang",
+        "zhang",
+        "chen",
+        "liu",
+        "li",
+        "yang",
+        "huang",
+        "zhou",
+        "wu",
+        # Other invalid patterns
+        "n/a",
+        "none",
+        "unknown",
+        "various",
+        "multiple",
+        "other",
+        "independent",
+        "freelance",
+        "self-employed",
+        "retired",
+    }
+
+    # === CLASS-LEVEL CACHES (shared across all instances and steps) ===
+    # Cache person search results - Key: "name@canonical_company" -> URL or None
+    _shared_person_cache: dict[str, Optional[str]] = {}
+    # Cache found profiles by name only - Key: normalized_name -> profile_url
+    # This allows finding the same person even with different org variations
+    _shared_found_profiles_by_name: dict[str, str] = {}
+    # Cache LinkedIn company URL to canonical name - Key: linkedin_url -> canonical_name
+    _shared_company_url_to_name: dict[str, str] = {}
+    # Cache failed lookups with timestamp to avoid re-searching - Key: name -> timestamp
+    _shared_failed_lookups: dict[str, float] = {}
+    # Failed lookup TTL in seconds (don't re-search failed lookups within this window)
+    _FAILED_LOOKUP_TTL: float = 86400.0  # 24 hours
+    # Cache company search results - Key: company name -> (url, slug, urn) or None
+    _shared_company_cache: dict[
+        str, Optional[tuple[str, Optional[str], Optional[str]]]
+    ] = {}
+
     def __init__(self, genai_client: Optional[genai.Client] = None) -> None:
         """Initialize the LinkedIn company lookup service.
 
@@ -345,21 +610,18 @@ class LinkedInCompanyLookup:
         # HTTP client for LinkedIn API calls
         self._http_client: Optional[httpx.Client] = None
 
-        # Shared browser session for UC Chrome searches (reused across multiple searches)
-        self._uc_driver: Optional[Any] = None
+        # Use class-level shared driver (singleton pattern)
+        # This prevents multiple browser instances from being created
 
-        # Track if we've verified LinkedIn login this session
-        self._linkedin_login_verified = False
+        # Track if we've verified LinkedIn login this session (use class-level)
+        # Instance reference for backward compatibility
 
-        # Cache person search results across multiple stories
-        # Key: "name@company|department|location" -> LinkedIn URL or None (not found)
-        self._person_cache: dict[str, Optional[str]] = {}
+        # === INSTANCE PROPERTIES THAT REDIRECT TO CLASS-LEVEL CACHES ===
+        # (for backward compatibility - all instances share the same caches)
 
-        # Cache company search results across multiple stories
-        # Key: company name -> (url, slug, urn) or None
-        self._company_cache: dict[
-            str, Optional[tuple[str, Optional[str], Optional[str]]]
-        ] = {}
+        # Cache of profile URLs already validated and rejected for a given normalized name
+        # Key: normalized name -> set of rejected profile URLs
+        self._rejected_profile_cache: dict[str, set[str]] = {}
 
         # Cache department search results across multiple stories
         # Key: "dept@company" -> (url, slug, urn) or None
@@ -371,6 +633,18 @@ class LinkedInCompanyLookup:
         self._gemini_attempts = 0
         self._gemini_successes = 0
         self._gemini_disabled = False
+
+        # Rate limiting for search engines to avoid CAPTCHA
+        self._last_search_time: float = 0.0
+        self._min_search_interval: float = (
+            8.0  # Minimum seconds between searches (increased to avoid CAPTCHA)
+        )
+        self._consecutive_searches: int = 0
+        self._captcha_cooldown_until: float = 0.0  # Timestamp when cooldown ends
+        # NOTE: _driver_search_count is now class-level (_shared_driver_search_count)
+        self._max_searches_per_driver: int = (
+            8  # Recreate driver after this many searches
+        )
 
         # Timing metrics for search operations
         self._timing_stats: dict[str, list[float]] = {
@@ -387,6 +661,61 @@ class LinkedInCompanyLookup:
 
         # Load persisted cache on startup
         self._load_cache_from_disk()
+
+    # === Properties to access class-level shared state ===
+    @property
+    def _uc_driver(self) -> Optional[Any]:
+        """Get the shared Chrome driver (class-level singleton)."""
+        return LinkedInCompanyLookup._shared_uc_driver
+
+    @_uc_driver.setter
+    def _uc_driver(self, value: Optional[Any]) -> None:
+        """Set the shared Chrome driver (class-level singleton)."""
+        LinkedInCompanyLookup._shared_uc_driver = value
+
+    @property
+    def _driver_search_count(self) -> int:
+        """Get the shared driver search count."""
+        return LinkedInCompanyLookup._shared_driver_search_count
+
+    @_driver_search_count.setter
+    def _driver_search_count(self, value: int) -> None:
+        """Set the shared driver search count."""
+        LinkedInCompanyLookup._shared_driver_search_count = value
+
+    @property
+    def _linkedin_login_verified(self) -> bool:
+        """Get the shared login verification status."""
+        return LinkedInCompanyLookup._shared_linkedin_login_verified
+
+    @_linkedin_login_verified.setter
+    def _linkedin_login_verified(self, value: bool) -> None:
+        """Set the shared login verification status."""
+        LinkedInCompanyLookup._shared_linkedin_login_verified = value
+
+    @property
+    def _person_cache(self) -> dict[str, Optional[str]]:
+        """Get the shared person cache (class-level singleton)."""
+        return LinkedInCompanyLookup._shared_person_cache
+
+    @_person_cache.setter
+    def _person_cache(self, value: dict[str, Optional[str]]) -> None:
+        """Set the shared person cache (class-level singleton)."""
+        LinkedInCompanyLookup._shared_person_cache = value
+
+    @property
+    def _company_cache(
+        self,
+    ) -> dict[str, Optional[tuple[str, Optional[str], Optional[str]]]]:
+        """Get the shared company cache (class-level singleton)."""
+        return LinkedInCompanyLookup._shared_company_cache
+
+    @_company_cache.setter
+    def _company_cache(
+        self, value: dict[str, Optional[tuple[str, Optional[str], Optional[str]]]]
+    ) -> None:
+        """Set the shared company cache (class-level singleton)."""
+        LinkedInCompanyLookup._shared_company_cache = value
 
     def get_cache_stats(self) -> AllCacheStats:
         """Get statistics about all search caches.
@@ -459,17 +788,250 @@ class LinkedInCompanyLookup:
             "disabled": self._gemini_disabled,
         }
 
+    def _normalize_org_name(self, org_name: str) -> str:
+        """Normalize organization name to canonical form.
+
+        This prevents duplicate searches for the same organization with
+        different name variations (e.g., "UChicago" vs "University of Chicago").
+
+        Args:
+            org_name: Raw organization name from story/person data
+
+        Returns:
+            Normalized canonical organization name (lowercase)
+        """
+        if not org_name:
+            return ""
+
+        # Lowercase and strip whitespace
+        norm = org_name.lower().strip()
+
+        # Strip leading "the " - common variation (e.g., "the University of Chicago")
+        if norm.startswith("the "):
+            norm = norm[4:].strip()
+
+        # Check if it's an alias we know about
+        if norm in self._ORG_ALIASES:
+            canonical = self._ORG_ALIASES[norm]
+            logger.debug(f"Normalized org '{org_name}' -> '{canonical}'")
+            return canonical
+
+        # Also check without common suffixes for partial matches
+        # e.g., "University of Chicago" should match even if stored as "university of chicago"
+        suffixes_to_strip = [
+            " university",
+            " college",
+            " institute",
+            " corporation",
+            " inc",
+            " inc.",
+            " llc",
+            " ltd",
+            " co",
+            " co.",
+            " & co",
+            " & company",
+            " company",
+            " group",
+        ]
+
+        stripped = norm
+        for suffix in suffixes_to_strip:
+            if stripped.endswith(suffix):
+                stripped = stripped[: -len(suffix)].strip()
+                break
+
+        # Check stripped version in aliases
+        if stripped in self._ORG_ALIASES:
+            canonical = self._ORG_ALIASES[stripped]
+            logger.debug(f"Normalized org '{org_name}' (stripped) -> '{canonical}'")
+            return canonical
+
+        # No alias found - return the normalized name
+        return norm
+
+    def _expand_org_for_search(self, org_name: str) -> str:
+        """Expand organization abbreviation to full name for search queries.
+
+        Unlike _normalize_org_name (which returns lowercase for cache keys),
+        this returns a properly cased name suitable for search engines.
+
+        Args:
+            org_name: Raw organization name (e.g., "UChicago", "MIT")
+
+        Returns:
+            Expanded organization name with proper casing (e.g., "University of Chicago")
+        """
+        if not org_name:
+            return ""
+
+        # Check lowercase version against aliases
+        norm = org_name.lower().strip()
+
+        if norm in self._ORG_ALIASES:
+            # Return title-cased expanded name
+            expanded = self._ORG_ALIASES[norm]
+            # Title case but preserve common words
+            result = " ".join(
+                word
+                if word.lower() in ("of", "and", "the", "for", "at", "in", "on")
+                else word.capitalize()
+                for word in expanded.split()
+            )
+            # Capitalize first word always
+            words = result.split()
+            if words:
+                words[0] = words[0].capitalize()
+                result = " ".join(words)
+            logger.debug(f"Expanded org '{org_name}' -> '{result}' for search")
+            return result
+
+        # Also check without common suffixes
+        suffixes_to_strip = [
+            " university",
+            " college",
+            " institute",
+            " corporation",
+            " inc",
+            " inc.",
+            " llc",
+            " ltd",
+            " co",
+            " co.",
+            " & co",
+            " & company",
+            " company",
+            " group",
+        ]
+
+        stripped = norm
+        for suffix in suffixes_to_strip:
+            if stripped.endswith(suffix):
+                stripped = stripped[: -len(suffix)].strip()
+                break
+
+        if stripped in self._ORG_ALIASES:
+            expanded = self._ORG_ALIASES[stripped]
+            result = " ".join(
+                word
+                if word.lower() in ("of", "and", "the", "for", "at", "in", "on")
+                else word.capitalize()
+                for word in expanded.split()
+            )
+            words = result.split()
+            if words:
+                words[0] = words[0].capitalize()
+                result = " ".join(words)
+            logger.debug(
+                f"Expanded org '{org_name}' (stripped) -> '{result}' for search"
+            )
+            return result
+
+        # No alias found - return original name unchanged
+        return org_name.strip()
+
+    def _is_valid_org_name(self, org_name: str) -> bool:
+        """Check if an organization name is valid for searching.
+
+        Filters out:
+        - Single generic words that aren't real organizations
+        - Research topics or materials (e.g., "MXenes", "Molecular")
+        - Person names that were incorrectly parsed as orgs
+        - Very short names (likely parsing errors)
+        - Very long names (likely full sentences or descriptions)
+
+        Args:
+            org_name: Organization name to validate
+
+        Returns:
+            True if the org name appears valid for searching
+        """
+        if not org_name:
+            return False
+
+        # Normalize for checking
+        norm = org_name.lower().strip()
+
+        # Strip "the " prefix for checking
+        if norm.startswith("the "):
+            norm = norm[4:].strip()
+
+        # Check against known invalid names
+        if norm in self._INVALID_ORG_NAMES:
+            logger.debug(f"Skipping invalid org name: '{org_name}' (in blocklist)")
+            return False
+
+        # Single words are usually not valid orgs unless they're known aliases
+        words = norm.split()
+        if len(words) == 1:
+            # Check if it's a known alias
+            if norm not in self._ORG_ALIASES:
+                # Single word that's not a known alias - likely invalid
+                # Exceptions: very short common abbrevs handled in aliases
+                logger.debug(
+                    f"Skipping single-word org: '{org_name}' (not in known aliases)"
+                )
+                return False
+
+        # Very long names are likely descriptions, not org names
+        if len(org_name) > 120:
+            logger.debug(
+                f"Skipping too-long org name: '{org_name}' ({len(org_name)} chars)"
+            )
+            return False
+
+        # Very short names (1-2 chars) are likely errors unless they're aliases
+        if len(norm) <= 2 and norm not in self._ORG_ALIASES:
+            logger.debug(f"Skipping too-short org name: '{org_name}'")
+            return False
+
+        return True
+
     def _load_cache_from_disk(self) -> None:
-        """Load persisted cache from disk if available."""
+        """Load persisted cache from disk if available.
+
+        Implements TTL-based expiry for negative cache entries:
+        - Positive results (URLs found) are kept forever
+        - Negative results (None) expire after NEGATIVE_CACHE_TTL_DAYS
+        """
         if not self._cache_file.exists():
             return
+
+        NEGATIVE_CACHE_TTL_DAYS = 7  # Retry failed searches after 7 days
+        now = time.time()
+        ttl_seconds = NEGATIVE_CACHE_TTL_DAYS * 24 * 3600
 
         try:
             with open(self._cache_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            # Restore person cache
-            self._person_cache = data.get("person", {})
+            # Restore person cache with TTL for negative entries
+            expired_count = 0
+            person_data = data.get("person", {})
+            for key, val in person_data.items():
+                if isinstance(val, dict):
+                    # New format with timestamp
+                    url = val.get("url")
+                    ts = val.get("ts", 0)
+                    if url is not None:
+                        # Positive result - keep forever
+                        self._person_cache[key] = url
+                    elif now - ts < ttl_seconds:
+                        # Recent negative result - keep it
+                        self._person_cache[key] = None
+                    else:
+                        # Expired negative result - don't add (will be re-searched)
+                        expired_count += 1
+                else:
+                    # Old format without timestamp - treat as needing re-search if negative
+                    if val is not None:
+                        self._person_cache[key] = val
+                    # Skip old None entries to force re-search
+
+            if expired_count > 0:
+                logger.info(
+                    f"Expired {expired_count} old negative cache entries (will be retried)"
+                )
 
             # Restore company cache (convert lists back to tuples)
             for key, val in data.get("company", {}).items():
@@ -495,13 +1057,26 @@ class LinkedInCompanyLookup:
             logger.warning(f"Failed to load cache from disk: {e}")
 
     def save_cache_to_disk(self) -> None:
-        """Persist cache to disk for future runs."""
+        """Persist cache to disk for future runs.
+
+        Saves person cache with timestamps for TTL-based expiry of negative entries.
+        """
         try:
             self._cache_dir.mkdir(parents=True, exist_ok=True)
 
-            # Convert tuples to lists for JSON serialization
+            # Save person cache with timestamps for negative entries
+            person_data = {}
+            now = time.time()
+            for key, url in self._person_cache.items():
+                if url is not None:
+                    # Positive result - store with URL
+                    person_data[key] = {"url": url, "ts": now}
+                else:
+                    # Negative result - store with timestamp for TTL
+                    person_data[key] = {"url": None, "ts": now}
+
             data = {
-                "person": self._person_cache,
+                "person": person_data,
                 "company": {
                     k: list(v) if v else None for k, v in self._company_cache.items()
                 },
@@ -521,7 +1096,7 @@ class LinkedInCompanyLookup:
         except (OSError, TypeError) as e:
             logger.warning(f"Failed to save cache to disk: {e}")
 
-    def get_person_cache_stats(self) -> dict[str, int]:
+    def get_person_cache_stats(self) -> CacheCountStats:
         """Get statistics about the person search cache.
 
         Returns:
@@ -539,10 +1114,18 @@ class LinkedInCompanyLookup:
             "person": len(self._person_cache),
             "company": len(self._company_cache),
             "department": len(self._department_cache),
+            "found_profiles_by_name": len(
+                LinkedInCompanyLookup._shared_found_profiles_by_name
+            ),
+            "company_url_to_name": len(
+                LinkedInCompanyLookup._shared_company_url_to_name
+            ),
         }
         self._person_cache.clear()
         self._company_cache.clear()
         self._department_cache.clear()
+        LinkedInCompanyLookup._shared_found_profiles_by_name.clear()
+        LinkedInCompanyLookup._shared_company_url_to_name.clear()
         logger.info(f"Cleared all caches: {counts}")
         return counts
 
@@ -553,7 +1136,9 @@ class LinkedInCompanyLookup:
             Number of entries cleared
         """
         count = len(self._person_cache)
+        count += len(LinkedInCompanyLookup._shared_found_profiles_by_name)
         self._person_cache.clear()
+        LinkedInCompanyLookup._shared_found_profiles_by_name.clear()
         logger.info(f"Cleared person cache ({count} entries)")
         return count
 
@@ -571,8 +1156,57 @@ class LinkedInCompanyLookup:
         self.close_browser()
         return False
 
+    def _reset_chrome_preferences(self, profile_path: str) -> None:
+        """Reset Chrome preferences file to avoid detection flags.
+
+        Based on ancestry project's approach to defeat bot detection.
+        """
+        preferences_file = Path(profile_path) / "Default" / "Preferences"
+        try:
+            preferences_file.parent.mkdir(parents=True, exist_ok=True)
+            minimal_preferences = {
+                "profile": {"exit_type": "Normal", "exited_cleanly": True},
+                "browser": {
+                    "has_seen_welcome_page": True,
+                    "window_placement": {
+                        "bottom": 1,
+                        "left": 0,
+                        "maximized": False,
+                        "right": 1,
+                        "top": 0,
+                        "work_area_bottom": 1,
+                        "work_area_left": 0,
+                        "work_area_right": 1,
+                        "work_area_top": 0,
+                    },
+                },
+                "privacy_sandbox": {
+                    "m1": {
+                        "ad_measurement_enabled": False,
+                        "consent_decision_made": True,
+                        "eea_notice_acknowledged": True,
+                        "fledge_enabled": False,
+                        "topics_enabled": False,
+                    }
+                },
+                "sync": {"allowed": False},
+                "extensions": {"alerts": {"initialized": True}},
+                "session": {"restore_on_startup": 4, "startup_urls": []},
+            }
+            with open(preferences_file, "w", encoding="utf-8") as f:
+                json.dump(minimal_preferences, f, indent=2)
+            logger.debug(f"Reset Chrome preferences at {preferences_file}")
+        except OSError as e:
+            logger.warning(f"Could not reset Chrome preferences: {e}")
+
     def _get_uc_driver(self) -> Optional[Any]:
         """Get or create a shared UC Chrome driver instance.
+
+        Uses enhanced anti-detection approach based on ancestry project:
+        - Additional stealth flags to appear as normal browser
+        - Experimental options to disable automation indicators
+        - Preferences reset to clean state
+        - Version pinning for ChromeDriver compatibility
 
         The driver is reused across multiple searches for efficiency.
         Call close_browser() when done with all searches.
@@ -586,31 +1220,82 @@ class LinkedInCompanyLookup:
             )
             return None
 
-        # Return existing driver if still valid
+        # Return existing driver if still valid and not over usage limit
         if self._uc_driver is not None:
-            try:
-                # Check if driver is still alive
-                _ = self._uc_driver.current_url
-                return self._uc_driver
-            except Exception:
-                # Driver is dead, clean up and create new one
-                self._uc_driver = None
+            # Check if we should recreate driver due to search count
+            if self._driver_search_count >= self._max_searches_per_driver:
+                logger.debug(
+                    f"Resetting search count after {self._driver_search_count} searches (keeping same driver)"
+                )
+                # Instead of recreating, just reset count and add a longer delay
+                # Recreating the driver causes Chrome profile lock issues
+                self._driver_search_count = 0
+                time.sleep(5 + random.random() * 3)  # Longer pause to avoid detection
+                try:
+                    # Clear cookies and refresh to reset LinkedIn's tracking
+                    self._uc_driver.delete_all_cookies()
+                    self._uc_driver.get("https://www.linkedin.com")
+                    time.sleep(2)
+                    return self._uc_driver
+                except Exception:
+                    # Driver died, will recreate below
+                    try:
+                        self._uc_driver.quit()
+                    except Exception:
+                        pass
+                    self._uc_driver = None
+            else:
+                try:
+                    # Check if driver is still alive
+                    _ = self._uc_driver.current_url
+                    return self._uc_driver
+                except Exception:
+                    # Driver is dead, clean up and create new one
+                    try:
+                        self._uc_driver.quit()
+                    except Exception:
+                        pass
+                    self._uc_driver = None
+                    self._driver_search_count = 0
+                    time.sleep(2)  # Allow Chrome to fully terminate before restart
 
-        # Create new driver
+        # Create new driver with enhanced anti-detection settings
         try:
             from selenium.webdriver.common.by import By
 
             options = uc.ChromeOptions()
+
+            # === CORE STABILITY OPTIONS ===
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
             options.add_argument("--disable-software-rasterizer")
-            options.add_argument("--disable-extensions")
             options.add_argument("--no-first-run")
             options.add_argument("--no-default-browser-check")
+
+            # === ANTI-DETECTION: Disable automation flags (ancestry approach) ===
             options.add_argument("--disable-blink-features=AutomationControlled")
             options.add_argument("--disable-infobars")
             options.add_argument("--disable-popup-blocking")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-plugins-discovery")
+            options.add_argument("--disable-automation")
+
+            # === ANTI-DETECTION: Experimental options to hide automation ===
+            # NOTE: excludeSwitches and useAutomationExtension are deprecated in newer ChromeDriver
+            # The --disable-blink-features=AutomationControlled flag above handles anti-detection
+            # options.add_experimental_option(
+            #     "excludeSwitches", ["enable-automation", "enable-logging"]
+            # )
+            # options.add_experimental_option("useAutomationExtension", False)
+
+            # === ANTI-DETECTION: Disable password manager and notifications ===
+            prefs = {
+                "credentials_enable_service": False,
+                "profile.password_manager_enabled": False,
+                "profile.default_content_setting_values.notifications": 2,
+            }
+            options.add_experimental_option("prefs", prefs)
 
             # Use a dedicated profile directory for automation
             # This persists LinkedIn login between runs without conflicting with main Chrome
@@ -619,20 +1304,36 @@ class LinkedInCompanyLookup:
             )
             os.makedirs(automation_profile, exist_ok=True)
             options.add_argument(f"--user-data-dir={automation_profile}")
-            logger.info(f"Using automation profile at {automation_profile}")
+            options.add_argument("--profile-directory=Default")
+            logger.debug(f"Using automation profile at {automation_profile}")
 
-            # Consistent user agent (random user agents are red flags)
+            # Reset preferences to clean state (ancestry approach)
+            self._reset_chrome_preferences(automation_profile)
+
+            # Consistent user agent (random user agents are red flags for bot detection)
             user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
             options.add_argument(f"--user-agent={user_agent}")
 
+            # Randomize window size slightly (exact same size each time is suspicious)
+            width = 1920 + random.randint(-100, 100)
+            height = 1080 + random.randint(-50, 50)
+            options.add_argument(f"--window-size={width},{height}")
+
+            # Create driver with version pinning for compatibility
+            # use_subprocess=True with headless=False prevents port conflicts
+            # no_sandbox=True is already set via args
             self._uc_driver = uc.Chrome(
                 options=options,
-                use_subprocess=False,  # More stable on Windows
+                version_main=142,  # Pin to Chrome 142 for stability
+                use_subprocess=True,  # Separate process avoids port conflicts on restart
                 suppress_welcome=True,
+                headless=False,  # Must be False for LinkedIn (detects headless)
             )
             if self._uc_driver is not None:
                 self._uc_driver.set_page_load_timeout(30)
-            logger.debug("Created new UC Chrome driver session")
+            logger.debug(
+                "Created new UC Chrome driver session with enhanced anti-detection"
+            )
             return self._uc_driver
 
         except Exception as e:
@@ -761,15 +1462,35 @@ class LinkedInCompanyLookup:
     def close_browser(self) -> None:
         """Close the shared browser session.
 
-        Call this when done with all searches to clean up resources.
+        Note: Since the driver is shared across all instances, this affects
+        all LinkedInCompanyLookup instances. Only call when completely done
+        with all LinkedIn searches.
         """
-        if self._uc_driver is not None:
+        if LinkedInCompanyLookup._shared_uc_driver is not None:
             try:
-                self._uc_driver.quit()
+                LinkedInCompanyLookup._shared_uc_driver.quit()
             except Exception:
                 pass
-            self._uc_driver = None
-            logger.debug("Closed UC Chrome driver session")
+            LinkedInCompanyLookup._shared_uc_driver = None
+            LinkedInCompanyLookup._shared_driver_search_count = 0
+            LinkedInCompanyLookup._shared_linkedin_login_verified = False
+            logger.debug("Closed shared UC Chrome driver session")
+
+    @classmethod
+    def close_shared_browser(cls) -> None:
+        """Class method to close the shared browser session.
+
+        Can be called without an instance: LinkedInCompanyLookup.close_shared_browser()
+        """
+        if cls._shared_uc_driver is not None:
+            try:
+                cls._shared_uc_driver.quit()
+            except Exception:
+                pass
+            cls._shared_uc_driver = None
+            cls._shared_driver_search_count = 0
+            cls._shared_linkedin_login_verified = False
+            logger.debug("Closed shared UC Chrome driver session")
 
     def _get_http_client(self) -> httpx.Client:
         """Get or create HTTP client for LinkedIn API calls."""
@@ -886,13 +1607,13 @@ class LinkedInCompanyLookup:
         match = re.match(pattern, url)
 
         if not match:
-            logger.info(f"Invalid LinkedIn URL format: {url}")
+            logger.debug(f"Invalid LinkedIn URL format: {url}")
             return (False, None)
 
         org_type = match.group(1)  # "company" or "school"
         org_slug = match.group(2)  # e.g., "stanford-university"
 
-        logger.info(f"Valid LinkedIn {org_type} URL, slug: {org_slug}")
+        logger.debug(f"Valid LinkedIn {org_type} URL, slug: {org_slug}")
         return (True, org_slug)
 
     def lookup_organization_urn(self, url: str) -> Optional[str]:
@@ -1008,9 +1729,18 @@ NOT_FOUND"""
             logger.warning("Cannot search - company name is required")
             return (None, None)
 
+        # === Validate org name before searching ===
+        # Skip invalid org names (generic terms, materials, person names, etc.)
+        if not self._is_valid_org_name(company_name):
+            logger.info(f"Skipping invalid organization name: '{company_name}'")
+            return (None, None)
+
         start_time = time.time()
         company_name = company_name.strip()
         logger.info(f"Searching LinkedIn for company: {company_name}")
+
+        # Track URLs we validate in Playwright fallback to avoid duplicate work
+        seen_company_urls: set[str] = set()
 
         # Try multiple search strategies
         search_strategies = [
@@ -1044,8 +1774,13 @@ NOT_FOUND"""
                 time.sleep(0.5)
 
         # Fallback: Try Playwright/Bing search (most reliable)
-        logger.info(f"Trying Playwright/Bing search for: {company_name}")
-        url = self._search_company_playwright(company_name)
+        try:
+            logger.info(f"Trying Playwright/Bing search for: {company_name}")
+            url = self._search_company_playwright(company_name, seen_company_urls)
+        except Exception:
+            logger.exception("Playwright company search failed for %s", company_name)
+            url = None
+
         if url:
             is_valid, slug = self.validate_linkedin_org_url(url)
             if is_valid:
@@ -1056,8 +1791,15 @@ NOT_FOUND"""
         # Try Playwright search with acronym if we can generate one
         acronym = self._generate_acronym(company_name)
         if acronym and acronym.upper() != company_name.upper():
-            logger.info(f"Trying Playwright/Bing search with acronym: {acronym}")
-            url = self._search_company_playwright(acronym)
+            try:
+                logger.info(f"Trying Playwright/Bing search with acronym: {acronym}")
+                url = self._search_company_playwright(acronym, seen_company_urls)
+            except Exception:
+                logger.exception(
+                    "Playwright company search failed for acronym %s", acronym
+                )
+                url = None
+
             if url:
                 is_valid, slug = self.validate_linkedin_org_url(url)
                 if is_valid:
@@ -1320,25 +2062,69 @@ NOT_FOUND"""
         if not name or not company:
             return None
 
-        # Build cache key from name and company (primary identifiers)
-        # Include department and location for specificity
-        cache_key = f"{name.lower().strip()}@{company.lower().strip()}|{(department or '').lower().strip()}|{(location or '').lower().strip()}"
+        # Clean optional parameters - filter out empty strings and literal "None"
+        position = _clean_optional_string(position)
+        department = _clean_optional_string(department)
+        location = _clean_optional_string(location)
+        role_type = _clean_optional_string(role_type)
+        research_area = _clean_optional_string(research_area)
 
-        # Check cache first
-        if cache_key in self._person_cache:
-            cached_url = self._person_cache[cache_key]
+        # Normalize name and company for cache lookups
+        # Use normalize_name() to strip titles like "Professor", "Dr.", handle middle initials
+        # This ensures "Professor Dmitri Talapin" matches "Dmitri Talapin" in cache
+        name_norm = normalize_name(name)
+        company_norm = self._normalize_org_name(company)
+
+        # === IMPROVEMENT 3: Check if we already found this person by name ===
+        # If we found a profile for this person before (regardless of org), reuse it
+        if name_norm in LinkedInCompanyLookup._shared_found_profiles_by_name:
+            cached_url = LinkedInCompanyLookup._shared_found_profiles_by_name[name_norm]
+            logger.info(f"Person found in name-only cache: {name} -> {cached_url}")
+            return cached_url
+
+        # === IMPROVEMENT 2: Use company LinkedIn URL as cache key if available ===
+        # This handles "UChicago" vs "University of Chicago" pointing to the same LinkedIn page
+        company_cache_key = company_norm
+        if company_norm in self._company_cache:
+            cached_company = self._company_cache[company_norm]
+            if cached_company and cached_company[0]:  # Has URL
+                # Use LinkedIn URL as canonical key instead of name
+                linkedin_url = cached_company[0]
+                if linkedin_url in LinkedInCompanyLookup._shared_company_url_to_name:
+                    # Use the canonical name from first lookup
+                    company_cache_key = (
+                        LinkedInCompanyLookup._shared_company_url_to_name[linkedin_url]
+                    )
+                else:
+                    # First time seeing this company URL - register it
+                    LinkedInCompanyLookup._shared_company_url_to_name[linkedin_url] = (
+                        company_norm
+                    )
+                    company_cache_key = company_norm
+
+        # Use simple cache key (name + canonical company) to avoid re-searching same person
+        simple_cache_key = f"{name_norm}@{company_cache_key}"
+
+        # Check simple cache first - this catches the same person across multiple stories
+        if simple_cache_key in self._person_cache:
+            cached_url = self._person_cache[simple_cache_key]
             if cached_url:
                 logger.info(f"Person cache hit: {name} at {company} -> {cached_url}")
             else:
-                logger.debug(
-                    f"Person cache hit (not found previously): {name} at {company}"
+                logger.info(
+                    f"Person cache hit (not found previously): {name} at {company} - skipping re-search"
                 )
             return cached_url
 
         start_time = time.time()
 
+        # Expand organization abbreviation for search (e.g., "UChicago" -> "University of Chicago")
+        search_company = self._expand_org_for_search(company)
+        if search_company != company:
+            logger.info(f"Expanded org for search: '{company}' -> '{search_company}'")
+
         # Build enhanced context for logging
-        context_parts = [f"{name} at {company}"]
+        context_parts = [f"{name} at {search_company}"]
         if position:
             context_parts.append(f"({position})")
         if department:
@@ -1347,40 +2133,38 @@ NOT_FOUND"""
             context_parts.append(f"from {location}")
         logger.info(f"Searching for person LinkedIn profile: {' '.join(context_parts)}")
 
+        # Track URLs we have already validated to avoid reloading the same profile across fallbacks
+        seen_urls: set[str] = set()
+
         # Primary method: Playwright/Bing search with org matching
         profile_url = self._search_person_playwright(
             name,
             location=location,
-            company=company,
+            company=search_company,
             position=position,
             department=department,
             role_type=role_type,
             research_area=research_area,
             require_org_match=True,
+            seen_urls=seen_urls,
         )
 
-        # Fallback: Retry without org matching if needed
+        # === REDUCED RETRIES TO AVOID CAPTCHA ===
+        # Only do 1 retry instead of 3 to reduce search engine load
+
+        # Fallback 1: Retry without org matching if needed (combines previous retries 1 & 2)
         if not profile_url:
             logger.info(f"Retrying search for {name} without org matching...")
+            # Use just name + company (skip department/location that might be wrong)
             profile_url = self._search_person_playwright(
                 name,
-                location=location,
-                company=company,
-                position=position,
-                department=department,
-                role_type=role_type,
-                research_area=research_area,
+                company=search_company,
                 require_org_match=False,
+                seen_urls=seen_urls,
             )
 
-        # Fallback: Try with just name + company (no department/location that might be wrong)
-        if not profile_url and (department or location):
-            logger.info(f"Retrying search for {name} with simplified query...")
-            profile_url = self._search_person_playwright(
-                name,
-                company=company,
-                require_org_match=False,
-            )
+        # NOTE: Removed "last name only" retry - too broad and causes false positives
+        # The cache will prevent re-searching for failed lookups
 
         if profile_url:
             elapsed = time.time() - start_time
@@ -1388,8 +2172,12 @@ NOT_FOUND"""
             logger.info(
                 f"Found person profile: {name} -> {profile_url} ({elapsed:.1f}s)"
             )
-            # Cache the successful result
-            self._person_cache[cache_key] = profile_url
+            # Cache the successful result using simple key
+            self._person_cache[simple_cache_key] = profile_url
+            # Also cache by name only so we can find this person with different org variations
+            LinkedInCompanyLookup._shared_found_profiles_by_name[name_norm] = (
+                profile_url
+            )
             return profile_url
 
         # Fallback to Gemini search (skip if disabled due to low success rate)
@@ -1398,7 +2186,7 @@ NOT_FOUND"""
             self._timing_stats["person_search"].append(elapsed)
             logger.debug(f"Skipping Gemini fallback (disabled) for {name}")
             # Cache the negative result to avoid re-searching
-            self._person_cache[cache_key] = None
+            self._person_cache[simple_cache_key] = None
             return None
 
         result = self._search_person_gemini(
@@ -1408,8 +2196,11 @@ NOT_FOUND"""
         elapsed = time.time() - start_time
         self._timing_stats["person_search"].append(elapsed)
 
-        # Cache the result (found or not found)
-        self._person_cache[cache_key] = result
+        # Cache the result (found or not found) using simple key
+        self._person_cache[simple_cache_key] = result
+        # If found, also cache by name only for future lookups with different org variations
+        if result:
+            LinkedInCompanyLookup._shared_found_profiles_by_name[name_norm] = result
         return result
 
     def _search_person_gemini(
@@ -1434,18 +2225,23 @@ NOT_FOUND"""
             return None
 
         # Build rich context for better matching
-        context_lines = [f"Name: {name}", f"Company/Organization: {company}"]
+        # Only include non-empty values to avoid "None" appearing in prompts
+        context_lines = []
+        if name and name.strip():
+            context_lines.append(f"Name: {name.strip()}")
+        if company and company.strip():
+            context_lines.append(f"Company/Organization: {company.strip()}")
 
-        if position:
-            context_lines.append(f"Position/Title: {position}")
-        if department:
-            context_lines.append(f"Department: {department}")
-        if location:
-            context_lines.append(f"Location: {location}")
-        if role_type:
-            context_lines.append(f"Role Type: {role_type}")
-        if research_area:
-            context_lines.append(f"Research Area/Field: {research_area}")
+        if position and position.strip():
+            context_lines.append(f"Position/Title: {position.strip()}")
+        if department and department.strip():
+            context_lines.append(f"Department: {department.strip()}")
+        if location and location.strip():
+            context_lines.append(f"Location: {location.strip()}")
+        if role_type and role_type.strip():
+            context_lines.append(f"Role Type: {role_type.strip()}")
+        if research_area and research_area.strip():
+            context_lines.append(f"Research Area/Field: {research_area.strip()}")
 
         person_context = "\n".join(context_lines)
 
@@ -1562,7 +2358,9 @@ NOT_FOUND"""
                     f"({success_rate * 100:.0f}%) success rate"
                 )
 
-    def _search_company_playwright(self, company_name: str) -> Optional[str]:
+    def _search_company_playwright(
+        self, company_name: str, seen_urls: Optional[set[str]] = None
+    ) -> Optional[str]:
         """
         Search for LinkedIn company page using undetected-chromedriver to render Bing search results.
 
@@ -1574,17 +2372,20 @@ NOT_FOUND"""
         Returns:
             LinkedIn company/school URL if found, None otherwise
         """
-        driver = self._get_uc_driver()
-        if driver is None:
-            return None
-
-        from selenium.webdriver.common.by import By
-
-        # Build search query
-        search_query = f"{company_name} LinkedIn company"
-        logger.debug(f"UC Chrome Bing company search: {search_query}")
-
         try:
+            driver = self._get_uc_driver()
+            if driver is None:
+                return None
+
+            from selenium.webdriver.common.by import By
+
+            # Track already validated URLs to avoid repeated page loads across attempts
+            validated_urls: set[str] = set(seen_urls or [])
+
+            # Build search query
+            search_query = f"{company_name} LinkedIn company"
+            logger.debug(f"UC Chrome Bing company search: {search_query}")
+
             url = f"https://www.bing.com/search?q={search_query.replace(' ', '+')}"
             driver.get(url)
             time.sleep(2)  # Wait for page to load
@@ -1641,6 +2442,12 @@ NOT_FOUND"""
                         page_type = match.group(1)
                         slug = match.group(2)
                         result_url = f"https://www.linkedin.com/{page_type}/{slug}"
+                        if result_url in validated_urls:
+                            logger.debug(
+                                f"Skipping duplicate company URL already validated: {result_url}"
+                            )
+                            continue
+                        validated_urls.add(result_url)
                         logger.info(f"Found company via UC Chrome: {result_url}")
                         return result_url
 
@@ -1651,7 +2458,9 @@ NOT_FOUND"""
             logger.debug("No matching LinkedIn company found via UC Chrome")
 
         except Exception as e:
-            logger.error(f"UC Chrome company search error: {e}")
+            logger.exception(
+                "UC Chrome company search error for %s: %s", company_name, e
+            )
             # If browser crashed, reset it
             self._uc_driver = None
 
@@ -1664,6 +2473,7 @@ NOT_FOUND"""
         first_name: str,
         last_name: str,
         company: Optional[str] = None,
+        first_name_variants: Optional[set[str]] = None,
     ) -> bool:
         """Visit a LinkedIn profile page and validate that the name matches.
 
@@ -1675,12 +2485,17 @@ NOT_FOUND"""
             profile_url: LinkedIn profile URL to validate
             first_name: Expected first name (lowercase)
             last_name: Expected last name (lowercase)
-            company: Expected company/org (for single-name validation)
+            company: Expected company/org (for additional validation)
+            first_name_variants: Optional set of nickname variants for first name
 
         Returns:
             True if the profile name matches, False otherwise
         """
         from selenium.webdriver.common.by import By
+
+        # Use provided variants or generate them
+        if first_name_variants is None and first_name:
+            first_name_variants = get_name_variants(first_name)
 
         try:
             driver.get(profile_url)
@@ -1721,17 +2536,75 @@ NOT_FOUND"""
                 page_text = page_title
 
             # Validate: BOTH first and last name must appear in the profile name
-            # Use word boundary matching to avoid partial matches
+            # Use word boundary matching, and allow nickname/prefix variants for first name
             if first_name and last_name:
-                first_pattern = rf"\b{re.escape(first_name)}\b"
+                # Check last name (should be exact)
                 last_pattern = rf"\b{re.escape(last_name)}\b"
-                first_match = bool(re.search(first_pattern, name_text))
                 last_match = bool(re.search(last_pattern, name_text))
+
+                # Check first name - use general names_could_match for flexibility
+                first_match = bool(
+                    re.search(rf"\b{re.escape(first_name)}\b", name_text)
+                )
+                if not first_match:
+                    # Try nickname variants from NICKNAME_MAP
+                    if first_name_variants:
+                        for variant in first_name_variants:
+                            if re.search(rf"\b{re.escape(variant)}\b", name_text):
+                                first_match = True
+                                logger.debug(
+                                    f"First name matched via variant: {first_name} -> {variant}"
+                                )
+                                break
+
+                    # Try general prefix matching (e.g., "Kam" matches "Kathryn" via shared "Ka" prefix)
+                    if not first_match:
+                        # Extract first name from profile name text
+                        name_parts = name_text.split()
+                        if name_parts:
+                            profile_first = name_parts[0]
+                            if names_could_match(first_name, profile_first):
+                                first_match = True
+                                logger.debug(
+                                    f"First name matched via prefix: {first_name} ~ {profile_first}"
+                                )
 
                 if first_match and last_match:
                     logger.debug(
                         f"Profile name validated: '{name_text[:50]}' matches '{first_name} {last_name}'"
                     )
+                    # If company validation requested, also check it
+                    if company:
+                        # Include short company names (like AGC) - use len > 2 instead of > 3
+                        company_words = [
+                            w.lower()
+                            for w in company.split()
+                            if len(w) > 2
+                            and w.lower()
+                            not in ("inc", "llc", "ltd", "corp", "plc", "the")
+                        ]
+                        # Check both page text AND experience section for company match
+                        # This handles people who previously worked at the company
+                        company_match = any(word in page_text for word in company_words)
+
+                        # Also explicitly check Experience section for past employment
+                        if not company_match:
+                            experience_text = self._extract_experience_section(driver)
+                            if experience_text:
+                                company_match = any(
+                                    word in experience_text.lower()
+                                    for word in company_words
+                                )
+                                if company_match:
+                                    logger.debug(
+                                        f"Company '{company}' found in Experience section (past employment)"
+                                    )
+
+                        if not company_match:
+                            logger.debug(
+                                f"Profile company mismatch: expected '{company}' (words: {company_words}) not found on profile"
+                            )
+                            return False
                     return True
                 else:
                     logger.debug(
@@ -1739,9 +2612,17 @@ NOT_FOUND"""
                     )
                     return False
             elif first_name:
-                # Single-name search - ALSO require company to appear on profile
-                first_pattern = rf"\b{re.escape(first_name)}\b"
-                if not re.search(first_pattern, name_text):
+                # Single-name search - check with variants, and require company
+                first_match = bool(
+                    re.search(rf"\b{re.escape(first_name)}\b", name_text)
+                )
+                if not first_match and first_name_variants:
+                    for variant in first_name_variants:
+                        if re.search(rf"\b{re.escape(variant)}\b", name_text):
+                            first_match = True
+                            break
+
+                if not first_match:
                     logger.debug(
                         f"Profile name mismatch: expected '{first_name}', found '{name_text[:50]}'"
                     )
@@ -1751,6 +2632,14 @@ NOT_FOUND"""
                 if company:
                     company_words = [w.lower() for w in company.split() if len(w) > 3]
                     company_match = any(word in page_text for word in company_words)
+                    # Also check Experience section for past employment
+                    if not company_match:
+                        experience_text = self._extract_experience_section(driver)
+                        if experience_text:
+                            company_match = any(
+                                word in experience_text.lower()
+                                for word in company_words
+                            )
                     if not company_match:
                         logger.debug(
                             f"Profile company mismatch: expected '{company}' not found on profile"
@@ -1768,6 +2657,223 @@ NOT_FOUND"""
             logger.debug(f"Error validating profile name for {profile_url}: {e}")
             return False
 
+    def _extract_experience_section(self, driver: Any) -> str:
+        """Extract text from the Experience section of a LinkedIn profile.
+
+        This is used to find past employers that may not appear in the headline.
+
+        Args:
+            driver: Selenium WebDriver instance (already on profile page)
+
+        Returns:
+            Text content of the Experience section, or empty string if not found
+        """
+        from selenium.webdriver.common.by import By
+
+        try:
+            experience_text = ""
+
+            # Try multiple selectors for the Experience section
+            # LinkedIn uses different structures on different pages
+            experience_selectors = [
+                # Main experience section
+                "#experience",
+                "[data-section='experience']",
+                "section.experience-section",
+                # Experience list items
+                ".experience-section li",
+                "[id*='experience'] li",
+                # Alternative: look for "Experience" heading and get sibling content
+            ]
+
+            for selector in experience_selectors:
+                try:
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    for elem in elements:
+                        if elem.text:
+                            experience_text += " " + elem.text
+                except Exception:
+                    continue
+
+            # If no experience section found via selectors, try finding by text pattern
+            if not experience_text:
+                try:
+                    # Look for text that starts with "Experience" section marker
+                    body = driver.find_element(By.TAG_NAME, "body")
+                    full_text = body.text if body else ""
+
+                    # Find the Experience section in the page text
+                    # LinkedIn profiles typically have sections in order
+                    exp_start = full_text.lower().find("experience")
+                    if exp_start != -1:
+                        # Get text after "Experience" heading (next ~2000 chars should cover it)
+                        experience_text = full_text[exp_start : exp_start + 2000]
+                except Exception:
+                    pass
+
+            return experience_text.strip()
+
+        except Exception as e:
+            logger.debug(f"Error extracting experience section: {e}")
+            return ""
+
+    def _search_person_linkedin_direct(
+        self,
+        driver: Any,
+        name: str,
+        company: Optional[str] = None,
+        position: Optional[str] = None,
+        first_name: str = "",
+        last_name: str = "",
+        first_name_variants: Optional[set] = None,
+        original_first_name: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Search for LinkedIn profile directly on LinkedIn's people search.
+
+        This is more accurate than Google/Bing as we're searching LinkedIn's own index.
+        Requires being logged in to LinkedIn.
+
+        Args:
+            driver: UC Chrome driver instance
+            name: Person's full name
+            company: Optional company/organization
+            position: Optional job title
+            first_name: First name for validation
+            last_name: Last name for validation
+            first_name_variants: Nickname variants for first name
+            original_first_name: For surname-only searches
+
+        Returns:
+            LinkedIn profile URL if found, None otherwise
+        """
+        from selenium.webdriver.common.by import By
+        import urllib.parse
+
+        # Build search keywords (normalized to drop suffixes/credentials)
+        normalized_query = normalize_name(name)
+        search_query = normalized_query if normalized_query else name
+
+        keywords = [search_query]
+        if company:
+            keywords.append(company)
+
+        search_query = " ".join(keywords)
+        encoded_query = urllib.parse.quote(search_query)
+
+        # LinkedIn people search URL
+        linkedin_search_url = (
+            f"https://www.linkedin.com/search/results/people/?keywords={encoded_query}"
+        )
+
+        logger.debug(f"LinkedIn direct search: {search_query}")
+
+        try:
+            driver.get(linkedin_search_url)
+            time.sleep(3 + random.random() * 2)  # Wait for results to load
+
+            # Check if we need to log in
+            current_url = driver.current_url.lower()
+            if "/login" in current_url or "/authwall" in current_url:
+                logger.debug("LinkedIn login required for direct search")
+                if not self._ensure_linkedin_login(driver):
+                    return None
+                # Retry the search after login
+                driver.get(linkedin_search_url)
+                time.sleep(3 + random.random() * 2)
+
+            # Human-like behavior
+            try:
+                driver.execute_script("window.scrollBy(0, 200 + Math.random() * 300);")
+                time.sleep(0.5 + random.random())
+            except Exception:
+                pass
+
+            page_source = driver.page_source
+
+            # Extract profile URLs from LinkedIn search results
+            # LinkedIn search results have links like /in/username in the result cards
+            profile_urls = []
+
+            # Pattern 1: Direct profile links in search results
+            # LinkedIn uses different formats, try multiple patterns
+            patterns = [
+                r'href="(/in/[\w\-]+)"',  # Relative URL
+                r'href="(https://www\.linkedin\.com/in/[\w\-]+)"',  # Absolute URL
+                r'href="(https://[a-z]{2}\.linkedin\.com/in/[\w\-]+)"',  # Country-specific
+            ]
+
+            for pattern in patterns:
+                matches = re.findall(pattern, page_source)
+                for match in matches:
+                    if match.startswith("/in/"):
+                        url = f"https://www.linkedin.com{match}"
+                    else:
+                        url = match
+                    # Clean the URL
+                    url = url.split("?")[0].rstrip("/")
+                    if url not in profile_urls:
+                        profile_urls.append(url)
+
+            if not profile_urls:
+                logger.debug(
+                    f"LinkedIn direct search: no profile URLs found for '{name}'"
+                )
+                return None
+
+            logger.debug(
+                f"LinkedIn direct search: found {len(profile_urls)} profile URLs"
+            )
+
+            # For single-name searches, use original first name for validation
+            validation_first = first_name
+            validation_last = last_name
+            if original_first_name:
+                validation_first = normalize_name(original_first_name)
+                validation_last = first_name  # The search term is the last name
+
+            # Validate each profile until we find a match
+            for profile_url in profile_urls[:5]:  # Check up to 5 results
+                # Skip if URL doesn't look like a real profile
+                if "/in/ANON" in profile_url or "/in/headless" in profile_url:
+                    continue
+
+                # Check if name appears in URL (quick pre-filter)
+                url_slug = profile_url.split("/in/")[-1].lower()
+                url_parts = url_slug.replace("-", " ").split()
+
+                # Must have at least last name in URL
+                if validation_last and validation_last not in url_parts:
+                    # Also check if last name is a substring (for concatenated names)
+                    if validation_last not in url_slug:
+                        continue
+
+                # Full validation on profile page
+                validation_company = company if company else None
+                if self._validate_profile_name(
+                    driver,
+                    profile_url,
+                    validation_first,
+                    validation_last,
+                    validation_company,
+                    first_name_variants,
+                ):
+                    logger.info(
+                        f"LinkedIn direct search: found {name} -> {profile_url}"
+                    )
+                    return profile_url
+                else:
+                    logger.debug(
+                        f"LinkedIn direct search: rejected {profile_url} (validation failed)"
+                    )
+
+            logger.debug(f"LinkedIn direct search: no valid profile found for '{name}'")
+            return None
+
+        except Exception as e:
+            logger.debug(f"LinkedIn direct search error: {e}")
+            return None
+
     def _search_person_playwright(
         self,
         name: str,
@@ -1778,6 +2884,8 @@ NOT_FOUND"""
         role_type: Optional[str] = None,
         research_area: Optional[str] = None,
         require_org_match: bool = True,
+        original_first_name: Optional[str] = None,
+        seen_urls: Optional[set[str]] = None,
     ) -> Optional[str]:
         """
         Search for LinkedIn profile using undetected-chromedriver to render Bing search results.
@@ -1785,7 +2893,7 @@ NOT_FOUND"""
         Uses shared browser session for efficiency across multiple searches.
 
         Args:
-            name: Person's name
+            name: Person's name (may be just last name for fallback searches)
             location: Optional location (city, state, country)
             company: Optional company/organisation
             position: Optional job title
@@ -1794,6 +2902,8 @@ NOT_FOUND"""
             research_area: Optional research field for academics
             require_org_match: If True, only return results that match the org.
                              If False, return first result matching the name.
+            original_first_name: For surname-only searches, the original first name
+                                 to validate against the profile page.
 
         Returns:
             LinkedIn profile URL if found, None otherwise
@@ -1804,340 +2914,801 @@ NOT_FOUND"""
 
         from selenium.webdriver.common.by import By
 
-        # Build enhanced search query with available context
-        parts = [name]
-        if company:
-            parts.append(company)
-        # Add department for more specific searches (especially useful for academics)
-        if department:
-            parts.append(department)
-        # Add location for disambiguation
-        if location:
-            # Extract just city/region for search (avoid full country name)
+        # Parse and normalize name early for validation and query construction
+        normalized_name = normalize_name(name)
+        name_parts = normalized_name.split()
+        first_name = name_parts[0] if name_parts else ""
+        last_name = name_parts[-1] if len(name_parts) >= 2 else ""
+
+        # Name key for per-session rejection cache
+        name_key = normalized_name or name.strip().lower()
+
+        # Track already validated URLs to avoid repeated page loads across attempts
+        seen_urls = seen_urls or set()
+
+        # For single-name searches, use original_first_name for validation (normalized)
+        is_single_name = len(name_parts) == 1
+        validation_first_name = first_name
+        validation_last_name = last_name
+        if is_single_name and original_first_name:
+            orig_clean = normalize_name(original_first_name)
+            validation_first_name = orig_clean
+            validation_last_name = (
+                first_name  # The search term is actually the last name
+            )
+
+        # Get name variants for fuzzy matching
+        first_name_variants = (
+            get_name_variants(validation_first_name) if validation_first_name else set()
+        )
+
+        # === PRIMARY METHOD: Direct LinkedIn Search ===
+        # Try LinkedIn's own search first - more accurate than Google/Bing
+        # Only use for full name searches (not surname-only fallback)
+        if not is_single_name and company:
+            logger.info(
+                f"LinkedIn direct search for '{normalized_name or name}' at '{company}'"
+            )
+            linkedin_result = self._search_person_linkedin_direct(
+                driver=driver,
+                name=normalized_name or name,
+                company=company,
+                position=position,
+                first_name=first_name,
+                last_name=last_name,
+                first_name_variants=first_name_variants,
+                original_first_name=original_first_name,
+            )
+            if linkedin_result:
+                return linkedin_result
+            logger.debug(f"LinkedIn direct search failed, falling back to Google/Bing")
+
+        # === FALLBACK: Google/Bing Search ===
+        # Build search queries - try quoted first (more precise), then unquoted (more lenient)
+        # This helps find profiles where Google doesn't honor exact phrase matching
+
+        # Build quoted query (primary - more precise)
+        parts_quoted = []
+        # Use normalized name in search queries to avoid noise from suffixes/credentials
+        query_name = normalized_name if normalized_name else name.strip()
+
+        if query_name:
+            parts_quoted.append(f'"{query_name}"')  # Quote person name for exact match
+        if company and company.strip():
+            parts_quoted.append(
+                f'"{company.strip()}"'
+            )  # Quote organization name for exact match
+        if location and location.strip():
             location_parts = location.split(",")
-            if location_parts:
-                parts.append(location_parts[0].strip())
-        # Use site: restriction for more targeted results
-        parts.append("site:linkedin.com/in")
-        search_query = " ".join(parts)
-        logger.debug(f"UC Chrome Google search: {search_query}")
+            if location_parts and location_parts[0].strip():
+                parts_quoted.append(location_parts[0].strip())
+        parts_quoted.append("site:linkedin.com/in")
+        quoted_query = " ".join(parts_quoted)
+
+        # Build unquoted query (fallback - more lenient)
+        parts_unquoted = []
+        if query_name:
+            parts_unquoted.append(query_name)  # No quotes - allows partial matches
+        if company and company.strip():
+            parts_unquoted.append(company.strip())  # No quotes
+        if location and location.strip():
+            location_parts = location.split(",")
+            if location_parts and location_parts[0].strip():
+                parts_unquoted.append(location_parts[0].strip())
+        parts_unquoted.append("site:linkedin.com/in")
+        unquoted_query = " ".join(parts_unquoted)
+
+        # Try both query strategies
+        search_queries = [
+            ("quoted", quoted_query),
+            ("unquoted", unquoted_query),
+        ]
 
         try:
-            # Use Google Search (better LinkedIn results than Bing)
+            # Rate limiting: respect minimum interval between searches
+            import random
             import urllib.parse
 
-            encoded_query = urllib.parse.quote(search_query)
-            url = f"https://www.google.com/search?q={encoded_query}"
-            driver.get(url)
-            time.sleep(2)  # Wait for page to load
+            # Try both query strategies (quoted first, then unquoted if no results)
+            for query_type, search_query in search_queries:
+                logger.debug(f"UC Chrome search ({query_type}): {search_query}")
 
-            # Parse name for matching (first and last, ignoring middle names and titles)
-            name_clean = re.sub(r"^(dr\.?|prof\.?|professor)\s+", "", name.lower())
-            name_parts = name_clean.split()
-            first_name = name_parts[0] if name_parts else ""
-            last_name = name_parts[-1] if len(name_parts) >= 2 else ""
+                current_time = time.time()
 
-            # Single-name searches are VERY ambiguous - require org match always
-            is_single_name = len(name_parts) == 1
-            if is_single_name:
-                logger.warning(
-                    f"Single-name search '{name}' - will require strong org/context match"
-                )
+                # Check if we're in CAPTCHA cooldown; skip rather than blocking long sleeps
+                if current_time < self._captcha_cooldown_until:
+                    wait_time = self._captcha_cooldown_until - current_time
+                    logger.warning(
+                        f"In CAPTCHA cooldown (ends in {wait_time:.0f}s) - skipping browser search"
+                    )
+                    return None
 
-            # Check if this is a very common Western name (requires slightly higher confidence)
-            name_is_common = is_common_name(first_name, last_name)
+                # Enforce minimum interval between searches
+                time_since_last = current_time - self._last_search_time
+                if time_since_last < self._min_search_interval:
+                    wait_time = self._min_search_interval - time_since_last
+                    # Add randomness to appear more human (3-7 seconds extra)
+                    wait_time += 3 + random.random() * 4
+                    logger.debug(
+                        f"Rate limiting: waiting {wait_time:.1f}s before search"
+                    )
+                    time.sleep(wait_time)
 
-            # Build context matching keywords from all available metadata
-            context_keywords = build_context_keywords(
-                company=company,
-                department=department,
-                position=position,
-                research_area=research_area,
-            )
+                # Progressive slowdown: every 3 consecutive searches, add extra delay
+                self._consecutive_searches += 1
+                if (
+                    self._consecutive_searches > 0
+                    and self._consecutive_searches % 3 == 0
+                ):
+                    extra_delay = (
+                        12 + random.random() * 8
+                    )  # 12-20 seconds extra (was 8-15)
+                    logger.info(
+                        f"Taking {extra_delay:.0f}s break after {self._consecutive_searches} searches"
+                    )
+                    time.sleep(extra_delay)
 
-            # Extract LinkedIn URLs directly from page source (most reliable for Google)
-            page_source = driver.page_source
-            linkedin_urls = re.findall(
-                r"https://(?:www\.)?linkedin\.com/in/[\w\-]+/?", page_source
-            )
+                self._last_search_time = time.time()
+                self._driver_search_count += 1  # Track searches for driver rotation
 
-            # Deduplicate while preserving order
-            seen = set()
-            unique_urls = []
-            for u in linkedin_urls:
-                u_clean = u.rstrip("/")
-                if u_clean not in seen:
-                    seen.add(u_clean)
-                    unique_urls.append(u_clean)
+                encoded_query = urllib.parse.quote(search_query)
 
-            # Track all candidates with their scores
-            candidates: List[
-                Tuple[int, str, List[str]]
-            ] = []  # (score, url, matched_keywords)
+                # Try Google first (better LinkedIn results), fall back to Bing
+                search_engines = [
+                    ("Google", f"https://www.google.com/search?q={encoded_query}"),
+                    ("Bing", f"https://www.bing.com/search?q={encoded_query}"),
+                ]
 
-            # For each LinkedIn URL found, try to get context from the search result
-            for linkedin_url in unique_urls[:10]:  # Check up to 10 results
-                try:
-                    # Find the search result containing this URL
-                    # Google results are in divs with class 'g' or we can search for the URL in any element
-                    result_text = ""
+                page_source = None
+                captcha_count = 0
+                for engine_name, url in search_engines:
+                    driver.get(url)
+                    # Random delay to appear more human (4-8 seconds)
+                    time.sleep(4 + random.random() * 4)
 
-                    # Try to find result elements containing this URL
+                    # Human-like behavior: scroll down a bit to simulate reading
+                    # Human-like behavior: scroll down randomly and move mouse
                     try:
-                        # Look for any element containing this URL
-                        elements = driver.find_elements(
-                            By.XPATH, f"//*[contains(@href, '{linkedin_url}')]"
+                        # Scroll down to simulate reading
+                        driver.execute_script(
+                            "window.scrollBy(0, 200 + Math.random() * 300);"
                         )
-                        for elem in elements:
-                            # Get parent container text
-                            parent = elem
-                            for _ in range(5):  # Go up to 5 levels
-                                try:
-                                    parent = parent.find_element(By.XPATH, "..")
-                                    parent_text = parent.text
-                                    if (
-                                        len(parent_text) > len(result_text)
-                                        and len(parent_text) < 1000
-                                    ):
-                                        result_text = parent_text
-                                except Exception:
-                                    break
+                        time.sleep(0.3 + random.random() * 0.5)
+
+                        # Simulate mouse movement by moving focus (UC Chrome handles this better)
+                        driver.execute_script("""
+                            // Simulate human-like interaction
+                            document.dispatchEvent(new MouseEvent('mousemove', {
+                                clientX: 100 + Math.random() * 500,
+                                clientY: 100 + Math.random() * 300,
+                                bubbles: true
+                            }));
+                        """)
+                        time.sleep(0.2 + random.random() * 0.3)
+
+                        # Scroll back up a bit (humans don't just scroll down)
+                        driver.execute_script(
+                            "window.scrollBy(0, -(50 + Math.random() * 100));"
+                        )
+                        time.sleep(0.3 + random.random() * 0.4)
                     except Exception:
                         pass
 
-                    result_text = result_text.lower() if result_text else ""
+                    # Check for CAPTCHA
+                    page_source = driver.page_source.lower()
+                    current_url = driver.current_url.lower()
 
-                    # If no context found from search results, we can still use the URL
-                    # The URL slug often contains the person's name
-                    url_slug = (
-                        linkedin_url.split("/in/")[-1] if "/in/" in linkedin_url else ""
+                    # Detect CAPTCHA patterns
+                    captcha_indicators = [
+                        "captcha" in page_source,
+                        "i'm not a robot" in page_source,
+                        "unusual traffic" in page_source,
+                        "/sorry/" in current_url,
+                        "challenge" in current_url and "recaptcha" in page_source,
+                    ]
+
+                    if any(captcha_indicators):
+                        captcha_count += 1
+                        logger.warning(
+                            f"{engine_name} CAPTCHA detected, trying next search engine..."
+                        )
+                        continue
+
+                    # Success - got search results, reset consecutive counter
+                    self._consecutive_searches = 0
+                    used_engine = engine_name
+                    logger.debug(f"Using {engine_name} search results")
+                    break
+                else:
+                    # All search engines blocked - enter cooldown
+                    # Keep cooldown bounded so we fail fast instead of blocking the pipeline
+                    cooldown_seconds = min(
+                        60, 30 * captcha_count
+                    )  # Increased cooldown (was 30)
+                    self._captcha_cooldown_until = time.time() + cooldown_seconds
+                    logger.error(
+                        f"All search engines returned CAPTCHA - entering {cooldown_seconds}s cooldown"
                     )
-                    url_text = url_slug.replace("-", " ").lower()
+                    return None
 
-                    # === CRITICAL NAME VALIDATION ===
-                    # The URL slug MUST contain the person's name to be valid
-                    # This prevents matching completely wrong profiles
-                    name_in_url = True
-                    if first_name and last_name:
-                        # Both first and last name should appear in URL slug
-                        # Use word boundary matching to avoid partial matches
-                        first_pattern = r"\b" + re.escape(first_name) + r"\b"
-                        last_pattern = r"\b" + re.escape(last_name) + r"\b"
-                        first_in_url = bool(re.search(first_pattern, url_text))
-                        last_in_url = bool(re.search(last_pattern, url_text))
+                # Variable to track which engine succeeded
+                used_engine = locals().get("used_engine", "Unknown")
 
-                        if not first_in_url and not last_in_url:
-                            # Neither name part in URL - definitely wrong person
-                            logger.debug(
-                                f"Skipping '{linkedin_url}' - name not in URL slug: '{url_text}'"
+                # Name already parsed at start of function for LinkedIn direct search
+                # Log single-name warning if applicable
+                if is_single_name and original_first_name:
+                    logger.debug(
+                        f"Single-name search: will validate full name '{validation_first_name} {validation_last_name}'"
+                    )
+
+                # first_name_variants already computed at start of function
+
+                if is_single_name:
+                    logger.warning(
+                        f"Single-name search '{name}' - will require strong org/context match"
+                    )
+
+                # Check if this is a very common Western name (requires slightly higher confidence)
+                name_is_common = is_common_name(first_name, last_name)
+
+                # Build context matching keywords from all available metadata
+                context_keywords = build_context_keywords(
+                    company=company,
+                    department=department,
+                    position=position,
+                    research_area=research_area,
+                )
+
+                # Extract LinkedIn URLs directly from page source
+                # Re-fetch page source (don't use the lowercase version from CAPTCHA check)
+                page_source = driver.page_source
+
+                # Log page source length and search engine for debugging
+                logger.debug(
+                    f"{used_engine}: Page source length = {len(page_source)} chars"
+                )
+
+                # Try multiple patterns to find LinkedIn URLs
+                linkedin_urls = []
+
+                # Pattern 1: Direct LinkedIn URLs (works for Google)
+                direct_urls = re.findall(
+                    r"https://(?:www\.)?linkedin\.com/in/[\w\-]+/?", page_source
+                )
+                linkedin_urls.extend(direct_urls)
+                logger.debug(
+                    f"{used_engine}: Pattern 1 (direct URLs) found {len(direct_urls)} URLs"
+                )
+
+                # Pattern 2: URL-encoded redirects (for Bing click-tracking)
+                encoded_urls = re.findall(
+                    r'href="[^"]*linkedin\.com(?:%2F|/)in(?:%2F|/)([\w\-]+)',
+                    page_source,
+                )
+                for slug in encoded_urls:
+                    url = f"https://www.linkedin.com/in/{slug}"
+                    if url not in linkedin_urls:
+                        linkedin_urls.append(url)
+                logger.debug(
+                    f"{used_engine}: Pattern 2 (encoded URLs) found {len(encoded_urls)} additional slugs"
+                )
+
+                # Pattern 3: Bing wraps URLs in their redirect format
+                # e.g., href="https://www.bing.com/ck/a?...&u=a1aHR0cHM6Ly93d3cubGlua2VkaW4uY29tL2luL3VzZXJuYW1l..."
+                bing_redirect_urls = re.findall(
+                    r"a1aHR0c[A-Za-z0-9+/=]+",
+                    page_source,  # Base64-encoded https://
+                )
+                for b64 in bing_redirect_urls:
+                    try:
+                        import base64
+
+                        decoded = base64.b64decode(b64 + "==").decode(
+                            "utf-8", errors="ignore"
+                        )
+                        if "linkedin.com/in/" in decoded:
+                            # Extract the LinkedIn URL
+                            match = re.search(
+                                r"https://(?:www\.)?linkedin\.com/in/[\w\-]+", decoded
                             )
-                            continue
-                        elif not (first_in_url and last_in_url):
-                            # Only one part matches - could be partial match, flag it
-                            name_in_url = False
-                    elif first_name:
-                        # Single word name - must be in URL
-                        first_pattern = r"\b" + re.escape(first_name) + r"\b"
-                        if not re.search(first_pattern, url_text):
-                            logger.debug(
-                                f"Skipping '{linkedin_url}' - name not in URL slug: '{url_text}'"
+                            if match and match.group(0) not in linkedin_urls:
+                                linkedin_urls.append(match.group(0))
+                    except Exception:
+                        pass
+                logger.debug(
+                    f"{used_engine}: Pattern 3 (Bing base64) found additional URLs, total now {len(linkedin_urls)}"
+                )
+
+                # Debug: log how many URLs found
+                if not linkedin_urls:
+                    logger.debug(
+                        f"No LinkedIn URLs found in search results for '{name}'"
+                    )
+                    # Check if page has any content
+                    if len(page_source) < 1000:
+                        logger.warning(
+                            f"Page source very short ({len(page_source)} chars) - possible load failure"
+                        )
+                    # Log a snippet of the page source for debugging
+                    logger.debug(f"Page source snippet: {page_source[:500]}...")
+                else:
+                    logger.debug(
+                        f"Found {len(linkedin_urls)} LinkedIn URLs in search results"
+                    )
+
+                # Deduplicate while preserving order
+                seen = set()
+                unique_urls = []
+                for u in linkedin_urls:
+                    u_clean = u.rstrip("/")
+                    if u_clean not in seen:
+                        seen.add(u_clean)
+                        unique_urls.append(u_clean)
+
+                # Track all candidates with their scores
+                candidates: List[
+                    Tuple[int, str, List[str]]
+                ] = []  # (score, url, matched_keywords)
+
+                # For each LinkedIn URL found, try to get context from the search result
+                for linkedin_url in unique_urls[:10]:  # Check up to 10 results
+                    try:
+                        # Find the search result containing this URL
+                        # Google results are in divs with class 'g' or we can search for the URL in any element
+                        result_text = ""
+
+                        # Try to find result elements containing this URL
+                        try:
+                            # Look for any element containing this URL
+                            elements = driver.find_elements(
+                                By.XPATH, f"//*[contains(@href, '{linkedin_url}')]"
                             )
-                            continue
+                            for elem in elements:
+                                # Get parent container text
+                                parent = elem
+                                for _ in range(5):  # Go up to 5 levels
+                                    try:
+                                        parent = parent.find_element(By.XPATH, "..")
+                                        parent_text = parent.text
+                                        if (
+                                            len(parent_text) > len(result_text)
+                                            and len(parent_text) < 1000
+                                        ):
+                                            result_text = parent_text
+                                    except Exception:
+                                        break
+                        except Exception:
+                            pass
 
-                    # Secondary check: name in search result text (less reliable but helpful)
-                    text_to_check = f"{result_text} {url_text}"
+                        result_text = result_text.lower() if result_text else ""
 
-                    if first_name and last_name:
-                        # If name wasn't fully in URL, it MUST be in result text
-                        if not name_in_url:
-                            if (
-                                first_name not in result_text
-                                or last_name not in result_text
-                            ):
+                        # If no context found from search results, we can still use the URL
+                        # The URL slug often contains the person's name
+                        url_slug = (
+                            linkedin_url.split("/in/")[-1]
+                            if "/in/" in linkedin_url
+                            else ""
+                        )
+                        url_text = url_slug.replace("-", " ").lower()
+                        url_parts = url_text.split()
+
+                        # === IMPROVED NAME VALIDATION WITH FUZZY MATCHING ===
+                        # Check if name appears in URL, but allow for nicknames and variations
+                        name_in_url = True
+                        name_match_score = 0  # Track how well the name matches
+                        first_name_exact = False  # Track if first name match is exact
+
+                        if first_name and last_name:
+                            # Check for exact first name match (word boundary)
+                            first_in_url = first_name in url_parts
+                            first_name_exact = first_in_url  # Exact word match in URL
+
+                            # If not exact, check for nickname/variant match
+                            if not first_in_url and first_name_variants:
+                                first_in_url = any(
+                                    variant in url_parts
+                                    for variant in first_name_variants
+                                )
+                                if first_in_url:
+                                    logger.debug(
+                                        f"Matched first name variant in URL: {first_name} -> {url_text}"
+                                    )
+                                    # Variant matches are still considered strong but not exact
+                                    first_name_exact = False
+
+                            # Check for last name match (should be exact word match)
+                            last_in_url = last_name in url_parts
+
+                            # Also check presence in result text using word boundaries
+                            # Use regex to avoid substring matches like "lee" in "jiholee"
+                            first_pattern = rf"\b{re.escape(first_name)}\b"
+                            last_pattern = rf"\b{re.escape(last_name)}\b"
+                            first_in_text = bool(re.search(first_pattern, result_text))
+                            if not first_in_text and first_name_variants:
+                                first_in_text = any(
+                                    bool(re.search(rf"\b{re.escape(v)}\b", result_text))
+                                    for v in first_name_variants
+                                )
+                            last_in_text = bool(re.search(last_pattern, result_text))
+
+                            # Require last name somewhere (URL or text) as word boundary match
+                            if not (last_in_url or last_in_text):
                                 logger.debug(
-                                    f"Skipping '{linkedin_url}' - partial URL match but name not in result text"
+                                    f"Skipping '{linkedin_url}' - last name '{last_name}' missing in URL/text"
                                 )
                                 continue
-                    elif first_name:
-                        # Single word name - be more careful
-                        if first_name not in text_to_check:
-                            logger.debug(f"Skipping '{linkedin_url}' - name mismatch")
+
+                            # Require first name (or variant) somewhere (URL or text)
+                            if not (first_in_url or first_in_text):
+                                logger.debug(
+                                    f"Skipping '{linkedin_url}' - first name missing in URL/text"
+                                )
+                                continue
+
+                            if first_in_url and last_in_url:
+                                if first_name_exact:
+                                    name_match_score = (
+                                        4  # Full exact match - best score
+                                    )
+                                else:
+                                    name_match_score = (
+                                        3  # Full match with variant first name
+                                    )
+                            elif last_in_url:
+                                # Last name matches - this is more reliable than first name
+                                name_in_url = True  # Consider this acceptable
+                                if first_name_exact:
+                                    name_match_score = 2
+                                else:
+                                    name_match_score = (
+                                        2  # Last name exact is what matters here
+                                    )
+                            elif first_in_url:
+                                name_in_url = False
+                                if first_name_exact:
+                                    name_match_score = 1
+                                else:
+                                    name_match_score = 1
+                            else:
+                                # Only in text (both names present) - weakest signal
+                                name_in_url = False
+                                name_match_score = 1
+
+                        elif first_name:
+                            # Single word name - check with variants
+                            first_in_url = first_name in url_parts
+                            if not first_in_url and first_name_variants:
+                                first_in_url = any(
+                                    variant in url_parts
+                                    for variant in first_name_variants
+                                )
+                            if not first_in_url:
+                                # Check result text too
+                                if first_name not in result_text:
+                                    has_variant = any(
+                                        v in result_text for v in first_name_variants
+                                    )
+                                    if not has_variant:
+                                        logger.debug(
+                                            f"Skipping '{linkedin_url}' - name not in URL slug: '{url_text}'"
+                                        )
+                                        continue
+                                name_in_url = False
+
+                        # Secondary check: name in search result text (less reliable but helpful)
+                        text_to_check = f"{result_text} {url_text}"
+
+                        if first_name and last_name:
+                            # If name wasn't fully in URL, check result text more leniently
+                            # Allow nickname variants in result text
+                            if not name_in_url:
+                                first_in_text = first_name in result_text or any(
+                                    v in result_text for v in first_name_variants
+                                )
+                                last_in_text = last_name in result_text
+                                if not (first_in_text or last_in_text):
+                                    logger.debug(
+                                        f"Skipping '{linkedin_url}' - partial URL match but name not in result text"
+                                    )
+                                    continue
+                        elif first_name:
+                            # Single word name - be more careful
+                            if first_name not in text_to_check:
+                                # Also check variants
+                                if not any(
+                                    v in text_to_check for v in first_name_variants
+                                ):
+                                    logger.debug(
+                                        f"Skipping '{linkedin_url}' - name mismatch"
+                                    )
+                                    continue
+
+                        # Calculate match score based on context keywords
+                        match_score = 0
+                        matched_keywords = []
+                        for keyword in context_keywords:
+                            if keyword in result_text:
+                                match_score += 1
+                                matched_keywords.append(keyword)
+
+                        # Check org match FIRST (needed for name_in_text validation)
+                        org_matched = False
+                        if company:
+                            company_lower = company.lower()
+                            # Include short company names (like AGC) and exclude generic suffixes
+                            generic_suffixes = {
+                                "inc",
+                                "llc",
+                                "ltd",
+                                "corp",
+                                "plc",
+                                "the",
+                                "co",
+                            }
+                            company_words = [
+                                w
+                                for w in company_lower.split()
+                                if len(w) > 2 and w not in generic_suffixes
+                            ]
+                            org_matched = any(
+                                word in result_text for word in company_words
+                            )
+                            org_matched = org_matched or company_lower in result_text
+
+                        # Use the name_match_score from URL validation
+                        # (4 = exact full match, 3 = full match with variant first name,
+                        #  2 = last name match, 1 = partial/text only)
+                        # IMPORTANT: We require at least last_name in URL (score >= 2)
+                        # because "name_in_text" often matches the search query itself, not the profile
+                        if name_match_score >= 4:
+                            match_score += 4  # Best: exact first + last name in URL
+                            matched_keywords.append("exact_name_in_url")
+                        elif name_match_score == 3:
+                            match_score += 3  # Full match with variant first name
+                            matched_keywords.append("name_in_url")
+                        elif name_match_score == 2:
+                            match_score += 2
+                            matched_keywords.append("last_name_in_url")
+                        elif name_match_score == 1:
+                            # Name only in text, not URL - this is very weak evidence
+                            # Skip this candidate unless we have strong org match
+                            # Also require both first and last name to appear in the result text
+                            if first_name and last_name:
+                                first_in_text = first_name in result_text or any(
+                                    v in result_text for v in first_name_variants
+                                )
+                                last_in_text = last_name in result_text
+                                if not (first_in_text and last_in_text):
+                                    logger.debug(
+                                        f"Skipping '{linkedin_url}' - names only partially present in text"
+                                    )
+                                    continue
+                            if not org_matched:
+                                logger.debug(
+                                    f"Skipping '{linkedin_url}' - name only in text (not URL), no org match"
+                                )
+                                continue
+                            match_score += 1
+                            matched_keywords.append("name_in_text")
+
+                        if require_org_match and not org_matched:
+                            logger.debug(f"Skipping '{linkedin_url}' - org mismatch")
                             continue
 
-                    # Calculate match score based on context keywords
-                    match_score = 0
-                    matched_keywords = []
-                    for keyword in context_keywords:
-                        if keyword in result_text:
-                            match_score += 1
-                            matched_keywords.append(keyword)
+                        # Boost score for org match
+                        if org_matched:
+                            match_score += 2
 
-                    # Strong boost if full name is in URL slug (high confidence)
-                    if name_in_url:
-                        match_score += 3
-                        matched_keywords.append("name_in_url")
+                        # Boost score for location match
+                        if location:
+                            location_lower = location.lower()
+                            location_parts = [
+                                p.strip() for p in location_lower.split(",")
+                            ]
+                            if any(
+                                part in result_text
+                                for part in location_parts
+                                if len(part) > 2
+                            ):
+                                match_score += 1
 
-                    # Check org match (optional based on require_org_match)
-                    org_matched = False
-                    if company:
-                        company_lower = company.lower()
-                        company_words = [w for w in company_lower.split() if len(w) > 3]
-                        org_matched = any(word in result_text for word in company_words)
-                        org_matched = org_matched or company_lower in result_text
+                        # Boost score for role-type specific matches
+                        if role_type == "academic":
+                            academic_indicators = [
+                                "professor",
+                                "researcher",
+                                "phd",
+                                "dr.",
+                                "university",
+                            ]
+                            if any(ind in result_text for ind in academic_indicators):
+                                match_score += 1
+                        elif role_type == "executive":
+                            exec_indicators = [
+                                "ceo",
+                                "cto",
+                                "cfo",
+                                "vp",
+                                "president",
+                                "director",
+                                "chief",
+                            ]
+                            if any(ind in result_text for ind in exec_indicators):
+                                match_score += 1
 
-                    if require_org_match and not org_matched:
-                        logger.debug(f"Skipping '{linkedin_url}' - org mismatch")
+                        # === CONTRADICTION DETECTION ===
+                        # Use helper function to calculate penalties for wrong-person indicators
+                        search_ctx = PersonSearchContext(
+                            first_name=first_name,
+                            last_name=last_name,
+                            company=company,
+                            department=department,
+                            position=position,
+                            location=location,
+                            role_type=role_type,
+                            research_area=research_area,
+                        )
+                        contradiction_penalty, contradiction_reasons = (
+                            _calculate_contradiction_penalty(result_text, search_ctx)
+                        )
+
+                        # Apply contradiction penalty
+                        if contradiction_penalty > 0:
+                            match_score -= contradiction_penalty
+                            logger.debug(
+                                f"Contradiction detected for '{linkedin_url}': {contradiction_reasons}, penalty={contradiction_penalty}"
+                            )
+
+                        # Skip if contradictions outweigh matches
+                        if match_score < 0:
+                            logger.debug(
+                                f"Skipping '{linkedin_url}' - contradictions outweigh matches (score={match_score})"
+                            )
+                            continue
+
+                        # Track all candidates with positive scores (not just best)
+                        # We'll validate them in order of score if needed
+                        vanity_match = re.search(
+                            r"linkedin\.com/in/([\w\-]+)", linkedin_url
+                        )
+                        if vanity_match:
+                            vanity = vanity_match.group(1)
+                            candidate_url = f"https://www.linkedin.com/in/{vanity}"
+                            rejected_for_name = self._rejected_profile_cache.get(
+                                name_key, set()
+                            )
+                            if candidate_url in rejected_for_name:
+                                logger.debug(
+                                    f"Skipping rejected candidate for {name_key}: {candidate_url}"
+                                )
+                                continue
+                            if candidate_url in seen_urls:
+                                logger.debug(
+                                    f"Skipping already validated candidate: {candidate_url}"
+                                )
+                                continue
+                            candidates.append(
+                                (match_score, candidate_url, matched_keywords)
+                            )
+                            logger.debug(
+                                f"Candidate: {candidate_url} (score={match_score}, keywords={matched_keywords})"
+                            )
+
+                    except Exception as e:
+                        logger.debug(f"Error processing result item: {e}")
                         continue
 
-                    # Boost score for org match
-                    if org_matched:
-                        match_score += 2
+                # Sort candidates by score (highest first)
+                candidates.sort(key=lambda x: x[0], reverse=True)
 
-                    # Boost score for location match
-                    if location:
-                        location_lower = location.lower()
-                        location_parts = [p.strip() for p in location_lower.split(",")]
-                        if any(
-                            part in result_text
-                            for part in location_parts
-                            if len(part) > 2
-                        ):
-                            match_score += 1
-
-                    # Boost score for role-type specific matches
-                    if role_type == "academic":
-                        academic_indicators = [
-                            "professor",
-                            "researcher",
-                            "phd",
-                            "dr.",
-                            "university",
-                        ]
-                        if any(ind in result_text for ind in academic_indicators):
-                            match_score += 1
-                    elif role_type == "executive":
-                        exec_indicators = [
-                            "ceo",
-                            "cto",
-                            "cfo",
-                            "vp",
-                            "president",
-                            "director",
-                            "chief",
-                        ]
-                        if any(ind in result_text for ind in exec_indicators):
-                            match_score += 1
-
-                    # === CONTRADICTION DETECTION ===
-                    # Use helper function to calculate penalties for wrong-person indicators
-                    search_ctx = PersonSearchContext(
-                        first_name=first_name,
-                        last_name=last_name,
-                        company=company,
-                        department=department,
-                        position=position,
-                        location=location,
-                        role_type=role_type,
-                        research_area=research_area,
+                # Log candidates - concise at INFO, details at DEBUG
+                if candidates:
+                    top_url = (
+                        candidates[0][1].split("/in/")[-1].split("/")[0]
+                        if "/in/" in candidates[0][1]
+                        else candidates[0][1]
                     )
-                    contradiction_penalty, contradiction_reasons = (
-                        _calculate_contradiction_penalty(result_text, search_ctx)
+                    logger.debug(
+                        f"Found {len(candidates)} candidates for '{name}' ({query_type}), top: {top_url} (score={candidates[0][0]})"
                     )
-
-                    # Apply contradiction penalty
-                    if contradiction_penalty > 0:
-                        match_score -= contradiction_penalty
+                    for i, (score, url, kws) in enumerate(
+                        candidates[:5]
+                    ):  # Top 5 at DEBUG
                         logger.debug(
-                            f"Contradiction detected for '{linkedin_url}': {contradiction_reasons}, penalty={contradiction_penalty}"
+                            f"  #{i + 1}: {url} (score={score}, keywords={kws})"
                         )
 
-                    # Skip if contradictions outweigh matches
-                    if match_score < 0:
-                        logger.debug(
-                            f"Skipping '{linkedin_url}' - contradictions outweigh matches (score={match_score})"
-                        )
-                        continue
-
-                    # Track all candidates with positive scores (not just best)
-                    # We'll validate them in order of score if needed
-                    vanity_match = re.search(
-                        r"linkedin\.com/in/([\w\-]+)", linkedin_url
-                    )
-                    if vanity_match:
-                        vanity = vanity_match.group(1)
-                        candidate_url = f"https://www.linkedin.com/in/{vanity}"
-                        candidates.append(
-                            (match_score, candidate_url, matched_keywords)
-                        )
-                        logger.debug(
-                            f"Candidate: {candidate_url} (score={match_score}, keywords={matched_keywords})"
-                        )
-
-                except Exception as e:
-                    logger.debug(f"Error processing result item: {e}")
-                    continue
-
-            # Sort candidates by score (highest first)
-            candidates.sort(key=lambda x: x[0], reverse=True)
-
-            # Log all candidates for debugging
-            if candidates:
-                logger.info(f"Found {len(candidates)} candidates for '{name}':")
-                for i, (score, url, kws) in enumerate(candidates[:5]):  # Top 5
-                    logger.info(f"  #{i + 1}: {url} (score={score}, keywords={kws})")
-
-            # HIGH PRECISION THRESHOLD: Require minimum score for confidence
-            # Score breakdown:
-            # - Name in URL slug: +3 (strong signal)
-            # - Org match: +2
-            # - Location match: +1
-            # - Role type match: +1
-            # - Keyword matches: +1 each
-            # Require name_in_url (+3) or org_match (+2) + other signal
-            MIN_CONFIDENCE_SCORE = 3  # Name in URL alone is sufficient
-            MIN_CONFIDENCE_SCORE_COMMON_NAME = (
-                4  # Common names need name_in_url + at least one other signal
-            )
-            MIN_CONFIDENCE_SCORE_SINGLE_NAME = (
-                5  # Single-name searches need name + org match + other signal
-            )
-
-            if is_single_name:
-                threshold = MIN_CONFIDENCE_SCORE_SINGLE_NAME
-            elif name_is_common:
-                threshold = MIN_CONFIDENCE_SCORE_COMMON_NAME
-            else:
-                threshold = MIN_CONFIDENCE_SCORE
-
-            # Try candidates in order of score until we find a valid one
-            for candidate_score, candidate_url, matched_kws in candidates:
-                if candidate_score < threshold:
-                    logger.info(
-                        f"Remaining candidates below threshold (best: {candidate_url}, score={candidate_score}, threshold={threshold})"
-                    )
-                    break
-
-                # FINAL VALIDATION: Visit the profile page and verify the name
-                # For single-name searches, also verify the company appears on the profile
-                validation_company = company if is_single_name else None
-                if self._validate_profile_name(
-                    driver, candidate_url, first_name, last_name, validation_company
-                ):
-                    logger.info(
-                        f"Found profile via UC Chrome: {candidate_url} (score={candidate_score}, threshold={threshold})"
-                    )
-                    return candidate_url
-                else:
-                    logger.info(
-                        f"Rejecting candidate after page validation: {candidate_url} (name/company mismatch), trying next..."
-                    )
-
-            if candidates:
-                logger.debug(
-                    f"No valid candidate found from {len(candidates)} candidates"
+                # IMPROVED THRESHOLD: Lower thresholds but rely more on final page validation
+                # Score breakdown:
+                # - Full name in URL: +3 (strong signal)
+                # - Last name in URL: +2 (good signal, allows nickname first names)
+                # - Name in text only: +1 (weak signal)
+                # - Org match: +2
+                # - Location match: +1
+                # - Role type match: +1
+                # - Keyword matches: +1 each
+                #
+                # We've lowered thresholds because:
+                # 1. Nickname matching means we might have +2 (last name) instead of +3
+                # 2. Page validation will catch false positives
+                # 3. Better to find more candidates and validate than miss profiles
+                MIN_CONFIDENCE_SCORE = 2  # Last name + any other signal is acceptable
+                MIN_CONFIDENCE_SCORE_COMMON_NAME = (
+                    3  # Common names need stronger signals
                 )
-            else:
-                logger.debug("No matching LinkedIn profile found via UC Chrome")
+                MIN_CONFIDENCE_SCORE_SINGLE_NAME = (
+                    3  # Single-name: last_name_in_url (+2) + org (+1) is acceptable
+                )
+
+                if is_single_name:
+                    threshold = MIN_CONFIDENCE_SCORE_SINGLE_NAME
+                elif name_is_common:
+                    threshold = MIN_CONFIDENCE_SCORE_COMMON_NAME
+                else:
+                    threshold = MIN_CONFIDENCE_SCORE
+
+                # Try candidates in order of score until we find a valid one
+                for candidate_score, candidate_url, matched_kws in candidates:
+                    if candidate_score < threshold:
+                        logger.debug(
+                            f"Remaining candidates below threshold (best: {candidate_url}, score={candidate_score}, threshold={threshold})"
+                        )
+                        break
+
+                    # Ensure we do not validate the same URL twice across query variants
+                    if candidate_url in seen_urls:
+                        logger.debug(
+                            f"Skipping already validated candidate during final check: {candidate_url}"
+                        )
+                        continue
+                    seen_urls.add(candidate_url)
+
+                    # FINAL VALIDATION: Visit the profile page and verify the name
+                    # For lower-confidence matches, also verify company appears on profile
+                    # This catches false positives from lowered thresholds
+                    # For single-name searches, always require company validation
+                    validation_company = (
+                        company if is_single_name or candidate_score < 4 else None
+                    )
+                    # Use validation_first_name/validation_last_name which may differ from search terms
+                    # e.g., for surname-only search "choi", we validate "kyoung-ho choi"
+                    if self._validate_profile_name(
+                        driver,
+                        candidate_url,
+                        validation_first_name,
+                        validation_last_name,
+                        validation_company,
+                        first_name_variants,
+                    ):
+                        logger.info(
+                            f"Found profile via UC Chrome ({query_type} query): {candidate_url} (score={candidate_score}, threshold={threshold})"
+                        )
+                        return candidate_url
+                    else:
+                        logger.debug(
+                            f"Rejecting candidate: {candidate_url} (name/company mismatch)"
+                        )
+                        # Record rejected URL for this name to avoid re-validating this session
+                        if name_key:
+                            self._rejected_profile_cache.setdefault(
+                                name_key, set()
+                            ).add(candidate_url)
+
+                if candidates:
+                    logger.debug(
+                        f"No valid candidate found from {len(candidates)} candidates ({query_type} query)"
+                    )
+                else:
+                    logger.debug(
+                        f"No matching LinkedIn profile found via UC Chrome ({query_type} query)"
+                    )
+
+                # If quoted query found no results, try unquoted (continue to next iteration)
+                if query_type == "quoted" and not candidates:
+                    logger.debug(
+                        "Quoted search found no results, trying unquoted query..."
+                    )
+                    continue
 
         except Exception as e:
             logger.error(f"UC Chrome search error: {e}")
@@ -2432,6 +4003,15 @@ NOT_FOUND"""
                 urn = self.lookup_organization_urn(linkedin_url)
                 company_data[company] = (linkedin_url, slug, urn)
                 self._company_cache[company] = (linkedin_url, slug, urn)
+                # Register this company's LinkedIn URL for canonical name mapping
+                company_norm = self._normalize_org_name(company)
+                if (
+                    linkedin_url
+                    not in LinkedInCompanyLookup._shared_company_url_to_name
+                ):
+                    LinkedInCompanyLookup._shared_company_url_to_name[linkedin_url] = (
+                        company_norm
+                    )
                 companies_found += 1
             else:
                 self._company_cache[company] = None
@@ -2468,6 +4048,31 @@ NOT_FOUND"""
             # ============================================================
             if name:
                 # search_person handles caching internally now
+                # Check cache before logging to avoid misleading "searching" messages
+                name_norm = name.lower().strip()
+                company_norm = company.lower().strip()
+                simple_cache_key = f"{name_norm}@{company_norm}"
+
+                if simple_cache_key in self._person_cache:
+                    cached_url = self._person_cache[simple_cache_key]
+                    if cached_url:
+                        logger.info(
+                            f"Level 1: Cache hit for {name} at {company} -> {cached_url}"
+                        )
+                        person["linkedin_profile"] = cached_url
+                        match = re.search(r"linkedin\.com/in/([\w\-]+)", cached_url)
+                        if match:
+                            person["linkedin_slug"] = match.group(1)
+                        person["linkedin_urn"] = None
+                        person["linkedin_profile_type"] = "personal"
+                        person["match_confidence"] = "high"
+                        continue
+                    else:
+                        logger.debug(
+                            f"Level 1: Cache hit (not found previously) for {name} at {company}"
+                        )
+                        continue  # Skip - we already know this person can't be found
+
                 logger.info(
                     f"Level 1: Searching for personal profile: {name} at {company}"
                 )
@@ -2491,6 +4096,8 @@ NOT_FOUND"""
                     # Personal profiles don't have organization URNs
                     person["linkedin_urn"] = None
                     person["linkedin_profile_type"] = "personal"
+                    # Phase 1: Track match confidence for personal profiles
+                    person["match_confidence"] = "high"
                     continue  # Found personal profile, skip to next person
 
             # ============================================================
@@ -2551,10 +4158,13 @@ NOT_FOUND"""
                     if dept_data[2]:
                         person["linkedin_urn"] = dept_data[2]
                     person["linkedin_profile_type"] = "department"
+                    # Phase 1: Department is medium confidence (not personal profile)
+                    person["match_confidence"] = "medium"
                     continue  # Found department, skip to next person
 
             # ============================================================
             # HIERARCHY LEVEL 3: Fall back to parent organization
+            # Phase 1: This is the org_fallback case from spec Step 3.7
             # ============================================================
             if company in company_data:
                 url, slug, urn = company_data[company]
@@ -2568,6 +4178,11 @@ NOT_FOUND"""
                 if urn:
                     person["linkedin_urn"] = urn
                 person["linkedin_profile_type"] = "organization"
+                # Phase 1: Org fallback is explicit - person works here but no personal profile found
+                person["match_confidence"] = "org_fallback"
+                person["fallback_reason"] = (
+                    f"Could not find personal LinkedIn profile for {name}"
+                )
             else:
                 # ============================================================
                 # HIERARCHY LEVEL 4: Nothing found
@@ -2579,6 +4194,11 @@ NOT_FOUND"""
                 person["linkedin_slug"] = None
                 person["linkedin_urn"] = None
                 person["linkedin_profile_type"] = None
+                # Phase 1: Track rejected status for metrics
+                person["match_confidence"] = "rejected"
+                person["fallback_reason"] = (
+                    f"No LinkedIn profile or org page found for {name} at {company}"
+                )
 
         # Return company_data with just (url, slug) for backwards compatibility
         return_data = {k: (v[0], v[1]) for k, v in company_data.items()}
