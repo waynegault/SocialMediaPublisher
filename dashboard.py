@@ -12,6 +12,7 @@ Features:
 - Historical performance charts
 """
 
+import json
 import logging
 import threading
 from dataclasses import dataclass, asdict
@@ -63,6 +64,9 @@ class DashboardMetrics:
     stories_by_status: dict[str, int] = None  # type: ignore
     daily_activity: list[dict[str, Any]] = None  # type: ignore
 
+    # Phase 3: Enrichment metrics
+    enrichment_stats: dict[str, Any] = None  # type: ignore
+
     def __post_init__(self) -> None:
         if self.stories_by_category is None:
             self.stories_by_category = {}
@@ -70,6 +74,8 @@ class DashboardMetrics:
             self.stories_by_status = {}
         if self.daily_activity is None:
             self.daily_activity = []
+        if self.enrichment_stats is None:
+            self.enrichment_stats = {}
 
 
 # =============================================================================
@@ -594,6 +600,103 @@ class DashboardServer:
             stories = self._get_story_queue()
             return jsonify(stories)
 
+        @self.app.route("/api/dashboard/enrichment")
+        def get_enrichment_stats() -> Any:
+            """Phase 3: Enrichment metrics endpoint."""
+            stats = self.db.get_enrichment_dashboard_stats()
+            return jsonify(stats)
+
+        @self.app.route("/api/dashboard/review")
+        def get_review_queue() -> Any:
+            """Phase 3: Get stories needing manual review."""
+            stories = self.db.get_stories_needing_review(limit=20)
+            return jsonify(
+                [
+                    {
+                        "id": s.id,
+                        "title": s.title,
+                        "enrichment_quality": s.enrichment_quality,
+                        "enrichment_status": s.enrichment_status,
+                        "acquire_date": s.acquire_date.isoformat()
+                        if s.acquire_date
+                        else None,
+                    }
+                    for s in stories
+                ]
+            )
+
+        @self.app.route("/api/dashboard/review/<int:story_id>", methods=["POST"])
+        def mark_reviewed(story_id: int) -> Any:
+            """Phase 3: Mark a story as reviewed."""
+            data = request.get_json() or {}
+            notes = data.get("notes", "")
+            success = self.db.mark_story_reviewed(story_id, notes)
+            return jsonify({"success": success})
+
+        @self.app.route("/api/dashboard/export/<int:story_id>")
+        def export_story(story_id: int) -> Any:
+            """Step 6.5: Export people data for a single story."""
+            from company_mention_enricher import export_story_people
+
+            format = request.args.get("format", "json")
+            story = self.db.get_story(story_id)
+            if not story:
+                return jsonify({"error": "Story not found"}), 404
+
+            data = export_story_people(story, format)
+
+            if format == "csv":
+                return data, 200, {"Content-Type": "text/csv"}
+            elif format == "markdown":
+                return data, 200, {"Content-Type": "text/markdown"}
+            else:
+                return jsonify(json.loads(data))
+
+        @self.app.route("/api/dashboard/export/all")
+        def export_all() -> Any:
+            """Step 6.5: Export all people across all stories."""
+            from company_mention_enricher import export_all_people
+
+            format = request.args.get("format", "json")
+            data = export_all_people(self.db, format)
+
+            if format == "csv":
+                return data, 200, {"Content-Type": "text/csv"}
+            else:
+                return jsonify(json.loads(data))
+
+        @self.app.route("/api/dashboard/alerts")
+        def get_alerts() -> Any:
+            """Step 5.4: Get current enrichment alerts."""
+            from company_mention_enricher import (
+                EnrichmentAlerts,
+                get_enrichment_metrics,
+            )
+
+            alerts = EnrichmentAlerts()
+            metrics = get_enrichment_metrics()
+            alert_list = alerts.check_metrics(metrics)
+            return jsonify({"alerts": alert_list, "count": len(alert_list)})
+
+        @self.app.route("/api/dashboard/refresh-needed")
+        def get_refresh_needed() -> Any:
+            """Step 6.2: Get stories needing refresh."""
+            from company_mention_enricher import get_stories_needing_refresh
+
+            limit = request.args.get("limit", 20, type=int)
+            stories = get_stories_needing_refresh(self.db, limit=limit)
+            return jsonify(
+                [
+                    {
+                        "id": s.id,
+                        "title": s.title,
+                        "enrichment_status": s.enrichment_status,
+                        "enrichment_quality": s.enrichment_quality,
+                    }
+                    for s in stories
+                ]
+            )
+
         @self.app.route("/api/dashboard/status", methods=["POST"])
         def update_status() -> Any:
             data = request.get_json()
@@ -656,6 +759,13 @@ class DashboardServer:
                 "scheduled": len(scheduled),
             }
 
+            # Phase 3: Get enrichment stats
+            try:
+                enrichment_stats = self.db.get_enrichment_dashboard_stats()
+            except Exception as e:
+                logger.warning(f"Failed to get enrichment stats: {e}")
+                enrichment_stats = {}
+
             return DashboardMetrics(
                 total_stories=total,
                 stories_today=stories_today,
@@ -666,6 +776,7 @@ class DashboardServer:
                 approval_rate=approved_count / total if total > 0 else 0,
                 stories_by_category=categories,
                 stories_by_status=statuses,
+                enrichment_stats=enrichment_stats,
             )
 
         except Exception as e:

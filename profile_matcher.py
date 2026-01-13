@@ -44,9 +44,149 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
-from text_utils import COMMON_FIRST_NAMES, CONTEXT_STOPWORDS, build_context_keywords
+from text_utils import (
+    COMMON_FIRST_NAMES,
+    CONTEXT_STOPWORDS,
+    build_context_keywords,
+    is_common_name,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# COMMON NAME THRESHOLDS (Phase 1 - spec Step 3.4)
+# =============================================================================
+
+# Common surname list for stricter matching requirements
+COMMON_LAST_NAMES: frozenset[str] = frozenset(
+    {
+        "smith",
+        "johnson",
+        "williams",
+        "brown",
+        "jones",
+        "garcia",
+        "miller",
+        "davis",
+        "rodriguez",
+        "martinez",
+        "hernandez",
+        "lopez",
+        "gonzalez",
+        "wilson",
+        "anderson",
+        "thomas",
+        "taylor",
+        "moore",
+        "jackson",
+        "martin",
+        "lee",
+        "thompson",
+        "white",
+        "harris",
+        "sanchez",
+        "clark",
+        "lewis",
+        "robinson",
+        "walker",
+        "young",
+        "allen",
+        "king",
+        "wright",
+        "scott",
+        "torres",
+        "nguyen",
+        "hill",
+        "flores",
+        "green",
+        "adams",
+        "nelson",
+        "baker",
+        "hall",
+        "rivera",
+        "campbell",
+        "mitchell",
+        "carter",
+        "roberts",
+        "chen",
+        "wang",
+        "kim",
+        "li",
+        "zhang",
+        "liu",
+        "singh",
+        "kumar",
+        "patel",
+    }
+)
+
+
+def get_required_signals(first_name: str, last_name: str) -> int:
+    """Return minimum positive signals needed for common names.
+
+    This is a HARD THRESHOLD, not a scoring penalty.
+    If a candidate doesn't meet this threshold, reject regardless of score.
+
+    Phase 1 Implementation (spec Step 3.4):
+    - Very Common (both first AND last are common): Need 3 signals (org + title + location)
+    - Common (only first name is common): Need 2 signals (org + one more)
+    - Uncommon: Need 1 signal (org match is enough)
+
+    Args:
+        first_name: Person's first name
+        last_name: Person's last name
+
+    Returns:
+        Minimum number of significant positive signals required
+    """
+    first_lower = first_name.lower().strip() if first_name else ""
+    last_lower = last_name.lower().strip() if last_name else ""
+
+    # Check if both first and last are common (highest risk)
+    first_is_common = first_lower in COMMON_FIRST_NAMES
+    last_is_common = last_lower in COMMON_LAST_NAMES
+
+    if first_is_common and last_is_common:
+        # Very common: "John Smith", "Mary Johnson" - need org + title + location
+        return 3
+    elif first_is_common:
+        # Common first name: "John Chen", "Mary Wang" - need org + one more
+        return 2
+    else:
+        # Uncommon: "Xiaoying Zhang", "Sanjay Gupta" - org match is enough
+        return 1
+
+
+def meets_common_name_threshold(
+    candidate_signals: list,
+    first_name: str,
+    last_name: str,
+    min_signal_weight: float = 1.0,
+) -> tuple[bool, str]:
+    """Check if candidate meets minimum signal threshold for common names.
+
+    Args:
+        candidate_signals: List of MatchSignal objects with positive signals
+        first_name: Person's first name
+        last_name: Person's last name
+        min_signal_weight: Minimum weight for a signal to count (default 1.0)
+
+    Returns:
+        Tuple of (passes_threshold, reason_if_failed)
+    """
+    required = get_required_signals(first_name, last_name)
+
+    # Count significant positive signals
+    signals_present = sum(1 for s in candidate_signals if s.weight >= min_signal_weight)
+
+    if signals_present < required:
+        return (
+            False,
+            f"Common name '{first_name} {last_name}' needs {required} signals, "
+            f"only has {signals_present}",
+        )
+    return True, ""
 
 
 class RoleType(str, Enum):
@@ -216,6 +356,201 @@ class ProfileMatchResult:
         )
 
 
+# =============================================================================
+# EXCLUSION CRITERIA EVALUATOR (Phase 1 - spec Step 3.4)
+# =============================================================================
+
+
+@dataclass
+class ExclusionResult:
+    """Result of exclusion criteria evaluation for a profile candidate.
+
+    Phase 1 Implementation (spec Step 3.4):
+    Evaluates whether a candidate should be REJECTED based on definite mismatches.
+    Any exclusion trigger = immediate rejection regardless of positive signals.
+    """
+
+    rejected: bool = False
+    reasons: list[str] = field(default_factory=list)
+    triggered_criteria: list[str] = field(default_factory=list)
+
+
+# Extended wrong field indicators for stricter exclusion
+EXCLUSION_WRONG_FIELD_PATTERNS: dict[str, list[str]] = {
+    # If expecting academic/researcher, reject these professions entirely
+    "academic": [
+        "real estate",
+        "realtor",
+        "realty",
+        "property agent",
+        "insurance agent",
+        "insurance broker",
+        "life insurance",
+        "car sales",
+        "auto sales",
+        "automotive sales",
+        "mortgage broker",
+        "loan officer",
+        "network marketing",
+        "mlm",
+        "direct sales",
+        "fitness trainer",
+        "personal trainer",
+        "gym",
+        "hair stylist",
+        "beauty salon",
+        "nail technician",
+        "wedding planner",
+        "event planner",
+        "travel agent",
+        "tourism",
+        "life coach",
+        "motivational speaker",
+    ],
+    "researcher": [
+        "real estate",
+        "realtor",
+        "realty",
+        "retail sales",
+        "store manager",
+        "food service",
+        "restaurant",
+        "hospitality",
+        "beauty salon",
+        "cosmetology",
+        "network marketing",
+        "mlm",
+    ],
+    "executive": [
+        "student",
+        "intern",
+        "internship",
+        "entry level",
+        "junior developer",
+        "trainee",
+        "assistant",
+        "receptionist",
+    ],
+    "engineer": [
+        "real estate",
+        "realtor",
+        "insurance agent",
+        "network marketing",
+        "mlm",
+        "life coach",
+        "wellness coach",
+    ],
+}
+
+# Career stage mismatch patterns
+CAREER_STAGE_CONFLICTS: dict[str, list[str]] = {
+    # If expecting senior roles, reject junior indicators
+    "senior": [
+        "student",
+        "intern",
+        "internship",
+        "entry level",
+        "junior",
+        "trainee",
+        "recent graduate",
+        "fresh graduate",
+        "looking for opportunities",
+    ],
+    # If expecting academic faculty, reject student indicators
+    "faculty": [
+        "phd student",
+        "doctoral student",
+        "graduate student",
+        "masters student",
+        "postdoc seeking",
+        "aspiring professor",
+    ],
+}
+
+
+def evaluate_exclusion_criteria(
+    result_text: str,
+    person_role_type: str,
+    person_organization: str,
+    person_location: str = "",
+    is_senior_role: bool = False,
+) -> ExclusionResult:
+    """
+    Evaluate whether a profile candidate should be REJECTED.
+
+    Phase 1 Implementation (spec Step 3.4):
+    Any exclusion trigger = immediate rejection, confidence = 0.
+
+    Exclusion Criteria:
+    1. Wrong Profession/Field - Profile shows unrelated profession
+    2. Geographic Mismatch - Different country/continent
+    3. Employer Contradiction - Direct competitor or unrelated employer
+    4. Career Stage Mismatch - Junior vs senior role expectation
+
+    Args:
+        result_text: Lowercase text from search result (title + snippet)
+        person_role_type: Expected role type (academic, researcher, executive, etc.)
+        person_organization: Expected organization
+        person_location: Expected location (optional)
+        is_senior_role: Whether the expected role is senior-level
+
+    Returns:
+        ExclusionResult with rejection decision and reasons
+    """
+    result = ExclusionResult()
+    result_lower = result_text.lower()
+
+    # --- 1. Wrong Profession/Field ---
+    role_key = person_role_type.lower() if person_role_type else "other"
+    wrong_field_patterns = EXCLUSION_WRONG_FIELD_PATTERNS.get(role_key, [])
+
+    for pattern in wrong_field_patterns:
+        if pattern in result_lower:
+            result.rejected = True
+            result.triggered_criteria.append("wrong_field")
+            result.reasons.append(
+                f"Wrong field detected: '{pattern}' (expected {role_key})"
+            )
+            logger.debug(f"Exclusion: wrong field '{pattern}' for {role_key}")
+            break  # One wrong field is enough to reject
+
+    # --- 2. Career Stage Mismatch ---
+    if is_senior_role or role_key in ["executive", "academic"]:
+        stage_patterns = CAREER_STAGE_CONFLICTS.get("senior", [])
+        if role_key == "academic":
+            stage_patterns = stage_patterns + CAREER_STAGE_CONFLICTS.get("faculty", [])
+
+        for pattern in stage_patterns:
+            if pattern in result_lower:
+                # Check if they also have the expected org (might be alumni)
+                org_lower = person_organization.lower() if person_organization else ""
+                org_present = org_lower and org_lower in result_lower
+
+                if not org_present:
+                    result.rejected = True
+                    result.triggered_criteria.append("career_stage_mismatch")
+                    result.reasons.append(
+                        f"Career stage mismatch: '{pattern}' (expected senior role)"
+                    )
+                    logger.debug(f"Exclusion: career stage '{pattern}' for senior role")
+                    break
+
+    # --- 3. Profile Quality Issues (multiple weak signals) ---
+    quality_issues = []
+    if "open to work" in result_lower and "hiring" not in result_lower:
+        quality_issues.append("actively job seeking")
+    if "aspiring" in result_lower or "future" in result_lower:
+        quality_issues.append("aspirational role")
+
+    # Only reject on quality issues if combined with other weak signals
+    if len(quality_issues) >= 2:
+        result.rejected = True
+        result.triggered_criteria.append("quality_issues")
+        result.reasons.append(f"Profile quality issues: {', '.join(quality_issues)}")
+
+    return result
+
+
 class ProfileMatcher:
     """
     High-precision LinkedIn profile matching engine.
@@ -329,6 +664,11 @@ class ProfileMatcher:
         Applies positive and negative signals based on matching/contradicting
         information in the search result.
 
+        Phase 1 Enhancement:
+        - Runs exclusion criteria FIRST (any exclusion = immediate reject)
+        - Applies common name threshold checks
+        - Falls back to org profile if rejected
+
         Args:
             candidate: The profile candidate to score
             person: The person context to match against
@@ -343,6 +683,33 @@ class ProfileMatcher:
         name_parts = name_clean.split()
         first_name = name_parts[0] if name_parts else ""
         last_name = name_parts[-1] if len(name_parts) >= 2 else first_name
+
+        # === PHASE 1: EXCLUSION CRITERIA CHECK (spec Step 3.4) ===
+        # Any exclusion = immediate reject with score 0
+        is_senior = person.role_type in [RoleType.EXECUTIVE, RoleType.ACADEMIC]
+        exclusion_result = evaluate_exclusion_criteria(
+            result_text=result_text,
+            person_role_type=person.role_type.value if person.role_type else "",
+            person_organization=person.organization,
+            person_location=person.location,
+            is_senior_role=is_senior,
+        )
+
+        if exclusion_result.rejected:
+            # Add rejection signals and return with 0 score
+            for reason in exclusion_result.reasons:
+                candidate.negative_signals.append(
+                    MatchSignal(
+                        "exclusion_criteria",
+                        -10.0,  # Heavy penalty to ensure rejection
+                        reason,
+                    )
+                )
+            candidate.confidence_score = 0.0
+            logger.debug(
+                f"Candidate rejected by exclusion criteria: {exclusion_result.reasons}"
+            )
+            return candidate
 
         # === POSITIVE SIGNALS ===
 
@@ -528,20 +895,24 @@ class ProfileMatcher:
                         )
                         break
 
-        # Common name without strong signals
-        if (
-            first_name.lower() in self.COMMON_NAMES
-            or last_name.lower() in self.COMMON_NAMES
-        ):
-            positive_count = len(candidate.positive_signals)
-            if positive_count <= 1:  # Just name match isn't enough
-                candidate.negative_signals.append(
-                    MatchSignal(
-                        "common_name_weak",
-                        self.WEIGHT_COMMON_NAME_NO_SIGNALS,
-                        f"Common name ({person.name}) with insufficient signals",
-                    )
+        # === PHASE 1: COMMON NAME THRESHOLD CHECK (spec Step 3.4) ===
+        # For common names, require minimum number of positive signals
+        passes_threshold, threshold_reason = meets_common_name_threshold(
+            candidate_signals=candidate.positive_signals,
+            first_name=first_name,
+            last_name=last_name,
+            min_signal_weight=1.0,
+        )
+
+        if not passes_threshold:
+            candidate.negative_signals.append(
+                MatchSignal(
+                    "common_name_threshold",
+                    -5.0,  # Significant penalty for common name without enough signals
+                    threshold_reason,
                 )
+            )
+            logger.debug(f"Common name threshold not met: {threshold_reason}")
 
         # Calculate final score
         candidate.confidence_score = candidate.total_score()

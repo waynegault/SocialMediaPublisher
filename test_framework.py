@@ -12,6 +12,8 @@ from typing import Any, Callable, Generator, Optional
 class TestResult:
     """Result of a single test execution."""
 
+    __test__ = False  # Prevent pytest from collecting this helper class
+
     name: str
     passed: bool
     duration_ms: float = 0.0
@@ -40,6 +42,8 @@ class SuiteResult:
 
 class TestSuite:
     """Structured test suite with formatted output."""
+
+    __test__ = False  # Prevent pytest from collecting this helper class
 
     def __init__(self, name: str = "Test Suite") -> None:
         """Initialize a test suite with the given name."""

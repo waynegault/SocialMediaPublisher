@@ -1177,6 +1177,14 @@ class StorySearcher:
             logger.warning("No stories remain after date filtering")
             return 0
 
+        # Enforce MAX_STORIES_PER_SEARCH limit (LLMs don't always follow instructions)
+        max_stories = Config.MAX_STORIES_PER_SEARCH
+        if len(stories_data) > max_stories:
+            logger.info(
+                f"Limiting stories from {len(stories_data)} to {max_stories} (MAX_STORIES_PER_SEARCH)"
+            )
+            stories_data = stories_data[:max_stories]
+
         # Save new stories to database
         new_count = self._save_stories(stories_data)
 
@@ -1489,11 +1497,35 @@ class StorySearcher:
                 if isinstance(story_people_raw, list):
                     # Validate and normalize each person entry with enhanced fields
                     validated_people = []
+                    # Define placeholder/invalid name patterns to filter out
+                    invalid_names = {
+                        "tba",
+                        "tbd",
+                        "unknown",
+                        "n/a",
+                        "none",
+                        "placeholder",
+                        "",
+                    }
+
                     for person in story_people_raw:
                         if isinstance(person, dict) and person.get("name"):
+                            name = str(person.get("name", "")).strip()
+                            # Skip placeholder names and names that are too short
+                            name_lower = name.lower()
+                            if name_lower in invalid_names or len(name) < 3:
+                                logger.debug(
+                                    f"Skipping invalid/placeholder name: {name}"
+                                )
+                                continue
+                            # Skip names that look incomplete (single word with no title context)
+                            if " " not in name and not person.get("position"):
+                                logger.debug(f"Skipping incomplete name: {name}")
+                                continue
+
                             validated_people.append(
                                 {
-                                    "name": str(person.get("name", "")).strip(),
+                                    "name": name,
                                     "company": str(person.get("company", "")).strip(),
                                     "position": str(person.get("position", "")).strip(),
                                     "department": str(
@@ -1528,6 +1560,7 @@ class StorySearcher:
                     hashtags=hashtags,
                     organizations=organizations,
                     story_people=story_people,  # Store in story_people (new primary field)
+                    direct_people=story_people,  # Canonical direct people list
                 )
 
                 self.db.add_story(story)

@@ -18,7 +18,7 @@ import functools
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional, TypeVar, ParamSpec
 
 logger = logging.getLogger(__name__)
@@ -463,6 +463,262 @@ class ConcurrentProcessor:
 
         results = await asyncio.gather(*tasks)
         return list(results)
+
+
+# =============================================================================
+# Batch Enrichment Processor (Phase 2)
+# =============================================================================
+
+
+@dataclass
+class EnrichmentResult:
+    """Result of enriching a single story."""
+
+    story_id: int
+    success: bool
+    people_matched: int = 0
+    people_total: int = 0
+    high_confidence: int = 0
+    org_fallback: int = 0
+    rejected: int = 0
+    duration_ms: float = 0.0
+    error: Optional[str] = None
+    enrichment_log: dict = field(default_factory=dict)
+
+
+@dataclass
+class BatchEnrichmentStats:
+    """Aggregate stats for a batch enrichment run."""
+
+    stories_processed: int = 0
+    stories_succeeded: int = 0
+    stories_failed: int = 0
+    total_people: int = 0
+    total_matched: int = 0
+    high_confidence: int = 0
+    org_fallback: int = 0
+    rejected: int = 0
+    total_duration_ms: float = 0.0
+    api_calls: int = 0
+    cache_hits: int = 0
+
+    @property
+    def match_rate(self) -> float:
+        """Calculate overall match rate."""
+        if self.total_people == 0:
+            return 0.0
+        return self.total_matched / self.total_people
+
+    @property
+    def high_confidence_rate(self) -> float:
+        """Calculate high-confidence match rate."""
+        if self.total_matched == 0:
+            return 0.0
+        return self.high_confidence / self.total_matched
+
+    def to_log_dict(self) -> dict:
+        """Convert to dict for logging."""
+        return {
+            "stories_processed": self.stories_processed,
+            "stories_succeeded": self.stories_succeeded,
+            "stories_failed": self.stories_failed,
+            "total_people": self.total_people,
+            "total_matched": self.total_matched,
+            "match_rate": f"{self.match_rate:.1%}",
+            "high_confidence": self.high_confidence,
+            "high_confidence_rate": f"{self.high_confidence_rate:.1%}",
+            "org_fallback": self.org_fallback,
+            "rejected": self.rejected,
+            "duration_ms": self.total_duration_ms,
+            "api_calls": self.api_calls,
+            "cache_hits": self.cache_hits,
+        }
+
+
+class BatchEnrichmentProcessor:
+    """Process multiple stories with controlled concurrency and caching.
+
+    Phase 2 implementation per spec Step 6.1:
+    - Controlled concurrency for stories and validations
+    - Deduplication of validation requests across stories
+    - Caching of organization leadership
+    - High-priority story processing
+    """
+
+    def __init__(
+        self,
+        max_concurrent_stories: int = 3,
+        max_concurrent_validations: int = 5,
+        rate_limit_per_second: float = 1.0,
+    ) -> None:
+        """Initialize the batch processor.
+
+        Args:
+            max_concurrent_stories: Max stories to process in parallel
+            max_concurrent_validations: Max validation calls per story
+            rate_limit_per_second: Rate limit for API calls
+        """
+        self.max_concurrent_stories = max_concurrent_stories
+        self.max_concurrent_validations = max_concurrent_validations
+        self.rate_limit_per_second = rate_limit_per_second
+
+        # Validation cache: (person_name, org) -> validation_result
+        self._validation_cache: dict[str, dict] = {}
+
+        # Organization leadership cache: org_name -> [leaders]
+        self._org_leadership_cache: dict[str, list[dict]] = {}
+
+        # Stats tracking
+        self._stats = BatchEnrichmentStats()
+        self._semaphore: Optional[asyncio.Semaphore] = None
+
+    def _cache_key(self, name: str, org: str) -> str:
+        """Generate cache key for person validation."""
+        return f"{name.lower().strip()}@{org.lower().strip()}"
+
+    def get_cached_validation(self, name: str, org: str) -> Optional[dict]:
+        """Get cached validation result if available."""
+        key = self._cache_key(name, org)
+        if key in self._validation_cache:
+            self._stats.cache_hits += 1
+            return self._validation_cache[key]
+        return None
+
+    def cache_validation(self, name: str, org: str, result: dict) -> None:
+        """Cache a validation result."""
+        key = self._cache_key(name, org)
+        self._validation_cache[key] = result
+
+    def get_cached_org_leaders(self, org: str) -> Optional[list[dict]]:
+        """Get cached org leaders if available."""
+        key = org.lower().strip()
+        if key in self._org_leadership_cache:
+            self._stats.cache_hits += 1
+            return self._org_leadership_cache[key]
+        return None
+
+    def cache_org_leaders(self, org: str, leaders: list[dict]) -> None:
+        """Cache organization leaders."""
+        key = org.lower().strip()
+        self._org_leadership_cache[key] = leaders
+
+    async def process_story(
+        self,
+        story: Any,
+        enrich_func: Callable[[Any], Awaitable[EnrichmentResult]],
+    ) -> EnrichmentResult:
+        """Process a single story with rate limiting.
+
+        Args:
+            story: Story object to process
+            enrich_func: Async function that performs enrichment
+
+        Returns:
+            EnrichmentResult with outcome details
+        """
+        import time
+
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(self.max_concurrent_stories)
+
+        async with self._semaphore:
+            # Apply rate limiting
+            await asyncio.sleep(1.0 / self.rate_limit_per_second)
+
+            start = time.perf_counter()
+            self._stats.api_calls += 1
+
+            try:
+                result = await enrich_func(story)
+                duration = (time.perf_counter() - start) * 1000
+                result.duration_ms = duration
+
+                # Update stats
+                self._stats.stories_processed += 1
+                if result.success:
+                    self._stats.stories_succeeded += 1
+                else:
+                    self._stats.stories_failed += 1
+
+                self._stats.total_people += result.people_total
+                self._stats.total_matched += result.people_matched
+                self._stats.high_confidence += result.high_confidence
+                self._stats.org_fallback += result.org_fallback
+                self._stats.rejected += result.rejected
+                self._stats.total_duration_ms += duration
+
+                return result
+
+            except Exception as e:
+                duration = (time.perf_counter() - start) * 1000
+                self._stats.stories_failed += 1
+                self._stats.total_duration_ms += duration
+
+                logger.error(f"Error enriching story {getattr(story, 'id', '?')}: {e}")
+                return EnrichmentResult(
+                    story_id=getattr(story, "id", 0),
+                    success=False,
+                    error=str(e),
+                    duration_ms=duration,
+                )
+
+    async def process_batch(
+        self,
+        stories: list[Any],
+        enrich_func: Callable[[Any], Awaitable[EnrichmentResult]],
+        priority_func: Optional[Callable[[Any], int]] = None,
+    ) -> list[EnrichmentResult]:
+        """Process multiple stories with controlled concurrency.
+
+        Args:
+            stories: List of Story objects to process
+            enrich_func: Async function that performs enrichment
+            priority_func: Optional function to get priority (higher = first)
+
+        Returns:
+            List of EnrichmentResult for each story
+        """
+        # Sort by priority if provided (higher priority first)
+        if priority_func:
+            stories = sorted(stories, key=priority_func, reverse=True)
+
+        # Process all stories concurrently (semaphore controls actual concurrency)
+        tasks = [self.process_story(story, enrich_func) for story in stories]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Convert exceptions to EnrichmentResult
+        final_results: list[EnrichmentResult] = []
+        for i, result in enumerate(results):
+            if isinstance(result, BaseException):
+                final_results.append(
+                    EnrichmentResult(
+                        story_id=getattr(stories[i], "id", 0),
+                        success=False,
+                        error=str(result),
+                    )
+                )
+            else:
+                final_results.append(result)  # type: ignore[arg-type]
+
+        return final_results
+
+    def get_stats(self) -> BatchEnrichmentStats:
+        """Get current batch processing stats."""
+        return self._stats
+
+    def reset_stats(self) -> None:
+        """Reset stats for a new batch run."""
+        self._stats = BatchEnrichmentStats()
+
+    def clear_cache(self) -> None:
+        """Clear all caches."""
+        self._validation_cache.clear()
+        self._org_leadership_cache.clear()
+
+    def log_stats(self) -> None:
+        """Log current stats summary."""
+        stats = self._stats.to_log_dict()
+        logger.info(f"BATCH_ENRICHMENT: {stats}")
 
 
 # =============================================================================
