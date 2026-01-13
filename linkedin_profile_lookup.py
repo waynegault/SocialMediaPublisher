@@ -574,6 +574,50 @@ class LinkedInCompanyLookup:
         "retired",
     }
 
+    # === INVALID ORG NAME PATTERNS (regex patterns to skip) ===
+    # These patterns indicate the text is likely a headline or description, not an org
+    _INVALID_ORG_PATTERNS: list[str] = [
+        r"^new\s+",  # Headlines often start with "New ..."
+        r"smash",  # "Smashes", "Smashing" - headline verbs
+        r"breakthrough",
+        r"discover",
+        r"announc",  # "Announces", "Announced"
+        r"reveal",
+        r"launch",
+        r"unveil",
+        r"develop",
+        r"creat",  # "Creates", "Created"
+        r"powered",  # "Gold-Powered" etc.
+        r"benchmark",
+        r"record",
+        r"-old\b",  # "decade-old", "year-old"
+    ]
+
+    # === INVALID PERSON NAMES (skip searching for these) ===
+    # Generic placeholders that aren't actual person names
+    _INVALID_PERSON_NAMES: set[str] = {
+        "individual researcher",
+        "researcher",
+        "professor",
+        "scientist",
+        "engineer",
+        "author",
+        "contributor",
+        "correspondent",
+        "editor",
+        "staff",
+        "staff writer",
+        "team",
+        "research team",
+        "anonymous",
+        "unknown",
+        "n/a",
+        "none",
+        "various",
+        "multiple authors",
+        "et al",
+    }
+
     # === CLASS-LEVEL CACHES (shared across all instances and steps) ===
     # Cache person search results - Key: "name@canonical_company" -> URL or None
     _shared_person_cache: dict[str, Optional[str]] = {}
@@ -984,6 +1028,76 @@ class LinkedInCompanyLookup:
         if len(norm) <= 2 and norm not in self._ORG_ALIASES:
             logger.debug(f"Skipping too-short org name: '{org_name}'")
             return False
+
+        # Check against regex patterns (headlines, action verbs, etc.)
+        for pattern in self._INVALID_ORG_PATTERNS:
+            if re.search(pattern, norm, re.IGNORECASE):
+                logger.debug(
+                    f"Skipping org matching invalid pattern: '{org_name}' (pattern: {pattern})"
+                )
+                return False
+
+        return True
+
+    def _is_valid_person_name(self, name: str) -> bool:
+        """Check if a person name is valid for searching.
+
+        Filters out:
+        - Generic placeholders like "Individual Researcher", "Staff Writer"
+        - Role descriptions that aren't actual names
+        - Very short names (likely parsing errors)
+
+        Args:
+            name: Person name to validate
+
+        Returns:
+            True if the name appears to be a real person's name
+        """
+        if not name:
+            return False
+
+        # Normalize for checking
+        norm = name.lower().strip()
+
+        # Check against known invalid person names
+        if norm in self._INVALID_PERSON_NAMES:
+            logger.debug(f"Skipping invalid person name: '{name}' (in blocklist)")
+            return False
+
+        # Very short names (< 3 chars) are likely errors
+        if len(norm) < 3:
+            logger.debug(f"Skipping too-short person name: '{name}'")
+            return False
+
+        # Names with only one word that's a common role/title are invalid
+        words = norm.split()
+        if len(words) == 1:
+            role_words = {
+                "researcher",
+                "professor",
+                "scientist",
+                "engineer",
+                "doctor",
+                "author",
+                "editor",
+                "correspondent",
+                "writer",
+                "contributor",
+                "analyst",
+                "manager",
+                "director",
+                "head",
+                "lead",
+                "chief",
+                "staff",
+                "team",
+                "group",
+                "anonymous",
+                "unknown",
+            }
+            if norm in role_words:
+                logger.debug(f"Skipping single-word role as name: '{name}'")
+                return False
 
         return True
 
@@ -2060,6 +2174,12 @@ NOT_FOUND"""
             LinkedIn profile URL if found, None otherwise
         """
         if not name or not company:
+            return None
+
+        # === Validate person name before searching ===
+        # Skip invalid names like "Individual Researcher", "Staff Writer", etc.
+        if not self._is_valid_person_name(name):
+            logger.info(f"Skipping invalid person name: '{name}'")
             return None
 
         # Clean optional parameters - filter out empty strings and literal "None"
