@@ -462,6 +462,7 @@ class ImageGenerator:
             logger.debug(f"Prompt ({len(prompt.split())} words): {prompt[:200]}...")
 
             max_retries = 3
+            response = None
             for attempt in range(max_retries):
                 response = api_client.imagen_generate(
                     client=self.client,
@@ -496,6 +497,8 @@ class ImageGenerator:
                     return None
 
             # Get image data and apply watermark
+            if response is None or not response.generated_images:
+                return None
             image_data = response.generated_images[0].image.image_bytes
             if image_data:
                 from io import BytesIO

@@ -22,7 +22,7 @@ from database import Database
 from searcher import StorySearcher
 from image_generator import ImageGenerator
 from verifier import ContentVerifier
-from company_mention_enricher import CompanyMentionEnricher
+from company_mention_enricher import CompanyMentionEnricher, get_validation_cache
 from scheduler import Scheduler
 from linkedin_publisher import LinkedInPublisher
 
@@ -33,6 +33,39 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+# Suppress noisy third-party loggers
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("google_genai.models").setLevel(logging.WARNING)
+logging.getLogger("google.genai.models").setLevel(logging.WARNING)
+logging.getLogger("undetected_chromedriver").setLevel(logging.WARNING)
+logging.getLogger("undetected_chromedriver.patcher").setLevel(logging.WARNING)
+logging.getLogger("selenium").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+
+# =============================================================================
+# PHASE 1: FEATURE FLAGS FOR INCREMENTAL ROLLOUT
+# =============================================================================
+# Environment variable controls for new enrichment pipeline
+# Values: "false" (default/old), "shadow" (run both, compare), "true" (new only)
+USE_NEW_ENRICHMENT_PIPELINE = os.environ.get("USE_NEW_ENRICHMENT", "false").lower()
+
+# Phase 2: Enable batch processing with concurrency control
+# Values: "true" to enable, "false" (default) for sequential processing
+USE_BATCH_PROCESSING = os.environ.get("USE_BATCH_PROCESSING", "false").lower() == "true"
+
+# Log the active pipeline mode at startup (only in main process, not multiprocessing children)
+if __name__ == "__main__" or os.environ.get("_LOGGED_PIPELINE_MODE") != "1":
+    os.environ["_LOGGED_PIPELINE_MODE"] = "1"
+    if USE_NEW_ENRICHMENT_PIPELINE == "shadow":
+        logger.info("PHASE 1: Running in SHADOW mode - comparing old vs new pipeline")
+    elif USE_NEW_ENRICHMENT_PIPELINE == "true":
+        logger.info("PHASE 1: Using NEW enrichment pipeline")
+
+if USE_BATCH_PROCESSING:
+    logger.info("PHASE 2: Batch processing ENABLED")
 
 
 class ContentEngine:
@@ -189,6 +222,17 @@ class ContentEngine:
             logger.info("Step 2: Enriching with company mentions...")
             enriched, skipped = self.enricher.enrich_pending_stories()
             logger.info(f"Enrichment: {enriched} enriched, {skipped} skipped")
+
+            # Step 2b: Find organization leaders (indirect mentions)
+            logger.info("Step 2b: Finding organization leaders...")
+            leaders_enriched, leaders_skipped = self.enricher.find_org_leaders()
+            logger.info(
+                f"Org leaders: {leaders_enriched} enriched, {leaders_skipped} skipped"
+            )
+
+            # Phase 2: Log validation cache stats
+            cache_stats = get_validation_cache().get_stats()
+            logger.info(f"CACHE_STATS: {cache_stats}")
 
             # Step 3: Generate images
             logger.info("Step 3: Generating images...")
@@ -503,6 +547,8 @@ Social Media Publisher - Debug Menu
 
   Danger Zone:
    37. Reset (delete database and images)
+   38. Configure LinkedIn Voyager API Cookies
+   39. Configure RapidAPI Key (LinkedIn Lookups)
 
    0. Exit
 ============================================================
@@ -604,6 +650,10 @@ Social Media Publisher - Debug Menu
         # Danger Zone
         elif choice == "37":
             _reset_all(engine)
+        elif choice == "38":
+            _configure_linkedin_voyager()
+        elif choice == "39":
+            _configure_rapidapi_key()
         else:
             print("Invalid choice. Please try again.")
 
@@ -619,6 +669,7 @@ def _test_search(engine: ContentEngine) -> None:
     print(f"Search prompt: {Config.SEARCH_PROMPT[:80]}...")
     print(f"Lookback days: {Config.SEARCH_LOOKBACK_DAYS}")
     print(f"Use last checked date: {Config.USE_LAST_CHECKED_DATE}")
+    print(f"Max stories per search: {Config.MAX_STORIES_PER_SEARCH}")
 
     try:
         start_date = engine.searcher.get_search_start_date()
@@ -643,27 +694,28 @@ def _test_search(engine: ContentEngine) -> None:
                 for row in sorted(rows, key=lambda r: r[2], reverse=True):
                     print(f"  - [{row[0]}] {row[1][:60]}... (Score: {row[2]})")
 
-        # Step 2: Find organization leaders (CEOs, heads of labs, recruitment managers, etc.)
-        print(
-            "\n[Step 2/6] Finding organization leaders (CEOs, lab heads, recruiters)..."
-        )
-        _run_org_leaders_enrichment_silent(engine)
+        # Step 2: Direct/indirect people + LinkedIn profiles
+        print("\n[Step 2/5] Extracting direct/indirect people and LinkedIn profiles...")
+        enriched, skipped = engine.enricher.enrich_pending_stories()
+        print(f"  → Enriched {enriched} stories, skipped {skipped}")
 
-        # Step 3: Find LinkedIn profiles for all people needing them
-        print("\n[Step 3/6] Finding LinkedIn profiles...")
-        _run_profile_lookup_silent(engine)
-
-        # Step 4: Extract URNs for @mentions
-        print("\n[Step 4/6] Extracting LinkedIn URNs for @mentions...")
+        # Step 3: Extract URNs for @mentions
+        print("\n[Step 3/5] Extracting LinkedIn URNs for @mentions...")
         _run_urn_extraction_silent(engine)
 
-        # Step 5: Assign promotion messages
-        print("\n[Step 5/6] Assigning promotion messages...")
+        # Step 4: Assign promotion messages
+        print("\n[Step 4/5] Assigning promotion messages...")
         _run_promotion_assignment_silent(engine)
 
-        # Step 6: Mark stories as enriched
-        print("\n[Step 6/6] Marking stories as enriched...")
+        # Step 5: Mark stories as enriched
+        print("\n[Step 5/5] Marking stories as enriched...")
         _mark_stories_enriched(engine)
+
+        # Show detailed story information
+        print("\n" + "=" * 60)
+        print("Detailed Story Results")
+        print("=" * 60)
+        log_story_details(engine)
 
         # Show summary
         print("\n" + "=" * 60)
@@ -1484,6 +1536,9 @@ def _lookup_linkedin_profiles_for_people(
                 profiles_found = sum(1 for p in all_people if p.get("linkedin_profile"))
                 print(f"  ✓ Found profiles for {profiles_found} people")
 
+                # Log per-story baseline metrics (Phase 0 instrumentation)
+                _log_story_enrichment_metrics(story, context="after_profile_lookup")
+
                 # Show what was found
                 for company, (url, slug) in all_company_data.items():
                     slug_display = f" (slug: {slug})" if slug else ""
@@ -1588,6 +1643,23 @@ def _lookup_linkedin_profiles_for_people(
             f"({gemini_stats['success_rate']}%)"
         )
 
+    # Log baseline metrics for this batch (Phase 0 instrumentation)
+    total_processed = len(people_with_profiles) + len(people_without_profiles)
+    match_rate = (
+        len(people_with_profiles) / total_processed * 100 if total_processed > 0 else 0
+    )
+    logger.info(
+        f"BASELINE:profile_lookup_batch "
+        f"stories_processed={len(stories)} "
+        f"stories_updated={stories_updated} "
+        f"total_people={total_processed} "
+        f"with_linkedin={len(people_with_profiles)} "
+        f"without_linkedin={len(people_without_profiles)} "
+        f"match_rate={match_rate:.1f}% "
+        f"companies_found={total_companies_found} "
+        f"companies_not_found={total_companies_not_found}"
+    )
+
 
 def _test_enrichment(engine: ContentEngine) -> None:
     """LinkedIn Profile Enrichment - finds profiles and populates URNs."""
@@ -1672,9 +1744,342 @@ def _test_enrichment(engine: ContentEngine) -> None:
     _show_enrichment_summary(engine)
 
 
+# =============================================================================
+# PHASE 0: BASELINE METRICS INSTRUMENTATION
+# These functions log enrichment metrics to establish baseline performance
+# before any pipeline changes. Collect 1 week of data before Phase 1.
+# =============================================================================
+
+
+def log_enrichment_baseline_metrics(engine: ContentEngine) -> dict:
+    """
+    Log comprehensive enrichment metrics for baseline measurement.
+
+    This function captures the current state of enrichment quality to establish
+    baseline metrics BEFORE any pipeline changes are made. Run for 1 week to
+    collect sufficient data for comparison.
+
+    Metrics logged (searchable via BASELINE: prefix):
+    - linkedin_match_rate: % of people with valid LinkedIn profiles
+    - high_confidence_rate: % of matches marked as high confidence
+    - zero_match_stories: % of stories with no LinkedIn profiles found
+    - urn_extraction_rate: % of profiles with URNs for @mentions
+
+    Returns:
+        dict with all computed metrics for programmatic access
+    """
+    import json as json_module
+    from datetime import datetime
+
+    with engine.db._get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get stories with people/leaders for analysis
+        cursor.execute("""
+            SELECT id, title, story_people, org_leaders, organizations, enrichment_quality
+            FROM stories
+            WHERE (story_people IS NOT NULL AND story_people != '[]')
+               OR (org_leaders IS NOT NULL AND org_leaders != '[]')
+               OR (organizations IS NOT NULL AND organizations != '[]')
+        """)
+        rows = cursor.fetchall()
+
+    # Aggregate metrics
+    total_stories = len(rows)
+    stories_with_any_linkedin = 0
+    stories_with_zero_linkedin = 0
+    total_people = 0
+    people_with_profile = 0
+    people_with_urn = 0
+    high_confidence_matches = 0
+    medium_confidence_matches = 0
+    low_confidence_matches = 0
+    org_fallback_matches = 0
+    quality_high = 0
+    quality_medium = 0
+    quality_low = 0
+    quality_failed = 0
+
+    for row in rows:
+        story_people = (
+            json_module.loads(row["story_people"]) if row["story_people"] else []
+        )
+        org_leaders = (
+            json_module.loads(row["org_leaders"]) if row["org_leaders"] else []
+        )
+        all_people = story_people + org_leaders
+        total_people += len(all_people)
+
+        # Track enrichment quality per story
+        eq = row["enrichment_quality"] or ""
+        if eq == "high":
+            quality_high += 1
+        elif eq == "medium":
+            quality_medium += 1
+        elif eq == "low":
+            quality_low += 1
+        elif eq == "failed":
+            quality_failed += 1
+
+        story_has_linkedin = False
+        for p in all_people:
+            if p.get("linkedin_profile"):
+                people_with_profile += 1
+                story_has_linkedin = True
+
+                # Track confidence levels (if available)
+                confidence = p.get("match_confidence", "").lower()
+                if confidence == "high" or confidence == "verified":
+                    high_confidence_matches += 1
+                elif confidence == "medium":
+                    medium_confidence_matches += 1
+                elif confidence == "org_fallback":
+                    org_fallback_matches += 1
+                else:
+                    low_confidence_matches += 1
+
+            if p.get("linkedin_urn"):
+                people_with_urn += 1
+
+        if story_has_linkedin:
+            stories_with_any_linkedin += 1
+        elif all_people:  # Had people but none matched
+            stories_with_zero_linkedin += 1
+
+    # Calculate rates (avoid division by zero)
+    linkedin_match_rate = (
+        (people_with_profile / total_people * 100) if total_people > 0 else 0
+    )
+    urn_rate = (
+        (people_with_urn / people_with_profile * 100) if people_with_profile > 0 else 0
+    )
+    zero_match_rate = (
+        (stories_with_zero_linkedin / total_stories * 100) if total_stories > 0 else 0
+    )
+    quality_total = quality_high + quality_medium + quality_low + quality_failed
+    quality_high_rate = (quality_high / quality_total * 100) if quality_total > 0 else 0
+    high_confidence_rate = (
+        (high_confidence_matches / people_with_profile * 100)
+        if people_with_profile > 0
+        else 0
+    )
+
+    # Build metrics dict
+    metrics = {
+        "timestamp": datetime.now().isoformat(),
+        "total_stories": total_stories,
+        "total_people": total_people,
+        "people_with_profile": people_with_profile,
+        "people_with_urn": people_with_urn,
+        "linkedin_match_rate_pct": round(linkedin_match_rate, 1),
+        "urn_extraction_rate_pct": round(urn_rate, 1),
+        "zero_match_stories": stories_with_zero_linkedin,
+        "zero_match_rate_pct": round(zero_match_rate, 1),
+        "high_confidence_matches": high_confidence_matches,
+        "medium_confidence_matches": medium_confidence_matches,
+        "low_confidence_matches": low_confidence_matches,
+        "org_fallback_matches": org_fallback_matches,
+        "high_confidence_rate_pct": round(high_confidence_rate, 1),
+        # Enrichment quality distribution
+        "quality_high": quality_high,
+        "quality_medium": quality_medium,
+        "quality_low": quality_low,
+        "quality_failed": quality_failed,
+        "quality_high_rate_pct": round(quality_high_rate, 1),
+    }
+
+    # Log in structured format for easy parsing
+    logger.info(
+        f"BASELINE:enrichment_summary "
+        f"stories={total_stories} "
+        f"people={total_people} "
+        f"with_linkedin={people_with_profile} "
+        f"linkedin_match_rate={linkedin_match_rate:.1f}% "
+        f"with_urn={people_with_urn} "
+        f"urn_rate={urn_rate:.1f}% "
+        f"zero_match_stories={stories_with_zero_linkedin} "
+        f"zero_match_rate={zero_match_rate:.1f}% "
+        f"high_conf={high_confidence_matches} "
+        f"medium_conf={medium_confidence_matches} "
+        f"low_conf={low_confidence_matches} "
+        f"org_fallback={org_fallback_matches} "
+        f"quality_high={quality_high} "
+        f"quality_medium={quality_medium} "
+        f"quality_low={quality_low} "
+        f"quality_failed={quality_failed} "
+        f"quality_high_rate={quality_high_rate:.1f}%"
+    )
+
+    return metrics
+
+
+def _log_story_enrichment_metrics(story, context: str = "") -> None:
+    """
+    Log enrichment metrics for a single story.
+
+    Call this after each story is enriched to track per-story performance.
+
+    Args:
+        story: Story object with enrichment data
+        context: Optional context string (e.g., "after_profile_lookup")
+    """
+    story_people = story.story_people or []
+    org_leaders = story.org_leaders or []
+    all_people = story_people + org_leaders
+
+    total = len(all_people)
+    with_linkedin = sum(1 for p in all_people if p.get("linkedin_profile"))
+    with_urn = sum(1 for p in all_people if p.get("linkedin_urn"))
+    match_rate = (with_linkedin / total * 100) if total > 0 else 0
+
+    logger.info(
+        f"BASELINE:story_enrichment "
+        f"story_id={story.id} "
+        f"context={context} "
+        f"direct_people={len(story_people)} "
+        f"indirect_people={len(org_leaders)} "
+        f"total_people={total} "
+        f"with_linkedin={with_linkedin} "
+        f"with_urn={with_urn} "
+        f"match_rate={match_rate:.1f}%"
+    )
+
+
+def log_story_details(
+    engine: ContentEngine, story_ids: list[int] | None = None
+) -> None:
+    """
+    Log detailed information for each story including people and organizations.
+
+    Args:
+        engine: ContentEngine instance
+        story_ids: Optional list of story IDs to log. If None, logs all recent stories.
+    """
+    import json as json_module
+
+    with engine.db._get_connection() as conn:
+        cursor = conn.cursor()
+
+        if story_ids:
+            placeholders = ",".join("?" * len(story_ids))
+            cursor.execute(
+                f"""SELECT id, title, summary, story_people, org_leaders, organizations
+                   FROM stories WHERE id IN ({placeholders}) ORDER BY id""",
+                story_ids,
+            )
+        else:
+            # Get most recent stories
+            cursor.execute("""
+                SELECT id, title, summary, story_people, org_leaders, organizations
+                FROM stories ORDER BY id DESC LIMIT 10
+            """)
+
+        rows = cursor.fetchall()
+
+    for row in rows:
+        story_id = row["id"]
+        title = row["title"] or "Untitled"
+        summary = row["summary"] or "No summary"
+        story_people = (
+            json_module.loads(row["story_people"]) if row["story_people"] else []
+        )
+        org_leaders = (
+            json_module.loads(row["org_leaders"]) if row["org_leaders"] else []
+        )
+        organizations = (
+            json_module.loads(row["organizations"]) if row["organizations"] else []
+        )
+
+        print(f"\n{'=' * 70}")
+        print(f"STORY [{story_id}]: {title}")
+        print(f"{'=' * 70}")
+        print(f"\nSUMMARY:\n{summary[:500]}{'...' if len(summary) > 500 else ''}")
+
+        # Direct people (mentioned in the story)
+        if story_people:
+            print(f"\nDIRECT PEOPLE ({len(story_people)}):")
+            for p in story_people:
+                name = p.get("name", "Unknown")
+                position = p.get("position", p.get("title", ""))
+                company = p.get("company", p.get("affiliation", ""))
+                linkedin = p.get("linkedin_profile", "")
+                linkedin_display = linkedin if linkedin else "❌ Not found"
+                print(f"  • {name}")
+                if position:
+                    print(f"      Position: {position}")
+                if company:
+                    print(f"      Organization: {company}")
+                print(f"      LinkedIn: {linkedin_display}")
+        else:
+            print("\nDIRECT PEOPLE: None extracted")
+
+        # Organizations
+        if organizations:
+            print(f"\nORGANIZATIONS ({len(organizations)}):")
+            for org in organizations:
+                print(f"  • {org}")
+
+                # Show leaders for this organization
+                org_people = [
+                    ldr
+                    for ldr in org_leaders
+                    if ldr.get("organization", "").lower() == org.lower()
+                ]
+                if org_people:
+                    for leader in org_people:
+                        name = leader.get("name", "Unknown")
+                        title = leader.get("title", "")
+                        linkedin = leader.get("linkedin_profile", "")
+                        linkedin_display = linkedin if linkedin else "❌ Not found"
+                        print(f"      → {name} ({title})")
+                        print(f"          LinkedIn: {linkedin_display}")
+        else:
+            print("\nORGANIZATIONS: None extracted")
+
+        # Show any org_leaders not associated with listed organizations
+        unassoc_leaders = [
+            ldr
+            for ldr in org_leaders
+            if ldr.get("organization", "").lower()
+            not in [org_name.lower() for org_name in organizations]
+        ]
+        if unassoc_leaders:
+            print(f"\nOTHER LEADERS ({len(unassoc_leaders)}):")
+            for leader in unassoc_leaders:
+                name = leader.get("name", "Unknown")
+                title = leader.get("title", "")
+                org = leader.get("organization", "")
+                linkedin = leader.get("linkedin_profile", "")
+                linkedin_display = linkedin if linkedin else "❌ Not found"
+                print(f"  • {name} ({title}) at {org}")
+                print(f"      LinkedIn: {linkedin_display}")
+
+        # Log to file as well
+        total_people = len(story_people) + len(org_leaders)
+        with_linkedin = sum(
+            1 for p in story_people + org_leaders if p.get("linkedin_profile")
+        )
+        logger.info(
+            f"STORY_DETAIL story_id={story_id} "
+            f'title="{title[:50]}" '
+            f"direct_people={len(story_people)} "
+            f"org_leaders={len(org_leaders)} "
+            f"organizations={len(organizations)} "
+            f"linkedin_coverage={with_linkedin}/{total_people}"
+        )
+
+
+# =============================================================================
+# END BASELINE METRICS INSTRUMENTATION
+# =============================================================================
+
+
 def _show_enrichment_summary(engine: ContentEngine) -> None:
     """Show comprehensive summary of enrichment status."""
     import json as json_module
+
+    # Log baseline metrics for tracking (Phase 0 instrumentation)
+    log_enrichment_baseline_metrics(engine)
 
     with engine.db._get_connection() as conn:
         cursor = conn.cursor()
@@ -1688,7 +2093,11 @@ def _show_enrichment_summary(engine: ContentEngine) -> None:
                 SUM(CASE WHEN (organizations IS NOT NULL AND organizations != '[]') THEN 1 ELSE 0 END) as with_organizations,
                 SUM(CASE WHEN promotion IS NOT NULL AND promotion != '' THEN 1 ELSE 0 END) as with_promotion,
                 SUM(CASE WHEN image_path IS NOT NULL AND image_path != '' THEN 1 ELSE 0 END) as with_image,
-                SUM(CASE WHEN verification_status = 'approved' THEN 1 ELSE 0 END) as approved
+                SUM(CASE WHEN verification_status = 'approved' THEN 1 ELSE 0 END) as approved,
+                SUM(CASE WHEN enrichment_quality = 'high' THEN 1 ELSE 0 END) as quality_high,
+                SUM(CASE WHEN enrichment_quality = 'medium' THEN 1 ELSE 0 END) as quality_medium,
+                SUM(CASE WHEN enrichment_quality = 'low' THEN 1 ELSE 0 END) as quality_low,
+                SUM(CASE WHEN enrichment_quality = 'failed' THEN 1 ELSE 0 END) as quality_failed
             FROM stories
         """)
         stats = cursor.fetchone()
@@ -1699,6 +2108,10 @@ def _show_enrichment_summary(engine: ContentEngine) -> None:
         with_promotion = stats["with_promotion"] or 0
         with_image = stats["with_image"] or 0
         approved = stats["approved"] or 0
+        quality_high = stats["quality_high"] or 0
+        quality_medium = stats["quality_medium"] or 0
+        quality_low = stats["quality_low"] or 0
+        quality_failed = stats["quality_failed"] or 0
 
         # Count LinkedIn enrichment details
         cursor.execute("""
@@ -1735,6 +2148,24 @@ def _show_enrichment_summary(engine: ContentEngine) -> None:
     print(f"  • With promotion message: {with_promotion}")
     print(f"  • With image: {with_image}")
     print(f"  • Approved: {approved}")
+
+    # Display enrichment quality distribution
+    enriched_total = quality_high + quality_medium + quality_low + quality_failed
+    if enriched_total > 0:
+        print(f"\nEnrichment Quality: {enriched_total} stories assessed")
+        print(
+            f"  • High quality: {quality_high} ({100 * quality_high // enriched_total}%)"
+        )
+        print(
+            f"  • Medium quality: {quality_medium} ({100 * quality_medium // enriched_total}%)"
+        )
+        print(
+            f"  • Low quality: {quality_low} ({100 * quality_low // enriched_total}%)"
+        )
+        if quality_failed > 0:
+            print(
+                f"  • Failed: {quality_failed} ({100 * quality_failed // enriched_total}%)"
+            )
 
     if total_people > 0:
         print(f"\nLinkedIn Enrichment: {total_people} people/leaders identified")
@@ -1924,21 +2355,10 @@ def _test_scheduling(engine: ContentEngine) -> None:
 
     if available == 0:
         print("\nNo approved stories available to schedule.")
-        print("Running full pipeline to generate content...")
-        try:
-            engine.run_search_cycle()
-            # Re-check available stories after pipeline
-            available = engine.db.count_unpublished_stories()
-            print(f"\nAfter pipeline: {available} stories available to schedule")
-            if available == 0:
-                print(
-                    "Still no stories available after pipeline. Check search sources."
-                )
-                return
-        except Exception as e:
-            print(f"\nError running pipeline: {e}")
-            logger.exception("Pipeline failed during scheduling")
-            return
+        print(
+            "Use option 1 (Full Pipeline) or option 16 (Search) to generate content first."
+        )
+        return
 
     try:
         scheduled = engine.scheduler.schedule_stories(schedule_all=True)
@@ -2606,7 +3026,7 @@ def _view_linkedin_analytics(engine: ContentEngine) -> None:
         print(
             f"{story.id:>4} | {title:<40} | {story.linkedin_impressions or 0:>8} | "
             f"{story.linkedin_likes or 0:>7} | {story.linkedin_comments or 0:>7} | "
-            f"{story.linkedin_shares or 0:>8} | {last_updated:<16}"
+            f"{story.linkedin_shares or 0:>8} | {last_updated:!<16}"
         )
 
     print("-" * 100)
@@ -3270,7 +3690,318 @@ def _reset_all(engine: ContentEngine) -> None:
     engine.db = new_db
     print(f"  ✓ Created fresh database: {Config.DB_NAME}")
 
+    # Delete LinkedIn cache
+    cache_file = Path(
+        os.path.expandvars(r"%LOCALAPPDATA%\SocialMediaPublisher\linkedin_cache.json")
+    )
+    if cache_file.exists():
+        try:
+            cache_file.unlink()
+            print(f"  ✓ Deleted LinkedIn cache: {cache_file}")
+        except Exception as e:
+            print(f"  ✗ Failed to delete LinkedIn cache: {e}")
+
     print("\n✓ Reset complete!")
+
+
+def _configure_linkedin_voyager() -> None:
+    """Configure LinkedIn Voyager API cookies for reliable profile lookups."""
+    print("\n" + "=" * 70)
+    print("LINKEDIN VOYAGER API CONFIGURATION")
+    print("=" * 70)
+    print("""
+The Voyager API uses LinkedIn's internal API for reliable profile lookups
+without CAPTCHA detection. It requires two cookies from your browser:
+
+  1. li_at - Main authentication cookie (long-lived)
+  2. JSESSIONID - Session cookie (helps with CSRF)
+
+To get these cookies:
+  1. Open Chrome and log into LinkedIn
+  2. Press F12 to open Developer Tools
+  3. Go to Application tab → Cookies → www.linkedin.com
+  4. Copy the values for 'li_at' and 'JSESSIONID'
+""")
+
+    # Check current status
+    li_at = os.getenv("LINKEDIN_LI_AT", "")
+    jsessionid = os.getenv("LINKEDIN_JSESSIONID", "")
+
+    if li_at:
+        print(
+            f"Current li_at: {li_at[:20]}...{li_at[-10:]}"
+            if len(li_at) > 30
+            else f"Current li_at: {li_at}"
+        )
+        print(
+            f"Current JSESSIONID: {jsessionid[:20]}..."
+            if jsessionid
+            else "Current JSESSIONID: (not set)"
+        )
+    else:
+        print("Status: No LinkedIn Voyager cookies configured")
+
+    print("-" * 70)
+
+    # Option 1: Try auto-extract from browser
+    print("\nOptions:")
+    print("  1. Auto-extract from Chrome (requires browser-cookie3)")
+    print("  2. Manual entry")
+    print("  3. Test current configuration")
+    print("  0. Cancel")
+
+    choice = input("\nChoice: ").strip()
+
+    if choice == "1":
+        try:
+            from linkedin_voyager_client import extract_linkedin_cookies_from_browser
+
+            print("\nExtracting cookies from Chrome...")
+            print("(Make sure Chrome is CLOSED for best results)")
+
+            li_at, jsessionid = extract_linkedin_cookies_from_browser()
+
+            if li_at:
+                print(f"\n✓ Extracted li_at: {li_at[:20]}...")
+                if jsessionid:
+                    print(f"✓ Extracted JSESSIONID: {jsessionid[:20]}...")
+
+                # Save to .env file
+                _save_voyager_cookies_to_env(li_at, jsessionid)
+            else:
+                print("\n✗ Automatic extraction failed.")
+                print("\n  Common causes:")
+                print("  - Chrome is still running (close it completely)")
+                print("  - Windows cookie encryption issues")
+                print("  - Not logged into LinkedIn in Chrome")
+                print("\n  → Please use option 2 (Manual entry) instead.")
+                print(
+                    "    It only takes 30 seconds to copy the cookies from Chrome DevTools."
+                )
+        except ImportError:
+            print("\n✗ browser-cookie3 not installed.")
+            print("  Install with: pip install browser-cookie3")
+        except Exception as e:
+            print(f"\n✗ Failed to extract cookies: {e}")
+            print("\n  → Please use option 2 (Manual entry) instead.")
+
+    elif choice == "2":
+        print("\nEnter the cookie values (paste from browser dev tools):")
+        li_at = input("li_at: ").strip()
+        jsessionid = input("JSESSIONID: ").strip()
+
+        if li_at:
+            _save_voyager_cookies_to_env(li_at, jsessionid)
+        else:
+            print("Cancelled - no li_at provided.")
+
+    elif choice == "3":
+        print("\nTesting Voyager API connection...")
+        try:
+            from linkedin_voyager_client import LinkedInVoyagerClient
+
+            client = LinkedInVoyagerClient()
+            print("✓ Client initialized with cookies")
+
+            # Skip auth check (endpoints deprecated) and go straight to search test
+            print("\nTesting people search...")
+            results = client.search_people(keywords="chemical engineer", limit=3)
+            if results:
+                print(f"✓ Search successful! Found {len(results)} profiles:")
+                for p in results[:3]:
+                    headline_display = (
+                        p.headline[:50] + "..." if len(p.headline) > 50 else p.headline
+                    )
+                    print(f"  - {p.name}: {headline_display}")
+                print("\n✓ Voyager API is working correctly!")
+            else:
+                print("! Search returned no results.")
+                print("  This could mean:")
+                print("  - Cookies expired (re-enter them)")
+                print("  - LinkedIn blocked the request")
+                print("  - API endpoints changed")
+            client.close()
+        except Exception as e:
+            print(f"✗ Test failed: {e}")
+            import traceback
+
+            traceback.print_exc()
+
+    else:
+        print("Cancelled.")
+
+
+def _save_voyager_cookies_to_env(li_at: str, jsessionid: str) -> None:
+    """Save Voyager cookies to .env file."""
+    env_file = Path(".env")
+
+    # Read existing .env content
+    existing_lines = []
+    if env_file.exists():
+        with open(env_file, "r", encoding="utf-8") as f:
+            existing_lines = f.readlines()
+
+    # Update or add the cookie settings
+    updated = False
+    new_lines = []
+    for line in existing_lines:
+        if line.startswith("LINKEDIN_LI_AT="):
+            new_lines.append(f"LINKEDIN_LI_AT={li_at}\n")
+            updated = True
+        elif line.startswith("LINKEDIN_JSESSIONID="):
+            if jsessionid:
+                new_lines.append(f"LINKEDIN_JSESSIONID={jsessionid}\n")
+            # Skip empty jsessionid
+        else:
+            new_lines.append(line)
+
+    # Add if not found
+    if not updated:
+        new_lines.append(f"LINKEDIN_LI_AT={li_at}\n")
+        if jsessionid:
+            new_lines.append(f"LINKEDIN_JSESSIONID={jsessionid}\n")
+
+    # Write back
+    with open(env_file, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+    print(f"\n✓ Saved cookies to {env_file}")
+    print("  Restart the application for changes to take effect.")
+
+
+def _configure_rapidapi_key() -> None:
+    """Configure RapidAPI key for Fresh LinkedIn Profile Data API lookups."""
+    print("\n" + "=" * 70)
+    print("RAPIDAPI KEY CONFIGURATION (Fresh LinkedIn Profile Data)")
+    print("=" * 70)
+    print("""
+The Fresh LinkedIn Profile Data API provides reliable LinkedIn profile
+lookups for @mentions. This is the primary method for finding profiles.
+
+╔══════════════════════════════════════════════════════════════════════╗
+║  HOW TO SUBSCRIBE (5 minutes):                                       ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  1. Go to: https://rapidapi.com/freshdata-freshdata-default/         ║
+║             api/fresh-linkedin-profile-data/pricing                  ║
+║                                                                      ║
+║  2. Sign up for a FREE RapidAPI account (if you don't have one)      ║
+║                                                                      ║
+║  3. Click "Subscribe" → Select "BASIC" plan ($10/month)              ║
+║     • 500 requests/month (enough for ~150-200 lookups)               ║
+║     • Cancel anytime from RapidAPI dashboard                         ║
+║                                                                      ║
+║  4. Copy your API key from the "X-RapidAPI-Key" header               ║
+║     (same key works for all RapidAPI subscriptions)                  ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+ALTERNATIVE (FREE): Browser-based lookup uses DuckDuckGo + Selenium.
+                    Slower but works without API key.
+""")
+
+    # Check current status
+    current_key = os.getenv("RAPIDAPI_KEY", "")
+
+    if current_key:
+        masked = (
+            current_key[:8] + "..." + current_key[-4:]
+            if len(current_key) > 12
+            else current_key
+        )
+        print(f"Current API key: {masked}")
+    else:
+        print("Status: No RapidAPI key configured")
+
+    print("-" * 70)
+
+    print("\nOptions:")
+    print("  1. Enter/update API key")
+    print("  2. Test current configuration")
+    print("  0. Cancel")
+
+    choice = input("\nChoice: ").strip()
+
+    if choice == "1":
+        print("\nEnter your RapidAPI key:")
+        api_key = input("API Key: ").strip()
+
+        if api_key:
+            _save_rapidapi_key_to_env(api_key)
+        else:
+            print("Cancelled - no API key provided.")
+
+    elif choice == "2":
+        if not current_key:
+            print("\n✗ No API key configured. Please enter one first.")
+            return
+
+        print("\nTesting Fresh LinkedIn Profile Data API connection...")
+        try:
+            from linkedin_rapidapi_client import FreshLinkedInAPIClient
+
+            client = FreshLinkedInAPIClient(api_key=current_key)
+            print("✓ Client initialized")
+
+            print("\nTesting search for 'Satya Nadella' at 'Microsoft'...")
+            result = client.search_person("Satya Nadella", "Microsoft")
+
+            if result and result.linkedin_url:
+                print("✓ Search successful!")
+                print(f"  Name: {result.full_name}")
+                print(f"  Title: {result.job_title}")
+                print(f"  Company: {result.company}")
+                print(f"  LinkedIn: {result.linkedin_url}")
+                print(f"  Match Score: {result.match_score:.2f}")
+                print("\n✓ Fresh LinkedIn Profile Data API is working!")
+            else:
+                print("✗ Search returned no results.")
+                print("  This could mean:")
+                print("  - Not subscribed to Fresh LinkedIn Profile Data API")
+                print(
+                    "    → Subscribe at: https://rapidapi.com/freshdata-freshdata-default/"
+                )
+                print("                    api/fresh-linkedin-profile-data/pricing")
+                print("  - API rate limit exceeded")
+                print("  - Service temporarily unavailable")
+
+        except Exception as e:
+            print(f"✗ Test failed: {e}")
+            import traceback
+
+            traceback.print_exc()
+    else:
+        print("Cancelled.")
+
+
+def _save_rapidapi_key_to_env(api_key: str) -> None:
+    """Save RapidAPI key to .env file."""
+    env_file = Path(".env")
+
+    # Read existing .env content
+    existing_lines = []
+    if env_file.exists():
+        with open(env_file, "r", encoding="utf-8") as f:
+            existing_lines = f.readlines()
+
+    # Update or add the API key
+    updated = False
+    new_lines = []
+    for line in existing_lines:
+        if line.startswith("RAPIDAPI_KEY="):
+            new_lines.append(f"RAPIDAPI_KEY={api_key}\n")
+            updated = True
+        else:
+            new_lines.append(line)
+
+    # Add if not found
+    if not updated:
+        new_lines.append(f"RAPIDAPI_KEY={api_key}\n")
+
+    # Write back
+    with open(env_file, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+    print(f"\n✓ Saved API key to {env_file}")
+    print("  Restart the application for changes to take effect.")
 
 
 def _show_all_prompts() -> None:

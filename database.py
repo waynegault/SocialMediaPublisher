@@ -15,6 +15,20 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 
+def _adapt_datetime(value: datetime) -> str:
+    """Serialize datetime for SQLite using ISO format."""
+    return value.isoformat(sep=" ", timespec="microseconds")
+
+
+def _convert_datetime(value: bytes) -> datetime:
+    """Deserialize SQLite TIMESTAMP column to datetime."""
+    return datetime.fromisoformat(value.decode())
+
+
+sqlite3.register_adapter(datetime, _adapt_datetime)
+sqlite3.register_converter("TIMESTAMP", _convert_datetime)
+
+
 @dataclass
 class Story:
     """Represents a story in the database.
@@ -57,6 +71,16 @@ class Story:
     org_leaders: list[dict] = field(
         default_factory=list
     )  # [{"name": "John Doe", "title": "CEO", "organization": "BASF"}]
+    # New canonical fields for enrichment pipeline
+    direct_people: list[dict] = field(default_factory=list)
+    indirect_people: list[dict] = field(default_factory=list)
+
+    # --- 3b. ENRICHMENT METADATA (Phase 1) ---
+    # Processing metrics, errors, and audit trail for debugging
+    # Structure: {"completed_at": "ISO8601", "processing_time_seconds": N, "errors": [], ...}
+    enrichment_log: dict = field(default_factory=dict)
+    # Overall quality assessment: "high", "medium", "low", "failed"
+    enrichment_quality: str = ""
 
     # --- 4. IMAGE GENERATION ---
     image_path: Optional[str] = None
@@ -116,6 +140,10 @@ class Story:
             "organizations": self.organizations,
             "story_people": self.story_people,
             "org_leaders": self.org_leaders,
+            "direct_people": self.direct_people,
+            "indirect_people": self.indirect_people,
+            "enrichment_log": self.enrichment_log,
+            "enrichment_quality": self.enrichment_quality,
             # 4. Image Generation
             "image_path": self.image_path,
             "image_alt_text": self.image_alt_text,
@@ -170,6 +198,32 @@ class Story:
             except json.JSONDecodeError:
                 hashtags = []
 
+        organizations = (
+            json.loads(row["organizations"])
+            if "organizations" in keys and row["organizations"]
+            else []
+        )
+        story_people = (
+            json.loads(row["story_people"])
+            if "story_people" in keys and row["story_people"]
+            else []
+        )
+        org_leaders = (
+            json.loads(row["org_leaders"])
+            if "org_leaders" in keys and row["org_leaders"]
+            else []
+        )
+        direct_people = (
+            json.loads(row["direct_people"])
+            if "direct_people" in keys and row["direct_people"]
+            else []
+        )
+        indirect_people = (
+            json.loads(row["indirect_people"])
+            if "indirect_people" in keys and row["indirect_people"]
+            else []
+        )
+
         return cls(
             id=row["id"],
             title=row["title"],
@@ -216,15 +270,18 @@ class Story:
             if "enrichment_status" in keys
             else "pending",
             # New fields
-            organizations=json.loads(row["organizations"])
-            if "organizations" in keys and row["organizations"]
-            else [],
-            story_people=json.loads(row["story_people"])
-            if "story_people" in keys and row["story_people"]
-            else [],
-            org_leaders=json.loads(row["org_leaders"])
-            if "org_leaders" in keys and row["org_leaders"]
-            else [],
+            organizations=organizations,
+            direct_people=direct_people,
+            indirect_people=indirect_people,
+            story_people=story_people,
+            org_leaders=org_leaders,
+            # Phase 1: Enrichment metadata
+            enrichment_log=json.loads(row["enrichment_log"])
+            if "enrichment_log" in keys and row["enrichment_log"]
+            else {},
+            enrichment_quality=row["enrichment_quality"]
+            if "enrichment_quality" in keys
+            else "",
             # Promotion message
             promotion=row["promotion"] if "promotion" in keys else None,
             # Legacy fields
@@ -240,10 +297,12 @@ class Story:
         )
 
 
-def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
-    """Parse datetime from database value."""
-    if not value:
+def _parse_datetime(value: Optional[datetime | str]) -> Optional[datetime]:
+    """Parse datetime from database value, supporting string or datetime inputs."""
+    if value is None:
         return None
+    if isinstance(value, datetime):
+        return value
     try:
         return datetime.fromisoformat(value)
     except ValueError:
@@ -261,7 +320,9 @@ class Database:
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Context manager for database connections."""
-        conn = sqlite3.connect(self.db_name)
+        conn = sqlite3.connect(
+            self.db_name, detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
+        )
         conn.row_factory = sqlite3.Row
         try:
             yield conn
@@ -404,7 +465,20 @@ class Database:
                 cursor, "org_leaders", "TEXT DEFAULT '[]'", existing_columns
             )
             self._migrate_add_column(
+                cursor, "direct_people", "TEXT DEFAULT '[]'", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "indirect_people", "TEXT DEFAULT '[]'", existing_columns
+            )
+            self._migrate_add_column(
                 cursor, "linkedin_handles", "TEXT DEFAULT '[]'", existing_columns
+            )
+            # Phase 1: Enrichment metadata fields
+            self._migrate_add_column(
+                cursor, "enrichment_log", "TEXT DEFAULT '{}'", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "enrichment_quality", "TEXT DEFAULT ''", existing_columns
             )
             # Promotion message for LinkedIn posts
             self._migrate_add_column(cursor, "promotion", "TEXT", existing_columns)
@@ -447,8 +521,9 @@ class Database:
                 (title, summary, source_links, acquire_date, quality_score,
                  category, quality_justification, image_path, verification_status,
                  publish_status, hashtags, company_mention_enrichment,
-                 enrichment_status, story_people, organizations, org_leaders)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 enrichment_status, story_people, direct_people, organizations,
+                 org_leaders, indirect_people, enrichment_log, enrichment_quality)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     story.title,
@@ -465,8 +540,12 @@ class Database:
                     story.company_mention_enrichment,
                     story.enrichment_status,
                     json.dumps(story.story_people),
+                    json.dumps(story.direct_people),
                     json.dumps(story.organizations),
                     json.dumps(story.org_leaders),
+                    json.dumps(story.indirect_people),
+                    json.dumps(story.enrichment_log),
+                    story.enrichment_quality,
                 ),
             )
             story_id = cursor.lastrowid or 0
@@ -598,7 +677,11 @@ class Database:
                     enrichment_status = ?,
                     organizations = ?,
                     story_people = ?,
+                    direct_people = ?,
                     org_leaders = ?,
+                    indirect_people = ?,
+                    enrichment_log = ?,
+                    enrichment_quality = ?,
                     company_mention_enrichment = ?,
                     individuals = ?,
                     linkedin_profiles = ?
@@ -631,7 +714,11 @@ class Database:
                     story.enrichment_status,
                     json.dumps(story.organizations),
                     json.dumps(story.story_people),
+                    json.dumps(story.direct_people),
                     json.dumps(story.org_leaders),
+                    json.dumps(story.indirect_people),
+                    json.dumps(story.enrichment_log),
+                    story.enrichment_quality,
                     story.company_mention_enrichment,
                     json.dumps(story.individuals),
                     json.dumps(story.linkedin_profiles),
@@ -699,7 +786,9 @@ class Database:
     def get_stories_needing_enrichment(self) -> list[Story]:
         """Get stories that need company mention enrichment.
 
-        Returns all pending enrichment stories that have been approved and have images.
+        Returns all stories with pending enrichment status.
+        Enrichment runs early in the pipeline (before verification),
+        so we don't require verification_status='approved'.
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -707,8 +796,6 @@ class Database:
                 """
                 SELECT * FROM stories
                 WHERE enrichment_status = 'pending'
-                AND verification_status = 'approved'
-                AND image_path IS NOT NULL
                 ORDER BY quality_score DESC
                 """
             )
@@ -924,6 +1011,284 @@ class Database:
             stats["no_mentions"] = stats["enriched_count"] - stats["with_mentions"]
 
             return stats
+
+    # ==========================================================================
+    # PHASE 3: CROSS-STORY ENTITY RESOLUTION
+    # ==========================================================================
+
+    def find_person_by_linkedin_urn(self, urn: str) -> dict | None:
+        """Find a person across all stories by their LinkedIn URN.
+
+        This enables cross-story entity resolution - if we've already validated
+        a person in one story, we can reuse that validation in another story.
+
+        Args:
+            urn: LinkedIn URN (e.g., "urn:li:person:ABC123")
+
+        Returns:
+            Person dict with all known attributes, or None if not found
+        """
+        if not urn:
+            return None
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # Search story_people first
+            cursor.execute(
+                """
+                SELECT story_people, org_leaders FROM stories
+                WHERE story_people LIKE ? OR org_leaders LIKE ?
+            """,
+                (f"%{urn}%", f"%{urn}%"),
+            )
+
+            for row in cursor.fetchall():
+                # Check story_people
+                if row["story_people"]:
+                    people = json.loads(row["story_people"])
+                    for person in people:
+                        if person.get("linkedin_urn") == urn:
+                            return person
+
+                # Check org_leaders
+                if row["org_leaders"]:
+                    leaders = json.loads(row["org_leaders"])
+                    for leader in leaders:
+                        if leader.get("linkedin_urn") == urn:
+                            return leader
+
+        return None
+
+    def find_person_by_attributes(
+        self,
+        name: str,
+        employer: str | None = None,
+        fuzzy: bool = True,
+    ) -> dict | None:
+        """Find a person across all stories by name and optional employer.
+
+        Args:
+            name: Person's name to search for
+            employer: Optional employer/organization name
+            fuzzy: If True, use case-insensitive partial matching
+
+        Returns:
+            Person dict with all known attributes, or None if not found
+        """
+        if not name:
+            return None
+
+        name_lower = name.lower().strip()
+        employer_lower = (employer or "").lower().strip()
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT story_people, org_leaders FROM stories")
+
+            best_match: dict | None = None
+            best_score = 0
+
+            for row in cursor.fetchall():
+                for field_name in ["story_people", "org_leaders"]:
+                    data = row[field_name]
+                    if not data:
+                        continue
+
+                    people = json.loads(data)
+                    for person in people:
+                        person_name = (person.get("name") or "").lower().strip()
+
+                        # Skip if no name match
+                        if fuzzy:
+                            if (
+                                name_lower not in person_name
+                                and person_name not in name_lower
+                            ):
+                                continue
+                        else:
+                            if person_name != name_lower:
+                                continue
+
+                        # Calculate match score
+                        score = 1  # Base score for name match
+
+                        # Bonus for exact name match
+                        if person_name == name_lower:
+                            score += 2
+
+                        # Bonus for employer match
+                        if employer_lower:
+                            person_org = (
+                                (
+                                    person.get("company")
+                                    or person.get("affiliation")
+                                    or person.get("organization")
+                                    or ""
+                                )
+                                .lower()
+                                .strip()
+                            )
+                            if (
+                                employer_lower in person_org
+                                or person_org in employer_lower
+                            ):
+                                score += 3
+
+                        # Bonus for having LinkedIn profile
+                        if person.get("linkedin_profile") or person.get("linkedin_urn"):
+                            score += 2
+
+                        if score > best_score:
+                            best_score = score
+                            best_match = person
+
+            return best_match
+
+    def get_enrichment_dashboard_stats(self) -> dict:
+        """Get enrichment-specific stats for dashboard display.
+
+        Phase 3: Aggregate enrichment metrics for monitoring.
+
+        Returns:
+            Dict with enrichment stats
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            stats: dict = {}
+
+            # Total people counts
+            cursor.execute("SELECT story_people, org_leaders FROM stories")
+            total_direct = 0
+            total_indirect = 0
+            with_linkedin = 0
+            high_confidence = 0
+            org_fallback = 0
+
+            for row in cursor.fetchall():
+                if row["story_people"]:
+                    people = json.loads(row["story_people"])
+                    total_direct += len(people)
+                    for p in people:
+                        if p.get("linkedin_profile") or p.get("linkedin_urn"):
+                            with_linkedin += 1
+                        conf = p.get("match_confidence", "")
+                        if conf == "high":
+                            high_confidence += 1
+                        elif conf == "org_fallback":
+                            org_fallback += 1
+
+                if row["org_leaders"]:
+                    leaders = json.loads(row["org_leaders"])
+                    total_indirect += len(leaders)
+                    for l in leaders:
+                        if l.get("linkedin_profile") or l.get("linkedin_urn"):
+                            with_linkedin += 1
+                        conf = l.get("match_confidence", "")
+                        if conf == "high":
+                            high_confidence += 1
+                        elif conf == "org_fallback":
+                            org_fallback += 1
+
+            total_people = total_direct + total_indirect
+
+            stats["total_direct_people"] = total_direct
+            stats["total_indirect_people"] = total_indirect
+            stats["total_people"] = total_people
+            stats["with_linkedin"] = with_linkedin
+            stats["linkedin_rate"] = (
+                f"{with_linkedin / total_people:.1%}" if total_people > 0 else "0%"
+            )
+            stats["high_confidence"] = high_confidence
+            stats["high_confidence_rate"] = (
+                f"{high_confidence / with_linkedin:.1%}" if with_linkedin > 0 else "0%"
+            )
+            stats["org_fallback"] = org_fallback
+            stats["org_fallback_rate"] = (
+                f"{org_fallback / with_linkedin:.1%}" if with_linkedin > 0 else "0%"
+            )
+
+            # Enrichment quality breakdown
+            cursor.execute("""
+                SELECT enrichment_quality, COUNT(*) as cnt
+                FROM stories
+                WHERE enrichment_quality != ''
+                GROUP BY enrichment_quality
+            """)
+            stats["quality_breakdown"] = {
+                row["enrichment_quality"]: row["cnt"] for row in cursor.fetchall()
+            }
+
+            # Stories needing manual review
+            cursor.execute("""
+                SELECT COUNT(*) FROM stories
+                WHERE enrichment_quality = 'low'
+                   OR enrichment_quality = 'failed'
+            """)
+            stats["needs_review"] = cursor.fetchone()[0]
+
+            return stats
+
+    def get_stories_needing_review(self, limit: int = 50) -> list["Story"]:
+        """Get stories flagged for manual review.
+
+        Phase 3: Manual review workflow support.
+
+        Args:
+            limit: Maximum stories to return
+
+        Returns:
+            List of Story objects needing review
+        """
+        stories = []
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM stories
+                WHERE enrichment_quality IN ('low', 'failed')
+                   OR (enrichment_status = 'error')
+                ORDER BY acquire_date DESC
+                LIMIT ?
+            """,
+                (limit,),
+            )
+            for row in cursor.fetchall():
+                stories.append(Story.from_row(row))
+        return stories
+
+    def mark_story_reviewed(self, story_id: int, reviewer_notes: str = "") -> bool:
+        """Mark a story as manually reviewed.
+
+        Args:
+            story_id: Story ID to mark
+            reviewer_notes: Optional notes from reviewer
+
+        Returns:
+            True if update succeeded
+        """
+        try:
+            story = self.get_story(story_id)
+            if not story:
+                return False
+
+            # Update enrichment_log with review info
+            log = story.enrichment_log or {}
+            if isinstance(log, str):
+                log = json.loads(log) if log else {}
+            log["manual_review"] = {
+                "reviewed_at": datetime.now().isoformat(),
+                "notes": reviewer_notes,
+            }
+
+            # Update the story object and save
+            story.enrichment_log = log
+            story.enrichment_quality = "reviewed"
+            self.update_story(story)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to mark story {story_id} as reviewed: {e}")
+            return False
 
     def create_backup(self, suffix: str = ".backup") -> str:
         """Create a backup of the database file.

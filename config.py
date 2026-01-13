@@ -100,6 +100,15 @@ class SettingsModel(BaseSettings):
     linkedin_username: str = Field(default="", alias="LINKEDIN_USERNAME")
     linkedin_password: str = Field(default="", alias="LINKEDIN_PASSWORD")
 
+    # --- LinkedIn Voyager API (for reliable profile lookups) ---
+    # These cookies can be extracted from browser dev tools after logging into LinkedIn
+    linkedin_li_at: str = Field(default="", alias="LINKEDIN_LI_AT")
+    linkedin_jsessionid: str = Field(default="", alias="LINKEDIN_JSESSIONID")
+
+    # --- RapidAPI Fresh LinkedIn Data API (primary LinkedIn lookup method) ---
+    # Get API key from: https://rapidapi.com/freshdata-freshdata-default/api/fresh-linkedin-profile-data
+    rapidapi_key: str = Field(default="", alias="RAPIDAPI_KEY")
+
     # --- Local LLM (LM Studio) ---
     lm_studio_base_url: str = Field(
         default="http://localhost:1234/v1", alias="LM_STUDIO_BASE_URL"
@@ -449,6 +458,11 @@ class Config:
     LINKEDIN_USERNAME: str = _get_str("LINKEDIN_USERNAME", "")
     LINKEDIN_PASSWORD: str = _get_str("LINKEDIN_PASSWORD", "")
 
+    # --- RapidAPI Fresh LinkedIn Data API ---
+    # Primary method for reliable LinkedIn profile lookups (90%+ success rate)
+    # Get API key from: https://rapidapi.com/freshdata-freshdata-default/api/fresh-linkedin-profile-data
+    RAPIDAPI_KEY: str = _get_str("RAPIDAPI_KEY", "")
+
     # --- Local LLM (LM Studio) ---
     LM_STUDIO_BASE_URL: str = _get_str("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
     LM_STUDIO_MODEL: str = _get_str("LM_STUDIO_MODEL", "local-model")
@@ -655,25 +669,31 @@ GEOGRAPHIC PRIORITY (add +1 to score for stories from these regions):
 - Apply the +1 bonus AFTER calculating the base score (cap at 10)
 
 CRITICAL - INCLUDE NAMES IN SUMMARY:
-- ALWAYS mention specific COMPANY NAMES involved in the story (e.g., "BASF", "MIT", "ExxonMobil")
-- ALWAYS mention KEY INDIVIDUALS by full name when available (researchers, CEOs, lead engineers)
-- Include their role/title (e.g., "Dr. Jane Smith, lead researcher at MIT")
-- If the story is about academic research, name the university AND the lead researcher(s) by name
-- Look for: "senior author", "lead author", "principal investigator", "study author", "co-author", "corresponding author"
-- If the story is about a company development, name the company AND any executives mentioned
-- Read the source article THOROUGHLY to extract actual names - they are usually in quotes or linked to profiles
+- The summary MUST mention specific COMPANY/INSTITUTION names (e.g., "researchers at MIT", "BASF announced")
+- The summary MUST mention at least ONE key individual by full name with their role
+- Example: "Dr. Paula Hammond and her team at MIT have developed..."
+- Example: "Led by Professor Michael Jewett at Stanford..."
+- If the story is about academic research: name the university AND the lead researcher
+- If the story is about a company: name the company AND any executives mentioned
+- This is REQUIRED for LinkedIn engagement - people want to know WHO is behind the work
 
 STORY PEOPLE - MANDATORY EXTRACTION:
 For EVERY story, identify and include in story_people:
-1. People MENTIONED in the story (researchers, engineers, scientists, executives quoted)
-2. Authors of any research papers or studies mentioned (senior author, lead author, co-authors)
-2. Key leaders from ANY organizations/universities mentioned in the story:
-   - CEO, President, Managing Director, Founder, Owner
-   - Head/Director of Engineering, Head/Director of Research
-   - Head/Director of Operations, Head/Director of HR
-   - Principal Investigator, Head of Lab/School
-   - University Principal, Chancellor, Dean
-This reduces the need to mention all people in the summary itself.
+1. The FIRST AUTHOR of any research paper (usually listed first in author order)
+2. The CORRESPONDING/SENIOR AUTHOR who supervised the research
+3. Other co-authors if prominently mentioned
+4. Executives or spokespersons quoted in the article
+5. Look for: "first author", "senior author", "lead author", "principal investigator", "corresponding author", "supervised by"
+
+CRITICAL - AUTHOR AFFILIATIONS:
+- Use the author's ACTUAL INSTITUTIONAL AFFILIATION (their university/company), NOT the journal name
+- Example: If a paper in "Chemical Engineering Journal" is by researchers at "National Taiwan University",
+  use company: "National Taiwan University", NOT "Chemical Engineering Journal"
+- Journal names (e.g., Nature, Science, Chemical Engineering Journal) are PUBLISHERS, not affiliations
+- Look for phrases like "researchers at", "from", "affiliated with", "Department of X at Y University"
+
+Note: story_people captures ALL people for LinkedIn @mentions.
+The summary should still name at least 1-2 key individuals for readability.
 
 CRITICAL - NO PLACEHOLDERS:
 - Extract REAL names from the article - never use "TBA", "Unknown", "N/A", or placeholder text
@@ -683,7 +703,7 @@ CRITICAL - NO PLACEHOLDERS:
 - Include the researcher's full name, their institution, and their role
 
 STORY_PEOPLE FIELD REQUIREMENTS (for accurate LinkedIn matching):
-- name: Full name as stated in the article (e.g., "Dr. Jane Smith", "Siddharth Deshpande")
+- name: FULL name (first AND last name required, e.g., "Jane Smith", "Michael Jewett") - NEVER use first name only like "Karim" or "Jane"
 - company: Organization name (university, company, institution)
 - position: Job title/role exactly as stated (e.g., "Assistant Professor", "VP of Engineering", "PhD Student")
 - department: Department or school name if mentioned (e.g., "Chemical Engineering", "Bioengineering Department")
@@ -740,6 +760,11 @@ RESPOND WITH ONLY THIS JSON FORMAT:
 
 ORGANIZATIONS - ALWAYS EXTRACT:
 - ALWAYS include an "organizations" array listing ALL companies, universities, agencies, and institutions mentioned in the story
+- PRIORITIZE the institutions where authors/researchers WORK (their affiliations)
+- For research papers: extract the universities/institutes where the authors are affiliated, NOT the journal name
+- Example: Paper published in "Nature Chemistry" by researchers at "Stanford University" and "MIT"
+  → organizations: ["Stanford University", "MIT"] (NOT "Nature Chemistry")
+- Journal names are PUBLISHERS, not organizations to include
 - This is MANDATORY even when no specific people are named
 - Examples: ["Singapore PUB", "NEWater", "MIT", "BASF", "U.S. Department of Energy"]
 - Organizations enable later lookup of leadership profiles on LinkedIn
@@ -915,13 +940,18 @@ CRITICAL - INCLUDE NAMES IN SUMMARY:
 
 STORY PEOPLE - MANDATORY EXTRACTION:
 For EVERY story, identify and include in story_people:
-1. People MENTIONED in the story (researchers, engineers, scientists, executives quoted)
-2. Key leaders from ALL organizations/universities mentioned in the story:
-   - CEO, President, Managing Director, Founder, Owner
-   - Head/Director of Engineering, Head/Director of Research
-   - Head/Director of Operations, Head/Director of HR
-   - Principal Investigator, Head of Lab/School
-   - University Principal, Chancellor, Dean
+1. The FIRST AUTHOR of any research paper (usually listed first in author order)
+2. The CORRESPONDING/SENIOR AUTHOR who supervised the research
+3. Other co-authors if prominently mentioned
+4. Executives or spokespersons quoted in the article
+5. Look for: "first author", "senior author", "lead author", "principal investigator", "corresponding author", "supervised by"
+
+CRITICAL - AUTHOR AFFILIATIONS:
+- Use the author's ACTUAL INSTITUTIONAL AFFILIATION (their university/company), NOT the journal name
+- Example: If a paper in "Chemical Engineering Journal" is by researchers at "National Taiwan University",
+  use company: "National Taiwan University", NOT "Chemical Engineering Journal"
+- Journal names (e.g., Nature, Science, Chemical Engineering Journal) are PUBLISHERS, not affiliations
+- Look for phrases like "researchers at", "from", "affiliated with", "Department of X at Y University"
 
 CRITICAL - NO PLACEHOLDERS:
 - Extract REAL names from the article - never use "TBA", "Unknown", "N/A", or placeholder text
@@ -1086,48 +1116,39 @@ PEOPLE TO FIND:
 STORY CONTEXT (use to help verify correct profiles):
 {story_context}
 
-**CRITICAL: HIGH PRECISION MATCHING**
-- Search for PERSONAL profiles only (linkedin.com/in/...)
-- Do NOT return company pages (linkedin.com/company/...) or school pages (linkedin.com/school/...)
-- ONLY return a profile if you are HIGHLY CONFIDENT it's the correct person
-- Better to return NO profile than the WRONG profile
+**CRITICAL: ONLY RETURN URLs FROM ACTUAL SEARCH RESULTS**
+- You MUST search Google for each person's LinkedIn profile
+- ONLY return a URL if you found it in actual search results
+- DO NOT generate, guess, or construct LinkedIn URLs
+- If search returns no LinkedIn profile for a person, do NOT include them in the output
 
-For each person:
-1. Search LinkedIn for their name AND organization/affiliation
-2. Look for personal profile URLs in format: linkedin.com/in/username
-3. Verify the profile matches ALL available context:
-   - Name matches or closely matches
-   - Organization/institution matches
-   - Title/role is consistent with their position
-   - Location is consistent (if known)
-4. For academics: Look for professor, researcher, PhD, university affiliation
-5. For executives: Look for C-suite, VP, Director titles at the company
+**SEARCH STRATEGY:**
+- Search: "FirstName LastName" site:linkedin.com/in
+- Look for the actual LinkedIn URL in search results
+- The URL format is: linkedin.com/in/username (username varies per person)
 
-**REJECTION CRITERIA - Do NOT return a profile if:**
-- The profile shows a completely DIFFERENT field (e.g., real estate agent when expecting researcher)
-- The profile shows a CONFLICTING location (e.g., profile says India when expecting USA/UK)
-- The profile shows an INCOMPATIBLE role (e.g., marketing manager when expecting engineer)
-- The name matches but organization does NOT match
-- You are uncertain whether it's the correct person
+**VERIFICATION:**
+For each URL you find in search results:
+1. Verify the name on the profile matches the person you're searching for
+2. Verify the organization/title is plausible (current OR past employer)
+3. If the search result shows a snippet with wrong name/org, skip it
 
-**COMMON NAME HANDLING:**
-For common names (Smith, Johnson, Wang, Kim, Kumar, etc.):
-- Require MULTIPLE matching signals (name + org + role + location)
-- If only the name matches, do NOT include the profile
-- Be EXTRA cautious with common names
+**DO NOT:**
+- Invent URLs like linkedin.com/in/firstname-lastname-12345 (these are often wrong)
+- Guess what someone's LinkedIn username might be
+- Return URLs you haven't actually found in search results
 
-**Search Tips:**
-- For names with parentheses like "Harry (Shih-I) Tan", try both versions
-- Include their institution/company in the search to narrow results
-- Professors and researchers are often on LinkedIn even if not obvious
+**HANDLING NO RESULTS:**
+- If Google search finds no LinkedIn profile for a person, simply omit them
+- It's OK to return fewer profiles than people searched, or even an empty array
+- Many people (especially academics) don't have LinkedIn profiles
 
-Return a JSON array with found profiles:
+Return a JSON array with ONLY profiles you found in search results:
 [
   {{"name": "Person Name", "linkedin_url": "https://www.linkedin.com/in/actualusername", "title": "Their Title", "affiliation": "Their Organization", "confidence": "high|medium"}}
 ]
 
-Include ONLY profiles where you are HIGHLY CONFIDENT it's the correct person.
-If no profiles can be confidently matched, return: []
+If no profiles found in search results, return: []
 
 Return ONLY the JSON array, no explanation.""",
     )
