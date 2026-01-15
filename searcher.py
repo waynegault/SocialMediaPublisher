@@ -19,6 +19,7 @@ from domain_credibility import is_reputable_domain, get_domain_tier
 from error_handling import with_enhanced_recovery
 from api_client import api_client
 from text_utils import calculate_similarity
+from url_utils import validate_url, extract_path_keywords
 
 logger = logging.getLogger(__name__)
 
@@ -47,59 +48,7 @@ def retry_with_backoff(
 
 
 # calculate_similarity is now imported from text_utils
-
-
-def validate_url(url: str) -> bool:
-    """
-    Validate a URL format and optionally check accessibility.
-    Returns True if URL is valid and accessible.
-    """
-    if not url:
-        return False
-
-    # Parse URL
-    try:
-        parsed = urlparse(url)
-        if not all([parsed.scheme, parsed.netloc]):
-            return False
-        if parsed.scheme not in ("http", "https"):
-            return False
-    except Exception:
-        return False
-
-    # Optional: Check accessibility (HEAD request with short timeout)
-    if Config.VALIDATE_SOURCE_URLS:
-        try:
-            # Try HEAD first (faster)
-            response = api_client.http_request(
-                method="HEAD",
-                url=url,
-                timeout=5,
-                allow_redirects=True,
-                endpoint="url_validation",
-            )
-            # Some servers don't support HEAD, try GET on 405
-            if response.status_code == 405:
-                response = api_client.http_get(
-                    url=url,
-                    timeout=5,
-                    allow_redirects=True,
-                    endpoint="url_validation",
-                )
-            if response.status_code >= 400:
-                logger.debug(f"URL returned {response.status_code}: {url}")
-                return False
-            return True
-        except requests.exceptions.Timeout:
-            # Timeout is acceptable - site might be slow but exists
-            logger.debug(f"URL timeout (accepting anyway): {url}")
-            return True
-        except requests.exceptions.RequestException as e:
-            # Connection errors, DNS failures, etc. - reject the URL
-            logger.debug(f"URL validation failed ({type(e).__name__}): {url}")
-            return False
-
-    return True
+# validate_url is now imported from url_utils
 
 
 def calibrate_quality_score(
@@ -276,64 +225,10 @@ def archive_urls_batch(
     return results
 
 
+# extract_url_keywords is now imported from url_utils as extract_path_keywords
 def extract_url_keywords(url: str) -> set[str]:
-    """
-    Extract meaningful keywords from a URL path.
-    E.g., "https://news.rice.edu/news/2026/researchers-unlock-catalyst-behavior"
-    -> {"researchers", "unlock", "catalyst", "behavior"}
-    """
-    if not url:
-        return set()
-
-    try:
-        parsed = urlparse(url)
-        # Combine path segments
-        path = parsed.path
-
-        # Replace common separators with spaces
-        path = re.sub(r"[-_/.]", " ", path)
-
-        # Remove numbers (years, IDs, etc.)
-        path = re.sub(r"\b\d+\b", "", path)
-
-        # Split into words and filter
-        words = path.lower().split()
-
-        # Remove very short words and common URL fragments
-        url_stopwords = {
-            "www",
-            "com",
-            "org",
-            "net",
-            "edu",
-            "html",
-            "htm",
-            "php",
-            "asp",
-            "aspx",
-            "jsp",
-            "news",
-            "article",
-            "articles",
-            "post",
-            "posts",
-            "blog",
-            "index",
-            "page",
-            "pages",
-            "en",
-            "us",
-            "uk",
-            "http",
-            "https",
-        }
-        keywords = {
-            word for word in words if len(word) > 3 and word not in url_stopwords
-        }
-
-        return keywords
-    except Exception:
-        return set()
+    """Alias for extract_path_keywords from url_utils for backward compatibility."""
+    return extract_path_keywords(url)
 
 
 def extract_article_date(story_data: dict) -> datetime | None:

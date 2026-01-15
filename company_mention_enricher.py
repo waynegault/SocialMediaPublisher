@@ -21,6 +21,7 @@ from api_client import api_client
 from text_utils import strip_markdown_code_block
 from config import Config
 from database import Database, Story
+from url_utils import validate_linkedin_url
 
 # Import shared entity validation constants from entity_constants (no optional dependencies)
 from entity_constants import (
@@ -825,25 +826,8 @@ def validate_linkedin_profile_url(url: str, strict: bool = False) -> bool:
     Returns:
         True if the URL appears to be a valid LinkedIn profile URL
     """
-    if not url or "linkedin.com/in/" not in url:
-        return False
-
-    # Extract the username/slug from the URL
-    import re
-
-    match = re.search(r"linkedin\.com/in/([\w\-]+)", url)
-    if not match:
-        return False
-
-    slug = match.group(1)
-
-    # Basic format validation - reject obviously invalid slugs
-    if len(slug) < 2 or len(slug) > 100:
-        return False
-
-    # Reject common error page slugs
-    invalid_slugs = {"login", "authwall", "error", "404", "unavailable", "uas"}
-    if slug.lower() in invalid_slugs:
+    # Use centralized URL validation for format check
+    if not validate_linkedin_url(url, url_type="profile"):
         return False
 
     # If not strict mode, accept the URL based on format alone

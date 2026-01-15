@@ -15,6 +15,7 @@ from test_framework import run_all_suites, suppress_logging
 TEST_MODULES = [
     ("config", "Config"),
     ("domain_credibility", "Domain Credibility"),
+    ("url_utils", "URL Utilities"),
     ("error_handling", "Error Handling"),
     ("rate_limiter", "Rate Limiter"),
     ("database", "Database"),

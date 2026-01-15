@@ -6,25 +6,20 @@ This refactoring plan addresses code duplication, redundant API calls, inconsist
 
 ---
 
-## Phase 1: Domain Credibility Consolidation (HIGH PRIORITY)
+## Phase 1: Domain Credibility Consolidation (HIGH PRIORITY) ✅ COMPLETED
 **Goal:** Eliminate duplicate domain lists and create a single source of truth for domain credibility.
 
-### Current Issues:
-- `searcher.py` contains `REPUTABLE_DOMAINS` set (~28 domains) for quality calibration
-- `source_verifier.py` contains `TIER_1_SOURCES` and `TIER_2_SOURCES` sets (~47 domains)
-- ~25 domains are duplicated between these files
+### Changes Completed:
+- [x] 1.1 Create new `domain_credibility.py` module with unified domain tiers
+- [x] 1.2 Export `TIER_1_SOURCES`, `TIER_2_SOURCES`, `TIER_3_SOURCES`, and `ALL_REPUTABLE_DOMAINS`
+- [x] 1.3 Update `source_verifier.py` to import from `domain_credibility.py`
+- [x] 1.4 Update `searcher.py` to import from `domain_credibility.py`
+- [x] 1.5 Add `.gov` and `.edu` pattern recognition to credibility checks
 
-### Changes:
-- [ ] 1.1 Create new `domain_credibility.py` module with unified domain tiers
-- [ ] 1.2 Export `TIER_1_SOURCES`, `TIER_2_SOURCES`, `TIER_3_SOURCES`, and `ALL_REPUTABLE_DOMAINS`
-- [ ] 1.3 Update `source_verifier.py` to import from `domain_credibility.py`
-- [ ] 1.4 Update `searcher.py` to import from `domain_credibility.py`
-- [ ] 1.5 Add `.gov` and `.edu` pattern recognition to credibility checks
-
-### Estimated Impact:
-- Removes ~50 lines of duplicate code
+### Impact Achieved:
+- Removed ~100 lines of duplicate domain definitions
 - Single place to update domain lists
-- Consistent credibility scoring
+- Consistent credibility scoring across modules
 
 ---
 
@@ -73,26 +68,33 @@ This refactoring plan addresses code duplication, redundant API calls, inconsist
 
 ---
 
-## Phase 4: URL Utilities Consolidation (MEDIUM PRIORITY)
+## Phase 4: URL Utilities Consolidation ✅ COMPLETED
 **Goal:** Create shared URL validation/parsing utilities.
 
-### Current Issues:
-- `searcher.py` has `_validate_source_url()` with URL parsing
-- `source_verifier.py` has `_get_domain_for_url()` with similar logic
-- Duplicate `urlparse()` and domain extraction patterns
+### Issues Resolved:
+- `searcher.py` had `validate_url()` with URL parsing
+- `searcher.py` had `extract_url_keywords()` with duplicate logic
+- `image_generator.py` had inline relative URL resolution
+- `company_mention_enricher.py` had duplicate LinkedIn URL validation
 
-### Changes:
-- [ ] 4.1 Create `url_utils.py` module with shared functions
-- [ ] 4.2 Implement `parse_domain(url)` - normalized domain extraction
-- [ ] 4.3 Implement `validate_url_format(url)` - basic URL validation
-- [ ] 4.4 Implement `validate_url_accessible(url, timeout)` - HTTP check
-- [ ] 4.5 Update `searcher.py` to use `url_utils`
-- [ ] 4.6 Update `source_verifier.py` to use `url_utils`
+### Changes Completed:
+- [x] 4.1 Created `url_utils.py` module with shared functions
+- [x] 4.2 Implemented `extract_path_keywords(url)` - extract keywords from URL path
+- [x] 4.3 Implemented `validate_url_format(url)` - basic URL validation
+- [x] 4.4 Implemented `validate_url_accessible(url, timeout)` - HTTP check
+- [x] 4.5 Implemented `validate_url(url)` - combined validation
+- [x] 4.6 Implemented `resolve_relative_url(relative, base)` - relative URL resolution
+- [x] 4.7 Implemented `get_base_url(url)` - extract scheme://netloc
+- [x] 4.8 Implemented `validate_linkedin_url(url, type)` - LinkedIn URL format check
+- [x] 4.9 Updated `searcher.py` to use `url_utils`
+- [x] 4.10 Updated `image_generator.py` to use `url_utils.resolve_relative_url`
+- [x] 4.11 Updated `company_mention_enricher.py` to use `url_utils.validate_linkedin_url`
+- [x] 4.12 Added url_utils tests to run_tests.py (17 tests)
 
-### Estimated Impact:
-- Removes ~40 lines of duplicate code
-- Consistent URL handling
-- Easier to maintain
+### Impact Achieved:
+- Removed ~80 lines of duplicate code
+- Consistent URL handling across codebase
+- 17 new unit tests for URL utilities
 
 ---
 
