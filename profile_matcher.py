@@ -204,16 +204,16 @@ def calculate_match_score(
 ) -> float:
     """
     Calculate how well a search result matches target criteria.
-    
+
     This is a simplified scoring function for use by API clients
     (linkedin_rapidapi_client, linkedin_voyager_client) that don't need
     the full ProfileMatcher machinery.
-    
+
     Scoring breakdown:
     - Name matching: 50% of score (0.5 max)
-    - Company matching: 40% of score (0.4 max)  
+    - Company matching: 40% of score (0.4 max)
     - Title/role bonus: 10% of score (0.1 max)
-    
+
     Args:
         target_name: The name we're searching for
         target_company: The company we expect
@@ -221,12 +221,12 @@ def calculate_match_score(
         result_company: Company from the search result
         result_headline: Headline/tagline from the search result
         result_job_title: Job title from the search result
-        
+
     Returns:
         Match score from 0.0 to 1.0 where 1.0 is a perfect match
     """
     score = 0.0
-    
+
     # Normalize inputs
     target_name_lower = target_name.lower().strip()
     target_company_lower = target_company.lower().strip()
@@ -234,11 +234,13 @@ def calculate_match_score(
     result_company_lower = result_company.lower().strip()
     headline_lower = result_headline.lower() if result_headline else ""
     job_title_lower = result_job_title.lower() if result_job_title else ""
-    
+
     # === Name matching (50% of score) ===
     if result_name_lower == target_name_lower:
         score += 0.5
-    elif target_name_lower in result_name_lower or result_name_lower in target_name_lower:
+    elif (
+        target_name_lower in result_name_lower or result_name_lower in target_name_lower
+    ):
         score += 0.35
     else:
         # Partial name match by word overlap
@@ -247,20 +249,23 @@ def calculate_match_score(
         overlap = len(target_parts & result_parts)
         if overlap > 0:
             score += 0.25 * (overlap / max(len(target_parts), 1))
-    
+
     # === Company matching (40% of score) ===
     # Skip generic company suffixes for comparison
     skip_words = {"inc", "llc", "ltd", "corp", "corporation", "the", "company", "group"}
-    
+
     def clean_company(name: str) -> str:
         return " ".join(w for w in name.split() if w not in skip_words)
-    
+
     target_company_clean = clean_company(target_company_lower)
     result_company_clean = clean_company(result_company_lower)
-    
+
     if result_company_clean == target_company_clean:
         score += 0.4
-    elif target_company_clean in result_company_clean or result_company_clean in target_company_clean:
+    elif (
+        target_company_clean in result_company_clean
+        or result_company_clean in target_company_clean
+    ):
         score += 0.3
     elif target_company_clean in headline_lower:
         # Company mentioned in headline
@@ -272,19 +277,31 @@ def calculate_match_score(
         overlap = len(target_parts & result_parts)
         if overlap > 0:
             score += 0.2 * (overlap / max(len(target_parts), 1))
-    
+
     # === Title/Role bonus (10% of score) ===
     executive_titles = [
-        "ceo", "cto", "cfo", "coo", "president", "founder",
-        "director", "vp", "vice president", "head of", "chief",
-        "professor", "researcher", "scientist", "engineer"
+        "ceo",
+        "cto",
+        "cfo",
+        "coo",
+        "president",
+        "founder",
+        "director",
+        "vp",
+        "vice president",
+        "head of",
+        "chief",
+        "professor",
+        "researcher",
+        "scientist",
+        "engineer",
     ]
     combined_title = f"{job_title_lower} {headline_lower}"
     for title in executive_titles:
         if title in combined_title:
             score += 0.1
             break
-    
+
     return min(score, 1.0)
 
 

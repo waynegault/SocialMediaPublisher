@@ -227,17 +227,19 @@ class FreshLinkedInAPIClient:
         Calculate how well a result matches the search criteria.
 
         Returns a score from 0.0 to 1.0 where 1.0 is a perfect match.
-        
+
         Uses centralized scoring from profile_matcher module.
         """
         # Extract name from result (support both formats)
         result_name = result.get("full_name", "").strip()
         if not result_name:
-            result_name = f"{result.get('first_name', '')} {result.get('last_name', '')}".strip()
-        
+            result_name = (
+                f"{result.get('first_name', '')} {result.get('last_name', '')}".strip()
+            )
+
         # Use centralized scoring function
         from profile_matcher import calculate_match_score
-        
+
         return calculate_match_score(
             target_name=target_name,
             target_company=target_company,
