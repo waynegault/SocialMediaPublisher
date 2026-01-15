@@ -146,6 +146,11 @@ class SettingsModel(BaseSettings):
     hf_prefer_if_configured: bool = Field(default=True, alias="HF_PREFER_IF_CONFIGURED")
 
     # --- Image Settings ---
+    # Control whether generated images include a central human character
+    # YES = Include central human character (default behavior)
+    # NO = No central character; random humans only if incidental/peripheral to the scene
+    human_in_image: bool = Field(default=True, alias="HUMAN_IN_IMAGE")
+
     image_style: str = Field(
         default=(
             "industrial engineering photography, technical documentation style, "
@@ -533,6 +538,10 @@ class Config:
     IMAGE_ASPECT_RATIO: str = _get_str("IMAGE_ASPECT_RATIO", "16:9")
     # Image resolution size ("1K" or "2K") - higher = better quality but slower
     IMAGE_SIZE: str = _get_str("IMAGE_SIZE", "2K")
+    # Control whether generated images include a central human character
+    # True = Include central human character (default behavior)
+    # False = No central character; random humans only if incidental/peripheral
+    HUMAN_IN_IMAGE: bool = _get_bool("HUMAN_IN_IMAGE", True)
     # Negative prompt - describes what to AVOID in generated images
     IMAGE_NEGATIVE_PROMPT: str = _get_str(
         "IMAGE_NEGATIVE_PROMPT",

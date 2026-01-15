@@ -1095,8 +1095,8 @@ Keep response under 100 words."""
 
     def _build_image_prompt(self, story: Story) -> str:
         """Build a prompt for image generation using an LLM for refinement."""
-        # Generate random appearance for this image to ensure variety
-        random_appearance = get_random_appearance()
+        # Generate random appearance for this image to ensure variety (only if human in image)
+        random_appearance = get_random_appearance() if Config.HUMAN_IN_IMAGE else ""
 
         # Fetch source content for richer context
         source_context = self._fetch_source_content(story)
@@ -1149,11 +1149,31 @@ Keep response under 100 words."""
             discipline=Config.DISCIPLINE,
         )
 
-        # Inject the specific appearance to use for this image
-        appearance_instruction = f"""
+        # Conditionally inject appearance instruction based on HUMAN_IN_IMAGE setting
+        if Config.HUMAN_IN_IMAGE:
+            # Include central human character with specific appearance
+            appearance_instruction = f"""
 MANDATORY APPEARANCE FOR THIS IMAGE (use exactly as specified):
     The female {Config.DISCIPLINE} professional in this image must be: {random_appearance}.
 Do NOT deviate from this appearance description. Include these exact physical traits in your prompt.
+"""
+        else:
+            # No central human character - focus on concepts, technology, environments
+            appearance_instruction = f"""
+IMPORTANT: NO CENTRAL HUMAN CHARACTER IN THIS IMAGE.
+Focus on illustrating the story through:
+- Technology, equipment, machinery, or scientific apparatus relevant to the story
+- Environments, facilities, or locations described in the story
+- Abstract concepts, data visualizations, or process diagrams
+- Natural phenomena, materials, or products being discussed
+
+If people appear in the image, they MUST be:
+- Incidental and peripheral to the main subject (e.g., small figures in background)
+- Part of a crowd or group scene where no individual is the focus
+- Silhouettes or partially visible, not the main subject
+
+The image should focus on the SUBJECT MATTER of the story, not on any individual person.
+Do NOT include: close-up portraits, waist-up shots of individuals, or any person as the central figure.
 """
         # Combine appearance instruction, source context, and refinement prompt
         refinement_prompt = (
@@ -1163,9 +1183,14 @@ Do NOT deviate from this appearance description. Include these exact physical tr
         try:
             refined = None
             if self.local_client:
-                logger.info(
-                    f"Using local LLM to refine image prompt (appearance: {random_appearance[:50]}...)"
-                )
+                if Config.HUMAN_IN_IMAGE:
+                    logger.info(
+                        f"Using local LLM to refine image prompt (appearance: {random_appearance[:50]}...)"
+                    )
+                else:
+                    logger.info(
+                        "Using local LLM to refine image prompt (no central human)"
+                    )
                 response = self.local_client.chat.completions.create(
                     model=Config.LM_STUDIO_MODEL,
                     messages=[{"role": "user", "content": refinement_prompt}],
@@ -1173,9 +1198,14 @@ Do NOT deviate from this appearance description. Include these exact physical tr
                 refined = response.choices[0].message.content
             else:
                 # Fallback to Gemini for refinement
-                logger.info(
-                    f"Using Gemini to refine image prompt (appearance: {random_appearance[:50]}...)"
-                )
+                if Config.HUMAN_IN_IMAGE:
+                    logger.info(
+                        f"Using Gemini to refine image prompt (appearance: {random_appearance[:50]}...)"
+                    )
+                else:
+                    logger.info(
+                        "Using Gemini to refine image prompt (no central human)"
+                    )
                 response = api_client.gemini_generate(
                     client=self.client,
                     model=Config.MODEL_TEXT,
@@ -1191,16 +1221,27 @@ Do NOT deviate from this appearance description. Include these exact physical tr
         except Exception as e:
             logger.warning(f"Prompt refinement failed: {e}. Using base prompt.")
 
-        # Ultimate fallback - use configurable fallback template with random appearance
+        # Ultimate fallback - use configurable fallback template
         fallback_template = Config.IMAGE_FALLBACK_PROMPT
-        fallback = fallback_template.format(
-            story_title=story.title[:60],
-            discipline=Config.DISCIPLINE,
-            appearance=random_appearance,
-        )
-        # If the template does not expose {appearance}, replace a generic phrase
-        if "{appearance}" not in fallback_template:
-            fallback = fallback.replace("a beautiful female", random_appearance, 1)
+
+        if Config.HUMAN_IN_IMAGE:
+            # Use appearance-based fallback
+            fallback = fallback_template.format(
+                story_title=story.title[:60],
+                discipline=Config.DISCIPLINE,
+                appearance=random_appearance,
+            )
+            # If the template does not expose {appearance}, replace a generic phrase
+            if "{appearance}" not in fallback_template:
+                fallback = fallback.replace("a beautiful female", random_appearance, 1)
+        else:
+            # No-human fallback - create a concept-focused prompt
+            fallback = (
+                f"A photo of industrial/scientific equipment and technology related to: {story.title[:60]}. "
+                f"Focus on machinery, facilities, processes, or environments relevant to {Config.DISCIPLINE}. "
+                "No people as the central subject. Wide shot showing the technology or environment. "
+                "Professional documentary photography, editorial quality for a trade publication."
+            )
         return fallback
 
     def _clean_image_prompt(self, prompt: str) -> str:
