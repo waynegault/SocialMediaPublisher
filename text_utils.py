@@ -423,9 +423,16 @@ def normalize_name(name: str) -> str:
     for suffix in suffixes:
         name = re.sub(suffix, "", name, flags=re.IGNORECASE)
 
-    # Remove standalone middle initials (e.g., "B." or "B")
-    name = re.sub(r"\b[a-z]\.\b", " ", name)
-    name = re.sub(r"\b[a-z]\b", " ", name)
+    # Remove standalone middle initials (e.g., "B." or "B" or "g.")
+    # Pattern: single letter followed by optional period, surrounded by spaces or at word boundaries
+    # First handle initials with periods (e.g., "wayne g. gault" -> "wayne gault")
+    name = re.sub(r"\s+[a-z]\.\s+", " ", name)
+    # Then handle initials without periods (e.g., "wayne g gault" -> "wayne gault")
+    name = re.sub(r"\s+[a-z]\s+", " ", name)
+    # Handle trailing initials with period
+    name = re.sub(r"\s+[a-z]\.$", "", name)
+    # Handle trailing initials without period
+    name = re.sub(r"\s+[a-z]$", "", name)
 
     # Normalize whitespace
     name = re.sub(r"\s+", " ", name)
