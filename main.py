@@ -4564,8 +4564,8 @@ To get these cookies:
 """)
 
     # Check current status
-    li_at = os.getenv("LINKEDIN_LI_AT", "")
-    jsessionid = os.getenv("LINKEDIN_JSESSIONID", "")
+    li_at = Config.LINKEDIN_LI_AT
+    jsessionid = Config.LINKEDIN_JSESSIONID
 
     if li_at:
         print(
@@ -4739,7 +4739,7 @@ ALTERNATIVE (FREE): Browser-based lookup uses DuckDuckGo + Selenium.
 """)
 
     # Check current status
-    current_key = os.getenv("RAPIDAPI_KEY", "")
+    current_key = Config.RAPIDAPI_KEY
 
     if current_key:
         masked = (

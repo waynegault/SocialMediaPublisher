@@ -30,10 +30,10 @@ from rate_limiter import AdaptiveRateLimiter
 
 logger = logging.getLogger(__name__)
 
-# Engagement limits
-DAILY_COMMENT_LIMIT = 25
-HOURLY_COMMENT_LIMIT = 5
-MIN_COMMENT_INTERVAL_SECONDS = 300  # 5 minutes between comments
+# Engagement limits - use Config with fallback to defaults for backward compatibility
+DAILY_COMMENT_LIMIT = Config.LINKEDIN_DAILY_COMMENT_LIMIT
+HOURLY_COMMENT_LIMIT = Config.LINKEDIN_HOURLY_COMMENT_LIMIT
+MIN_COMMENT_INTERVAL_SECONDS = Config.LINKEDIN_MIN_COMMENT_INTERVAL
 
 
 # =============================================================================

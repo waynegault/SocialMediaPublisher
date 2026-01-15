@@ -22,13 +22,14 @@ from typing import Optional
 
 from config import Config
 from database import Database
+from config import Config
 from rate_limiter import AdaptiveRateLimiter
 
 logger = logging.getLogger(__name__)
 
-# Weekly connection limit (LinkedIn's soft limit)
-WEEKLY_CONNECTION_LIMIT = 100
-DAILY_CONNECTION_LIMIT = 20
+# Weekly connection limit (LinkedIn's soft limit) - use Config with fallback
+WEEKLY_CONNECTION_LIMIT = Config.LINKEDIN_WEEKLY_CONNECTION_LIMIT
+DAILY_CONNECTION_LIMIT = Config.LINKEDIN_DAILY_CONNECTION_LIMIT
 
 
 # =============================================================================

@@ -87,6 +87,9 @@ class SettingsModel(BaseSettings):
 
     # --- API Keys ---
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
+    openai_api_key: str = Field(
+        default="", alias="OPENAI_API_KEY"
+    )  # For RAG and embeddings
     huggingface_api_token: str = Field(default="", alias="HUGGINGFACE_API_TOKEN")
     huggingface_api_key: str = Field(
         default="", alias="HUGGINGFACE_API_KEY"
@@ -115,6 +118,26 @@ class SettingsModel(BaseSettings):
     # These cookies can be extracted from browser dev tools after logging into LinkedIn
     linkedin_li_at: str = Field(default="", alias="LINKEDIN_LI_AT")
     linkedin_jsessionid: str = Field(default="", alias="LINKEDIN_JSESSIONID")
+
+    # --- LinkedIn Engagement Limits ---
+    # These limits help avoid triggering LinkedIn's anti-automation detection
+    linkedin_daily_comment_limit: int = Field(
+        default=25, ge=1, le=100, alias="LINKEDIN_DAILY_COMMENT_LIMIT"
+    )
+    linkedin_hourly_comment_limit: int = Field(
+        default=5, ge=1, le=20, alias="LINKEDIN_HOURLY_COMMENT_LIMIT"
+    )
+    linkedin_min_comment_interval: int = Field(
+        default=300,
+        ge=60,
+        alias="LINKEDIN_MIN_COMMENT_INTERVAL",  # seconds
+    )
+    linkedin_weekly_connection_limit: int = Field(
+        default=100, ge=1, le=200, alias="LINKEDIN_WEEKLY_CONNECTION_LIMIT"
+    )
+    linkedin_daily_connection_limit: int = Field(
+        default=20, ge=1, le=50, alias="LINKEDIN_DAILY_CONNECTION_LIMIT"
+    )
 
     # --- RapidAPI Fresh LinkedIn Data API (primary LinkedIn lookup method) ---
     # Get API key from: https://rapidapi.com/freshdata-freshdata-default/api/fresh-linkedin-profile-data
@@ -467,6 +490,7 @@ class Config:
 
     # --- API Keys ---
     GEMINI_API_KEY: str = _get_str("GEMINI_API_KEY")
+    OPENAI_API_KEY: str = _get_str("OPENAI_API_KEY")  # For RAG and embeddings
     # Support either HUGGINGFACE_API_TOKEN or HUGGINGFACE_API_KEY
     HUGGINGFACE_API_TOKEN: str = _get_str("HUGGINGFACE_API_TOKEN") or _get_str(
         "HUGGINGFACE_API_KEY"
@@ -491,6 +515,18 @@ class Config:
     # Extract these from browser dev tools after logging into LinkedIn
     LINKEDIN_LI_AT: str = _get_str("LINKEDIN_LI_AT", "")
     LINKEDIN_JSESSIONID: str = _get_str("LINKEDIN_JSESSIONID", "")
+
+    # --- LinkedIn Engagement Limits ---
+    # These limits help avoid triggering LinkedIn's anti-automation detection
+    LINKEDIN_DAILY_COMMENT_LIMIT: int = _get_int("LINKEDIN_DAILY_COMMENT_LIMIT", 25)
+    LINKEDIN_HOURLY_COMMENT_LIMIT: int = _get_int("LINKEDIN_HOURLY_COMMENT_LIMIT", 5)
+    LINKEDIN_MIN_COMMENT_INTERVAL: int = _get_int("LINKEDIN_MIN_COMMENT_INTERVAL", 300)
+    LINKEDIN_WEEKLY_CONNECTION_LIMIT: int = _get_int(
+        "LINKEDIN_WEEKLY_CONNECTION_LIMIT", 100
+    )
+    LINKEDIN_DAILY_CONNECTION_LIMIT: int = _get_int(
+        "LINKEDIN_DAILY_CONNECTION_LIMIT", 20
+    )
 
     # --- LinkedIn Search Settings ---
     # Skip LinkedIn's direct search (subject to rate limits) and use Google/Bing instead
@@ -1469,6 +1505,11 @@ Return ONLY valid JSON, no explanation.""",
     USE_LAST_CHECKED_DATE: bool = _get_bool("USE_LAST_CHECKED_DATE", True)
     # Search engine for LinkedIn profile lookups (google, bing, duckduckgo)
     SEARCH_ENGINE: str = _get_str("SEARCH_ENGINE", "google").lower()
+    # Browser automation backend: "uc" (undetected-chromedriver) or "nodriver" (recommended)
+    # nodriver is the successor to undetected-chromedriver with better anti-detection
+    BROWSER_BACKEND: str = _get_str("BROWSER_BACKEND", "uc").lower()
+    # Skip direct LinkedIn search (to avoid LinkedIn rate limits)
+    SKIP_LINKEDIN_DIRECT_SEARCH: bool = _get_bool("SKIP_LINKEDIN_DIRECT_SEARCH", False)
     # Maximum number of stories to find per search (default 5)
     MAX_STORIES_PER_SEARCH: int = _get_int("MAX_STORIES_PER_SEARCH", 5)
     # Maximum number of people to search for LinkedIn profiles per story (reduces API calls)

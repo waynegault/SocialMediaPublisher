@@ -1,5 +1,6 @@
-"""LinkedIn company and person profile lookup using Gemini with Google Search grounding and undetected-chromedriver."""
+"""LinkedIn company and person profile lookup using Gemini with Google Search grounding and nodriver/undetected-chromedriver."""
 
+import asyncio
 import base64
 import concurrent.futures
 import json
@@ -7,6 +8,7 @@ import logging
 import os
 import random
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -36,20 +38,55 @@ from entity_constants import (
 
 logger = logging.getLogger(__name__)
 
-# Import undetected-chromedriver for CAPTCHA-resistant browser automation
-# Type stubs for optional dependencies
+# === Browser Backend Detection ===
+# Try nodriver first (recommended), fall back to undetected-chromedriver
+
+nodriver: Any = None
+NODRIVER_AVAILABLE = False
 uc: Any = None
 UC_AVAILABLE = False
+By: Any = None  # Selenium By class for element selection
 
+# Try nodriver first (recommended successor to undetected-chromedriver)
 try:
-    import undetected_chromedriver as _uc
+    import nodriver as _nodriver
 
-    uc = _uc
-    UC_AVAILABLE = True
+    nodriver = _nodriver
+    NODRIVER_AVAILABLE = True
+    logger.debug("nodriver available for browser automation")
 except ImportError:
-    logger.warning(
-        "undetected-chromedriver not installed - pip install undetected-chromedriver"
-    )
+    logger.debug("nodriver not installed - trying undetected-chromedriver")
+
+# Fall back to undetected-chromedriver if nodriver not available
+if not NODRIVER_AVAILABLE:
+    try:
+        import undetected_chromedriver as _uc
+        from selenium.webdriver.common.by import By as _By
+
+        uc = _uc
+        By = _By
+        UC_AVAILABLE = True
+        logger.debug("undetected-chromedriver available for browser automation")
+    except ImportError:
+        logger.warning(
+            "No browser automation available - pip install nodriver (recommended) or undetected-chromedriver"
+        )
+
+
+# Determine which backend to use based on config and availability
+def _get_browser_backend() -> str:
+    """Get the browser backend to use based on config and availability."""
+    preferred = Config.BROWSER_BACKEND.lower()
+    if preferred == "nodriver" and NODRIVER_AVAILABLE:
+        return "nodriver"
+    if preferred == "uc" and UC_AVAILABLE:
+        return "uc"
+    # Fall back to whatever is available
+    if NODRIVER_AVAILABLE:
+        return "nodriver"
+    if UC_AVAILABLE:
+        return "uc"
+    return "none"
 
 
 # Import and apply Windows error suppression from centralized browser module
@@ -60,6 +97,256 @@ try:
     _suppress_uc_cleanup_errors()
 except ImportError:
     pass  # browser module may not be available
+
+
+# =============================================================================
+# NodriverWrapper: Selenium-like interface for nodriver
+# =============================================================================
+
+
+class NodriverWrapper:
+    """
+    Wrapper around nodriver that provides a Selenium-like synchronous interface.
+
+    This allows the existing code that uses driver.get(), driver.page_source, etc.
+    to work with nodriver without major refactoring.
+    """
+
+    def __init__(self, lookup_instance: "LinkedInCompanyLookup"):
+        """Initialize the wrapper with a reference to the lookup instance."""
+        self._lookup = lookup_instance
+        self._page_load_timeout = 30
+
+    def _run_async(self, coro: Any) -> Any:
+        """Run an async coroutine synchronously."""
+        return self._lookup._run_async(coro)
+
+    @property
+    def _tab(self) -> Any:
+        """Get the shared nodriver tab."""
+        from linkedin_profile_lookup import LinkedInCompanyLookup
+
+        return LinkedInCompanyLookup._shared_nodriver_tab
+
+    @_tab.setter
+    def _tab(self, value: Any) -> None:
+        """Set the shared nodriver tab."""
+        from linkedin_profile_lookup import LinkedInCompanyLookup
+
+        LinkedInCompanyLookup._shared_nodriver_tab = value
+
+    @property
+    def _browser(self) -> Any:
+        """Get the shared nodriver browser."""
+        from linkedin_profile_lookup import LinkedInCompanyLookup
+
+        return LinkedInCompanyLookup._shared_nodriver_browser
+
+    def set_page_load_timeout(self, timeout: int) -> None:
+        """Set page load timeout (stored for reference, nodriver handles this differently)."""
+        self._page_load_timeout = timeout
+
+    def get(self, url: str) -> None:
+        """Navigate to a URL (Selenium-compatible interface)."""
+
+        async def _navigate():
+            from linkedin_profile_lookup import LinkedInCompanyLookup
+
+            LinkedInCompanyLookup._shared_nodriver_tab = await self._browser.get(url)
+            # Wait for page to be somewhat loaded
+            await LinkedInCompanyLookup._shared_nodriver_tab.sleep(1)
+
+        self._run_async(_navigate())
+
+    @property
+    def current_url(self) -> str:
+        """Get the current URL (Selenium-compatible interface)."""
+        if self._tab is None:
+            return ""
+        try:
+            return self._tab.url or ""
+        except Exception:
+            return ""
+
+    @property
+    def page_source(self) -> str:
+        """Get the page source HTML (Selenium-compatible interface)."""
+
+        async def _get_content():
+            if self._tab is None:
+                return ""
+            try:
+                return await self._tab.get_content()
+            except Exception:
+                return ""
+
+        return self._run_async(_get_content())
+
+    def execute_script(self, script: str, *args) -> Any:
+        """Execute JavaScript on the page (Selenium-compatible interface)."""
+
+        async def _execute():
+            if self._tab is None:
+                return None
+            try:
+                # nodriver uses evaluate for JS execution
+                return await self._tab.evaluate(script)
+            except Exception as e:
+                logger.debug(f"Script execution error: {e}")
+                return None
+
+        return self._run_async(_execute())
+
+    def find_element(self, by: str, value: str) -> Optional["NodriverElement"]:
+        """Find a single element (Selenium-compatible interface)."""
+
+        async def _find():
+            if self._tab is None:
+                return None
+            try:
+                # Map Selenium By types to nodriver selectors
+                if by == "css selector" or (By and by == By.CSS_SELECTOR):
+                    elem = await self._tab.select(value)
+                elif by == "xpath" or (By and by == By.XPATH):
+                    elem = await self._tab.select(value, _type="xpath")
+                elif by == "tag name" or (By and by == By.TAG_NAME):
+                    elem = await self._tab.select(value)
+                elif by == "id" or (By and by == By.ID):
+                    elem = await self._tab.select(f"#{value}")
+                elif by == "class name" or (By and by == By.CLASS_NAME):
+                    elem = await self._tab.select(f".{value}")
+                else:
+                    elem = await self._tab.select(value)
+
+                if elem:
+                    return NodriverElement(elem, self)
+                return None
+            except Exception as e:
+                logger.debug(f"Element not found ({by}={value}): {e}")
+                return None
+
+        return self._run_async(_find())
+
+    def find_elements(self, by: str, value: str) -> List["NodriverElement"]:
+        """Find multiple elements (Selenium-compatible interface)."""
+
+        async def _find_all():
+            if self._tab is None:
+                return []
+            try:
+                # Map Selenium By types to nodriver selectors
+                if by == "css selector" or (By and by == By.CSS_SELECTOR):
+                    elems = await self._tab.select_all(value)
+                elif by == "xpath" or (By and by == By.XPATH):
+                    # nodriver doesn't have select_all for xpath, use query
+                    elems = await self._tab.query_selector_all(value)
+                elif by == "tag name" or (By and by == By.TAG_NAME):
+                    elems = await self._tab.select_all(value)
+                elif by == "id" or (By and by == By.ID):
+                    elems = await self._tab.select_all(f"#{value}")
+                elif by == "class name" or (By and by == By.CLASS_NAME):
+                    elems = await self._tab.select_all(f".{value}")
+                else:
+                    elems = await self._tab.select_all(value)
+
+                return [NodriverElement(e, self) for e in (elems or [])]
+            except Exception as e:
+                logger.debug(f"Elements not found ({by}={value}): {e}")
+                return []
+
+        return self._run_async(_find_all())
+
+    def delete_all_cookies(self) -> None:
+        """Delete all cookies (Selenium-compatible interface)."""
+
+        async def _clear_cookies():
+            if self._tab is not None:
+                try:
+                    await self._tab.send(nodriver.cdp.network.clear_browser_cookies())
+                except Exception:
+                    pass
+
+        self._run_async(_clear_cookies())
+
+    def quit(self) -> None:
+        """Quit the browser (Selenium-compatible interface)."""
+
+        async def _quit():
+            from linkedin_profile_lookup import LinkedInCompanyLookup
+
+            if LinkedInCompanyLookup._shared_nodriver_browser is not None:
+                try:
+                    await LinkedInCompanyLookup._shared_nodriver_browser.stop()
+                except Exception:
+                    pass
+                LinkedInCompanyLookup._shared_nodriver_browser = None
+                LinkedInCompanyLookup._shared_nodriver_tab = None
+
+        self._run_async(_quit())
+
+
+class NodriverElement:
+    """
+    Wrapper around nodriver element that provides a Selenium-like interface.
+    """
+
+    def __init__(self, element: Any, wrapper: NodriverWrapper):
+        self._element = element
+        self._wrapper = wrapper
+
+    def _run_async(self, coro: Any) -> Any:
+        """Run an async coroutine synchronously."""
+        return self._wrapper._run_async(coro)
+
+    @property
+    def text(self) -> str:
+        """Get the element's text content."""
+
+        async def _get_text():
+            try:
+                return await self._element.get_text() or ""
+            except Exception:
+                return ""
+
+        return self._run_async(_get_text())
+
+    def get_attribute(self, name: str) -> Optional[str]:
+        """Get an attribute value."""
+
+        async def _get_attr():
+            try:
+                return await self._element.get_attribute(name)
+            except Exception:
+                return None
+
+        return self._run_async(_get_attr())
+
+    def click(self) -> None:
+        """Click the element."""
+
+        async def _click():
+            try:
+                await self._element.click()
+            except Exception as e:
+                logger.debug(f"Click failed: {e}")
+
+        self._run_async(_click())
+
+    def send_keys(self, text: str) -> None:
+        """Send keys to the element (type text)."""
+
+        async def _send_keys():
+            try:
+                await self._element.send_keys(text)
+            except Exception as e:
+                logger.debug(f"Send keys failed: {e}")
+
+        self._run_async(_send_keys())
+
+    def is_displayed(self) -> bool:
+        """Check if element is displayed."""
+        # nodriver doesn't have a direct is_displayed, assume visible if exists
+        return self._element is not None
 
 
 # === TypedDict definitions for structured return types ===
@@ -420,11 +707,15 @@ class LinkedInCompanyLookup:
     """Look up LinkedIn company pages using Gemini with Google Search grounding."""
 
     # === CLASS-LEVEL SHARED STATE ===
-    # Chrome driver is shared across ALL instances to prevent multiple browser windows
-    _shared_uc_driver: Optional[Any] = None
+    # Browser is shared across ALL instances to prevent multiple browser windows
+    _shared_uc_driver: Optional[Any] = None  # UC Chrome driver (legacy)
+    _shared_nodriver_browser: Optional[Any] = None  # nodriver browser instance
+    _shared_nodriver_tab: Optional[Any] = None  # nodriver active tab
+    _shared_event_loop: Optional[Any] = None  # asyncio event loop for nodriver
     _shared_driver_search_count: int = 0
     _shared_linkedin_login_verified: bool = False
     _shared_driver_lock = None  # Will be initialized on first use (threading.Lock)
+    _shared_browser_backend: str = ""  # "nodriver" or "uc"
 
     # === ORGANIZATION NAME ALIASES (imported from organization_aliases module) ===
     # See module-level import: from organization_aliases import ORG_ALIASES as _ORG_ALIASES
@@ -1205,24 +1496,125 @@ class LinkedInCompanyLookup:
         except OSError as e:
             logger.warning(f"Could not reset Chrome preferences: {e}")
 
+    # =========================================================================
+    # Async Event Loop Management for nodriver
+    # =========================================================================
+
+    def _get_event_loop(self) -> Any:
+        """Get or create an asyncio event loop for nodriver operations."""
+        if (
+            LinkedInCompanyLookup._shared_event_loop is None
+            or LinkedInCompanyLookup._shared_event_loop.is_closed()
+        ):
+            try:
+                LinkedInCompanyLookup._shared_event_loop = asyncio.get_event_loop()
+                if LinkedInCompanyLookup._shared_event_loop.is_closed():
+                    raise RuntimeError("Loop is closed")
+            except RuntimeError:
+                LinkedInCompanyLookup._shared_event_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(LinkedInCompanyLookup._shared_event_loop)
+        return LinkedInCompanyLookup._shared_event_loop
+
+    def _run_async(self, coro: Any) -> Any:
+        """Run an async coroutine synchronously."""
+        loop = self._get_event_loop()
+        return loop.run_until_complete(coro)
+
+    # =========================================================================
+    # Nodriver Browser Management (Recommended)
+    # =========================================================================
+
+    async def _create_nodriver_browser_async(self) -> bool:
+        """Create a new nodriver browser instance asynchronously."""
+        try:
+            # Start browser with optimal settings for anti-detection
+            LinkedInCompanyLookup._shared_nodriver_browser = await nodriver.start(
+                headless=False,  # Must be False for anti-detection
+                sandbox=False,
+                lang="en-US",
+            )
+
+            # Get the initial tab
+            LinkedInCompanyLookup._shared_nodriver_tab = (
+                await LinkedInCompanyLookup._shared_nodriver_browser.get("about:blank")
+            )
+            LinkedInCompanyLookup._shared_browser_backend = "nodriver"
+
+            logger.info("Created nodriver browser with anti-detection settings")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to create nodriver browser: {e}")
+            return False
+
+    def _get_nodriver_browser(self) -> Optional[Any]:
+        """Get or create a shared nodriver browser instance.
+
+        Returns a NodriverWrapper that provides a Selenium-like interface.
+        """
+        if not NODRIVER_AVAILABLE:
+            logger.warning("nodriver not installed - pip install nodriver")
+            return None
+
+        # Check if browser exists and is valid
+        if LinkedInCompanyLookup._shared_nodriver_browser is not None:
+            # Check search count for rotation
+            if self._driver_search_count >= self._max_searches_per_driver:
+                logger.debug(
+                    f"Resetting search count after {self._driver_search_count} searches"
+                )
+                self._driver_search_count = 0
+                time.sleep(5 + random.random() * 3)
+                # Clear cookies via async
+                try:
+                    self._run_async(self._clear_nodriver_cookies_async())
+                except Exception:
+                    pass
+            return NodriverWrapper(self)
+
+        # Create new browser
+        try:
+            success = self._run_async(self._create_nodriver_browser_async())
+            if success:
+                return NodriverWrapper(self)
+        except Exception as e:
+            logger.error(f"Failed to create nodriver browser: {e}")
+
+        return None
+
+    async def _clear_nodriver_cookies_async(self) -> None:
+        """Clear browser cookies."""
+        if LinkedInCompanyLookup._shared_nodriver_tab is not None:
+            try:
+                await LinkedInCompanyLookup._shared_nodriver_tab.send(
+                    nodriver.cdp.network.clear_browser_cookies()
+                )
+            except Exception:
+                pass
+
     def _get_uc_driver(self) -> Optional[Any]:
-        """Get or create a shared UC Chrome driver instance.
+        """Get or create a shared browser instance (nodriver or UC Chrome).
 
-        Uses enhanced anti-detection approach based on ancestry project:
-        - Additional stealth flags to appear as normal browser
-        - Experimental options to disable automation indicators
-        - Preferences reset to clean state
-        - Version pinning for ChromeDriver compatibility
-
-        The driver is reused across multiple searches for efficiency.
+        Uses nodriver by default (recommended), falls back to UC Chrome.
+        The browser is reused across multiple searches for efficiency.
         Call close_browser() when done with all searches.
 
         Returns:
-            UC Chrome driver instance, or None if UC not available
+            Browser wrapper instance, or None if no browser available
         """
+        backend = _get_browser_backend()
+
+        # Use nodriver if available and configured
+        if backend == "nodriver":
+            wrapper = self._get_nodriver_browser()
+            if wrapper is not None:
+                return wrapper
+            logger.warning("nodriver failed, falling back to UC Chrome")
+
+        # Fall back to UC Chrome
         if not UC_AVAILABLE:
             logger.warning(
-                "undetected-chromedriver not installed - pip install undetected-chromedriver"
+                "No browser automation available - pip install nodriver or undetected-chromedriver"
             )
             return None
 
@@ -1245,11 +1637,7 @@ class LinkedInCompanyLookup:
                     return self._uc_driver
                 except Exception:
                     # Driver died, will recreate below
-                    try:
-                        self._uc_driver.quit()
-                    except Exception:
-                        pass
-                    self._uc_driver = None
+                    self._force_cleanup_driver()
             else:
                 try:
                     # Check if driver is still alive
@@ -1257,18 +1645,78 @@ class LinkedInCompanyLookup:
                     return self._uc_driver
                 except Exception:
                     # Driver is dead, clean up and create new one
-                    try:
-                        self._uc_driver.quit()
-                    except Exception:
-                        pass
-                    self._uc_driver = None
-                    self._driver_search_count = 0
-                    time.sleep(2)  # Allow Chrome to fully terminate before restart
+                    self._force_cleanup_driver()
 
-        # Create new driver with enhanced anti-detection settings
+        # Attempt driver creation with retry logic
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                driver = self._create_new_uc_driver()
+                if driver is not None:
+                    self._uc_driver = driver
+                    LinkedInCompanyLookup._shared_browser_backend = "uc"
+                    return driver
+            except Exception as e:
+                logger.warning(
+                    f"Driver creation attempt {attempt + 1}/{max_retries} failed: {e}"
+                )
+                # Clean up any partial state
+                self._force_cleanup_driver()
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 3  # Exponential backoff: 3s, 6s, 9s
+                    logger.info(f"Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+
+        logger.error(f"Failed to create UC Chrome driver after {max_retries} attempts")
+        return None
+
+    def _force_cleanup_driver(self) -> None:
+        """Force cleanup of driver and kill orphan Chrome processes.
+
+        This handles cases where Chrome process is stuck or driver session is invalid.
+        """
+        # Clean up nodriver browser
+        if LinkedInCompanyLookup._shared_nodriver_browser is not None:
+            try:
+                self._run_async(LinkedInCompanyLookup._shared_nodriver_browser.stop())
+            except Exception:
+                pass
+            LinkedInCompanyLookup._shared_nodriver_browser = None
+            LinkedInCompanyLookup._shared_nodriver_tab = None
+
+        # Try to quit UC driver gracefully
+        if self._uc_driver is not None:
+            try:
+                self._uc_driver.quit()
+            except Exception:
+                pass
+            self._uc_driver = None
+
+        self._driver_search_count = 0
+
+        # Kill orphan Chrome processes that might be holding the profile lock
+        # This is a last resort for Windows when Chrome doesn't close properly
         try:
-            from selenium.webdriver.common.by import By
+            # Kill chromedriver processes (Windows-specific)
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "chromedriver.exe"],
+                capture_output=True,
+                timeout=5,
+            )
+            logger.debug("Killed orphan chromedriver processes")
+        except Exception:
+            pass  # Ignore if taskkill fails
 
+        # Give Windows time to release file locks
+        time.sleep(3)
+
+    def _create_new_uc_driver(self) -> Optional[Any]:
+        """Create a new UC Chrome driver with anti-detection settings.
+
+        Returns:
+            Chrome driver instance or None if creation fails
+        """
+        try:
             options = uc.ChromeOptions()
 
             # === CORE STABILITY OPTIONS ===
@@ -1316,8 +1764,9 @@ class LinkedInCompanyLookup:
             # Reset preferences to clean state (ancestry approach)
             self._reset_chrome_preferences(automation_profile)
 
-            # Consistent user agent (random user agents are red flags for bot detection)
-            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+            # Consistent user agent matching installed Chrome version
+            # Note: Chrome updates frequently; user-agent should match the installed version
+            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
             options.add_argument(f"--user-agent={user_agent}")
 
             # Randomize window size slightly (exact same size each time is suspicious)
@@ -1325,22 +1774,39 @@ class LinkedInCompanyLookup:
             height = 1080 + random.randint(-50, 50)
             options.add_argument(f"--window-size={width},{height}")
 
-            # Create driver with version pinning for compatibility
-            # use_subprocess=True with headless=False prevents port conflicts
-            # no_sandbox=True is already set via args
-            self._uc_driver = uc.Chrome(
+            # Create driver - let UC auto-detect Chrome version for best compatibility
+            # Removed version_main pinning as it can cause mismatches
+            # use_subprocess=True prevents port conflicts on restart
+            driver = uc.Chrome(
                 options=options,
-                version_main=142,  # Pin to Chrome 142 for stability
                 use_subprocess=True,  # Separate process avoids port conflicts on restart
                 suppress_welcome=True,
                 headless=False,  # Must be False for LinkedIn (detects headless)
             )
-            if self._uc_driver is not None:
-                self._uc_driver.set_page_load_timeout(30)
+            if driver is not None:
+                driver.set_page_load_timeout(30)
+                # Additional stealth: execute JavaScript to hide automation indicators
+                try:
+                    driver.execute_script("""
+                        // Override navigator.webdriver
+                        Object.defineProperty(navigator, 'webdriver', {
+                            get: () => undefined
+                        });
+                        // Override navigator.plugins to appear normal
+                        Object.defineProperty(navigator, 'plugins', {
+                            get: () => [1, 2, 3, 4, 5]
+                        });
+                        // Override navigator.languages
+                        Object.defineProperty(navigator, 'languages', {
+                            get: () => ['en-US', 'en']
+                        });
+                    """)
+                except Exception:
+                    pass  # Ignore JS injection errors
             logger.debug(
                 "Created new UC Chrome driver session with enhanced anti-detection"
             )
-            return self._uc_driver
+            return driver
 
         except Exception as e:
             logger.error(f"Failed to create UC Chrome driver: {e}")
@@ -1648,19 +2114,32 @@ class LinkedInCompanyLookup:
     def close_browser(self) -> None:
         """Close the shared browser session.
 
-        Note: Since the driver is shared across all instances, this affects
+        Note: Since the browser is shared across all instances, this affects
         all LinkedInCompanyLookup instances. Only call when completely done
         with all LinkedIn searches.
         """
+        # Close nodriver browser
+        if LinkedInCompanyLookup._shared_nodriver_browser is not None:
+            try:
+                self._run_async(LinkedInCompanyLookup._shared_nodriver_browser.stop())
+            except Exception:
+                pass
+            LinkedInCompanyLookup._shared_nodriver_browser = None
+            LinkedInCompanyLookup._shared_nodriver_tab = None
+            logger.debug("Closed shared nodriver browser session")
+
+        # Close UC Chrome driver
         if LinkedInCompanyLookup._shared_uc_driver is not None:
             try:
                 LinkedInCompanyLookup._shared_uc_driver.quit()
             except Exception:
                 pass
             LinkedInCompanyLookup._shared_uc_driver = None
-            LinkedInCompanyLookup._shared_driver_search_count = 0
-            LinkedInCompanyLookup._shared_linkedin_login_verified = False
             logger.debug("Closed shared UC Chrome driver session")
+
+        LinkedInCompanyLookup._shared_driver_search_count = 0
+        LinkedInCompanyLookup._shared_linkedin_login_verified = False
+        LinkedInCompanyLookup._shared_browser_backend = ""
 
     @classmethod
     def close_shared_browser(cls) -> None:
@@ -1668,15 +2147,31 @@ class LinkedInCompanyLookup:
 
         Can be called without an instance: LinkedInCompanyLookup.close_shared_browser()
         """
+        # Close nodriver browser
+        if cls._shared_nodriver_browser is not None:
+            try:
+                # Need to run async in a sync context
+                loop = cls._shared_event_loop
+                if loop and not loop.is_closed():
+                    loop.run_until_complete(cls._shared_nodriver_browser.stop())
+            except Exception:
+                pass
+            cls._shared_nodriver_browser = None
+            cls._shared_nodriver_tab = None
+            logger.debug("Closed shared nodriver browser session")
+
+        # Close UC Chrome driver
         if cls._shared_uc_driver is not None:
             try:
                 cls._shared_uc_driver.quit()
             except Exception:
                 pass
             cls._shared_uc_driver = None
-            cls._shared_driver_search_count = 0
-            cls._shared_linkedin_login_verified = False
             logger.debug("Closed shared UC Chrome driver session")
+
+        cls._shared_driver_search_count = 0
+        cls._shared_linkedin_login_verified = False
+        cls._shared_browser_backend = ""
 
     def send_connection_via_browser(
         self,
