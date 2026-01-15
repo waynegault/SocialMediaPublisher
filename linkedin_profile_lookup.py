@@ -337,9 +337,21 @@ class NodriverElement:
 
         async def _send_keys():
             try:
+                # Focus first, then send keys
+                await self._element.apply("(elem) => elem.focus()")
                 await self._element.send_keys(text)
             except Exception as e:
                 logger.debug(f"Send keys failed: {e}")
+                # Fallback: try direct input via CDP
+                try:
+                    # Focus and use keyboard dispatch
+                    await self._element.apply("(elem) => elem.focus()")
+                    for char in text:
+                        await self._wrapper._tab.send(
+                            nodriver.cdp.input_.dispatch_key_event("char", text=char)
+                        )
+                except Exception as e2:
+                    logger.debug(f"Fallback send keys also failed: {e2}")
 
         self._run_async(_send_keys())
 
@@ -1950,85 +1962,100 @@ class LinkedInCompanyLookup:
         """
         try:
             # Wait for page to be ready
-            for _ in range(15):
+            for i in range(15):
                 ready_state = driver.execute_script("return document.readyState")
                 if ready_state == "complete":
+                    logger.debug(f"Page ready after {i+1} seconds")
                     break
                 time.sleep(1)
 
-            # Use JavaScript to fill the form - more reliable for nodriver
             username = Config.LINKEDIN_USERNAME
             password = Config.LINKEDIN_PASSWORD
 
             # Wait for username field to exist
-            for _ in range(15):
+            for i in range(15):
                 username_exists = driver.execute_script(
                     "return document.getElementById('username') !== null"
                 )
                 if username_exists:
+                    logger.debug(f"Username field found after {i+1} seconds")
                     break
                 time.sleep(1)
             else:
                 logger.error("Username field not found after 15 seconds")
                 return False
 
-            # Focus and fill username field using JavaScript
-            driver.execute_script(
-                f"""
-                var usernameField = document.getElementById('username');
-                if (usernameField) {{
-                    usernameField.focus();
-                    usernameField.value = '';
-                }}
-                """
-            )
-            time.sleep(0.5)
+            # === Fill username using direct nodriver tab access ===
+            async def fill_username():
+                try:
+                    elem = await driver._tab.select("#username")
+                    if elem:
+                        await elem.clear_input()
+                        await elem.send_keys(username)
+                        logger.debug("Username filled via nodriver")
+                        return True
+                except Exception as e:
+                    logger.debug(f"Nodriver username fill failed: {e}")
+                return False
 
-            # Type username character by character using keyboard simulation
-            username_field = driver.find_element("id", "username")
-            if username_field:
-                # Send full username at once - nodriver handles this better
-                username_field.send_keys(username)
-            else:
+            if not driver._run_async(fill_username()):
                 # Fallback to JavaScript
+                logger.debug("Using JavaScript fallback for username")
+                escaped_username = username.replace("\\", "\\\\").replace("'", "\\'")
                 driver.execute_script(
-                    f"document.getElementById('username').value = {repr(username)};"
+                    f"""
+                    var el = document.getElementById('username');
+                    el.focus();
+                    el.value = '{escaped_username}';
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    """
                 )
 
             time.sleep(0.5)
 
-            # Focus and fill password field
-            driver.execute_script(
-                """
-                var passwordField = document.getElementById('password');
-                if (passwordField) {
-                    passwordField.focus();
-                    passwordField.value = '';
-                }
-                """
-            )
-            time.sleep(0.5)
+            # === Fill password using direct nodriver tab access ===
+            async def fill_password():
+                try:
+                    elem = await driver._tab.select("#password")
+                    if elem:
+                        await elem.clear_input()
+                        await elem.send_keys(password)
+                        logger.debug("Password filled via nodriver")
+                        return True
+                except Exception as e:
+                    logger.debug(f"Nodriver password fill failed: {e}")
+                return False
 
-            password_field = driver.find_element("id", "password")
-            if password_field:
-                password_field.send_keys(password)
-            else:
-                # Fallback to JavaScript - escape password properly
+            if not driver._run_async(fill_password()):
+                # Fallback to JavaScript
+                logger.debug("Using JavaScript fallback for password")
                 escaped_password = password.replace("\\", "\\\\").replace("'", "\\'")
                 driver.execute_script(
-                    f"document.getElementById('password').value = '{escaped_password}';"
+                    f"""
+                    var el = document.getElementById('password');
+                    el.focus();
+                    el.value = '{escaped_password}';
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    """
                 )
 
             time.sleep(1)  # Brief pause before clicking
 
-            # Find and click sign in button
-            sign_in_button = driver.find_element(
-                "css selector", "button[type='submit']"
-            )
-            if sign_in_button:
-                sign_in_button.click()
-            else:
+            # === Click sign in button ===
+            async def click_submit():
+                try:
+                    elem = await driver._tab.select("button[type='submit']")
+                    if elem:
+                        await elem.click()
+                        logger.debug("Submit button clicked via nodriver")
+                        return True
+                except Exception as e:
+                    logger.debug(f"Nodriver submit click failed: {e}")
+                return False
+
+            if not driver._run_async(click_submit()):
                 # Fallback: click via JavaScript
+                logger.debug("Using JavaScript fallback for submit click")
                 driver.execute_script(
                     "document.querySelector('button[type=\"submit\"]').click();"
                 )
