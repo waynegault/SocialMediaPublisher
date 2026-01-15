@@ -6,6 +6,7 @@ Provides rate-limited wrappers for all external API calls:
 - Google Imagen (generate_images)
 - LinkedIn API
 - HTTP requests (for web scraping, etc.)
+- HTTP session factory with retry logic
 
 Usage:
     from api_client import api_client
@@ -15,12 +16,17 @@ Usage:
 
     # Rate-limited HTTP request
     response = api_client.http_get(url, headers, timeout)
+
+    # Get a managed session with retry logic
+    session = api_client.get_session("linkedin")
 """
 
 import logging
 import re
 import requests
+from requests.adapters import HTTPAdapter
 from typing import Any, Optional
+from urllib3.util.retry import Retry
 
 from rate_limiter import AdaptiveRateLimiter
 
@@ -67,6 +73,62 @@ class RateLimitedAPIClient:
             success_threshold=10,
             rate_limiter_429_backoff=0.5,
         )
+
+        # Session pool for connection reuse
+        self._sessions: dict[str, requests.Session] = {}
+
+    # =========================================================================
+    # Session Factory
+    # =========================================================================
+
+    def get_session(
+        self,
+        name: str = "default",
+        retries: int = 3,
+        backoff_factor: float = 1.0,
+        status_forcelist: tuple[int, ...] = (429, 500, 502, 503, 504),
+    ) -> requests.Session:
+        """
+        Get or create a named session with retry logic.
+
+        Sessions are reused across calls with the same name, providing
+        connection pooling benefits.
+
+        Args:
+            name: Session identifier (e.g., 'linkedin', 'rapidapi', 'scraping')
+            retries: Number of retry attempts for failed requests
+            backoff_factor: Multiplier for retry delays
+            status_forcelist: HTTP status codes that trigger retries
+
+        Returns:
+            A requests.Session configured with retry logic
+        """
+        if name not in self._sessions:
+            session = requests.Session()
+            retry = Retry(
+                total=retries,
+                backoff_factor=backoff_factor,
+                status_forcelist=list(status_forcelist),
+                allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            )
+            adapter = HTTPAdapter(max_retries=retry)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+            self._sessions[name] = session
+            logger.debug(f"Created new session '{name}' with {retries} retries")
+        return self._sessions[name]
+
+    def close_session(self, name: str) -> None:
+        """Close and remove a named session."""
+        if name in self._sessions:
+            self._sessions[name].close()
+            del self._sessions[name]
+            logger.debug(f"Closed session '{name}'")
+
+    def close_all_sessions(self) -> None:
+        """Close all managed sessions."""
+        for name in list(self._sessions.keys()):
+            self.close_session(name)
 
     def _parse_retry_after(self, error_msg: str) -> float:
         """Extract retry-after value from error message if present."""

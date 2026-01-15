@@ -59,7 +59,7 @@ def _rate_limit(self):
 
 ### 1.2 Unified Caching System
 
-**Status:** [ ] Not Started
+**Status:** [ ] DEFERRED (High complexity, risk of regressions)
 **Effort:** High
 **Files Affected:**
 - `cache.py` (keep as central implementation)
@@ -317,7 +317,7 @@ Enhance `HybridLinkedInLookup` as the single facade:
 
 ### 3.1 HTTP Session Factory
 
-**Status:** [ ] Not Started
+**Status:** [x] COMPLETED (Sprint 3)
 **Effort:** Medium
 **Files Affected:**
 - `api_client.py` (add session factory)
@@ -428,7 +428,7 @@ class BrowserPool:
 
 ### 3.4 Similarity Function Consolidation
 
-**Status:** [ ] Not Started
+**Status:** [x] COMPLETED (Sprint 3)
 **Effort:** Low
 **Files Affected:**
 - `text_utils.py` (add shared implementation)

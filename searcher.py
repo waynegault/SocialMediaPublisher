@@ -17,6 +17,7 @@ from config import Config
 from database import Database, Story
 from error_handling import with_enhanced_recovery
 from api_client import api_client
+from text_utils import calculate_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -44,71 +45,7 @@ def retry_with_backoff(
     )
 
 
-def calculate_similarity(text1: str, text2: str) -> float:
-    """
-    Calculate Jaccard similarity between two texts using word sets.
-    Returns a value between 0.0 (no similarity) and 1.0 (identical).
-    """
-    # Normalize: lowercase, remove punctuation, split into words
-    words1 = set(re.sub(r"[^\w\s]", "", text1.lower()).split())
-    words2 = set(re.sub(r"[^\w\s]", "", text2.lower()).split())
-
-    # Remove very common words that don't carry meaning
-    stopwords = {
-        "the",
-        "a",
-        "an",
-        "and",
-        "or",
-        "but",
-        "in",
-        "on",
-        "at",
-        "to",
-        "for",
-        "of",
-        "with",
-        "by",
-        "from",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "being",
-        "have",
-        "has",
-        "had",
-        "do",
-        "does",
-        "did",
-        "will",
-        "would",
-        "could",
-        "should",
-        "may",
-        "might",
-        "must",
-        "shall",
-        "can",
-        "this",
-        "that",
-        "these",
-        "those",
-        "it",
-        "its",
-    }
-    words1 -= stopwords
-    words2 -= stopwords
-
-    if not words1 or not words2:
-        return 0.0
-
-    intersection = words1 & words2
-    union = words1 | words2
-
-    return len(intersection) / len(union) if union else 0.0
+# calculate_similarity is now imported from text_utils
 
 
 def validate_url(url: str) -> bool:

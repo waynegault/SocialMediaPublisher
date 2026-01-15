@@ -24,8 +24,6 @@ from pathlib import Path
 from urllib.parse import quote
 
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 from api_client import api_client
 
@@ -198,16 +196,13 @@ class LinkedInVoyagerClient:
 
     def _initialize_session(self) -> None:
         """Initialize the requests session with authentication."""
-        self._session = requests.Session()
-
-        # Configure retries
-        retry_strategy = Retry(
-            total=3,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
+        # Use centralized session factory with retry logic
+        self._session = api_client.get_session(
+            name="linkedin_voyager",
+            retries=3,
+            backoff_factor=1.0,
+            status_forcelist=(429, 500, 502, 503, 504),
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        self._session.mount("https://", adapter)
 
         # Set cookies - must include both cookies
         self._session.cookies.set("li_at", self.li_at, domain=".linkedin.com")

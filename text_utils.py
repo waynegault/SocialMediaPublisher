@@ -505,3 +505,92 @@ def truncate_text(text: str, max_length: int, suffix: str = "...") -> str:
         return text
 
     return text[: max_length - len(suffix)] + suffix
+
+
+# =============================================================================
+# Text Similarity
+# =============================================================================
+
+# Stopwords for similarity calculations
+SIMILARITY_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "can",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+    }
+)
+
+
+def calculate_similarity(
+    text1: str, text2: str, remove_stopwords: bool = True
+) -> float:
+    """
+    Calculate Jaccard similarity between two texts using word sets.
+
+    Args:
+        text1: First text to compare.
+        text2: Second text to compare.
+        remove_stopwords: Whether to remove common stopwords before comparison.
+
+    Returns:
+        A value between 0.0 (no similarity) and 1.0 (identical).
+    """
+    if not text1 or not text2:
+        return 0.0
+
+    # Normalize: lowercase, remove punctuation, split into words
+    words1 = set(re.sub(r"[^\w\s]", "", text1.lower()).split())
+    words2 = set(re.sub(r"[^\w\s]", "", text2.lower()).split())
+
+    # Remove stopwords if requested
+    if remove_stopwords:
+        words1 -= SIMILARITY_STOPWORDS
+        words2 -= SIMILARITY_STOPWORDS
+
+    if not words1 or not words2:
+        return 0.0
+
+    intersection = words1 & words2
+    union = words1 | words2
+
+    return len(intersection) / len(union) if union else 0.0
