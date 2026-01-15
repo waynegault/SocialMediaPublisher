@@ -15,6 +15,7 @@ from openai import OpenAI
 
 from config import Config
 from database import Database, Story
+from domain_credibility import is_reputable_domain, get_domain_tier
 from error_handling import with_enhanced_recovery
 from api_client import api_client
 from text_utils import calculate_similarity
@@ -137,47 +138,20 @@ def calibrate_quality_score(
         elif age_days <= 3:
             bonus += Config.QUALITY_WEIGHT_RECENCY * 0.1  # Recent
 
-    # Source quality bonus: reputable domains
+    # Source quality bonus: reputable domains (using centralized domain_credibility)
     if source_urls and Config.QUALITY_WEIGHT_SOURCE > 0:
-        reputable_domains = {
-            "nature.com",
-            "sciencedirect.com",
-            "ieee.org",
-            "springer.com",
-            "wiley.com",
-            "acs.org",
-            "rsc.org",
-            "elsevier.com",
-            "nytimes.com",
-            "washingtonpost.com",
-            "bbc.com",
-            "reuters.com",
-            "bloomberg.com",
-            "wsj.com",
-            "economist.com",
-            "ft.com",
-            "techcrunch.com",
-            "wired.com",
-            "arstechnica.com",
-            "mit.edu",
-            "stanford.edu",
-            "harvard.edu",
-            "berkeley.edu",
-            "cam.ac.uk",
-            "ox.ac.uk",
-            "ethz.ch",
-            "mpg.de",
-        }
         for url in source_urls:
             try:
-                domain = urlparse(url).netloc.lower()
-                # Check if domain or its parent is reputable
-                domain_parts = domain.split(".")
-                for i in range(len(domain_parts) - 1):
-                    check_domain = ".".join(domain_parts[i:])
-                    if check_domain in reputable_domains:
-                        bonus += Config.QUALITY_WEIGHT_SOURCE * 0.5
-                        break
+                tier = get_domain_tier(url)
+                if tier == 1:
+                    bonus += Config.QUALITY_WEIGHT_SOURCE * 0.5  # Tier 1 sources
+                    break
+                elif tier == 2:
+                    bonus += Config.QUALITY_WEIGHT_SOURCE * 0.3  # Tier 2 sources
+                    break
+                elif tier == 3:
+                    bonus += Config.QUALITY_WEIGHT_SOURCE * 0.2  # Tier 3 sources
+                    break
             except Exception:
                 pass
 

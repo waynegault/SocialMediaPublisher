@@ -2,6 +2,8 @@
 
 This module implements source credibility scoring and multi-source verification
 to increase content credibility and flag potential misinformation.
+
+Domain credibility tiers are now centralized in domain_credibility.py.
 """
 
 import logging
@@ -9,132 +11,26 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 from database import Story
+from domain_credibility import (
+    TIER_1_DOMAINS,
+    TIER_2_DOMAINS,
+    TIER_3_DOMAINS,
+    TIER_3_SUBDOMAIN_PATTERNS,
+    LOW_CREDIBILITY_DOMAINS,
+    extract_domain,
+    get_domain_tier,
+    get_credibility_score,
+    is_academic_domain,
+    is_government_domain,
+    is_primary_source,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# Credibility tiers for domains
-TIER_1_DOMAINS = frozenset(
-    {
-        # Major scientific publishers
-        "nature.com",
-        "science.org",
-        "sciencedirect.com",
-        "ieee.org",
-        "springer.com",
-        "wiley.com",
-        "acs.org",
-        "rsc.org",
-        "elsevier.com",
-        "cell.com",
-        # Major news organizations
-        "nytimes.com",
-        "washingtonpost.com",
-        "bbc.com",
-        "bbc.co.uk",
-        "reuters.com",
-        "apnews.com",
-        "bloomberg.com",
-        "wsj.com",
-        "economist.com",
-        "ft.com",
-        "theguardian.com",
-        # Top universities
-        "mit.edu",
-        "stanford.edu",
-        "harvard.edu",
-        "berkeley.edu",
-        "caltech.edu",
-        "princeton.edu",
-        "yale.edu",
-        "columbia.edu",
-        "cam.ac.uk",
-        "ox.ac.uk",
-        "ethz.ch",
-        "mpg.de",
-        # Government / Research institutions
-        "nih.gov",
-        "nasa.gov",
-        "doe.gov",
-        "energy.gov",
-        "noaa.gov",
-        "nist.gov",
-        "arxiv.org",
-        "pubmed.gov",
-    }
-)
-
-TIER_2_DOMAINS = frozenset(
-    {
-        # Quality tech publications
-        "techcrunch.com",
-        "wired.com",
-        "arstechnica.com",
-        "theverge.com",
-        "engadget.com",
-        "zdnet.com",
-        "cnet.com",
-        "venturebeat.com",
-        # Industry publications
-        "forbes.com",
-        "businessinsider.com",
-        "fortune.com",
-        "cnbc.com",
-        # Energy/sustainability specific
-        "greentechmedia.com",
-        "cleantechnica.com",
-        "renewableenergyworld.com",
-        "pv-magazine.com",
-        "hydrogeninsight.com",
-        "rechargenews.com",
-        "spglobal.com",
-        "woodmac.com",
-        # Other reputable universities
-        "cornell.edu",
-        "uchicago.edu",
-        "upenn.edu",
-        "duke.edu",
-        "northwestern.edu",
-        "ucla.edu",
-        "umich.edu",
-        "gatech.edu",
-        "cmu.edu",
-        "utexas.edu",
-    }
-)
-
-TIER_3_DOMAINS = frozenset(
-    {
-        # Company blogs/newsrooms (primary sources but biased)
-        "newsroom.",
-        "blog.",
-        "press.",
-        "media.",
-        # Regional news
-        "latimes.com",
-        "chicagotribune.com",
-        "bostonglobe.com",
-        "sfchronicle.com",
-        # International quality sources
-        "lemonde.fr",
-        "spiegel.de",
-        "zeit.de",
-        "nikkei.com",
-        "scmp.com",
-    }
-)
-
-# Domains that reduce credibility (tabloids, known misinformation, etc.)
-LOW_CREDIBILITY_DOMAINS = frozenset(
-    {
-        "dailymail.co.uk",
-        "thesun.co.uk",
-        "nypost.com",
-        "breitbart.com",
-        "infowars.com",
-        "naturalnews.com",
-    }
-)
+# Domain tier constants are now imported from domain_credibility.py
+# The following are kept for backward compatibility if imported directly:
+# - TIER_1_DOMAINS, TIER_2_DOMAINS, TIER_3_DOMAINS, LOW_CREDIBILITY_DOMAINS
 
 
 @dataclass
@@ -259,79 +155,53 @@ class SourceVerifier:
             )
 
         try:
-            parsed = urlparse(url)
-            domain = parsed.netloc.lower()
-
-            # Remove www. prefix
-            if domain.startswith("www."):
-                domain = domain[4:]
+            # Use centralized domain extraction
+            domain = extract_domain(url)
 
             notes: list[str] = []
-            tier = 0
-            score = 0.3  # Base score for any URL
 
-            # Check if academic (.edu domains)
-            is_academic = ".edu" in domain or domain in (
-                "arxiv.org",
-                "researchgate.net",
-                "academia.edu",
-                "cam.ac.uk",
-                "ox.ac.uk",
-            )
+            # Use centralized tier detection
+            tier = get_domain_tier(url)
+            score = get_credibility_score(url)
 
-            # Check if government
-            is_government = ".gov" in domain
+            # Use centralized domain type detection
+            is_academic = is_academic_domain(url)
+            is_government = is_government_domain(url)
+            is_primary = is_primary_source(url)
 
-            # Check if primary source (company newsroom, press release)
-            # These patterns must be subdomains at the START of the domain
-            is_primary_source = any(
-                domain.startswith(prefix)
-                for prefix in ("newsroom.", "blog.", "press.", "media.")
-            ) or any(
+            # Also check URL path for primary source indicators
+            parsed = urlparse(url)
+            has_primary_path = any(
                 path_part in parsed.path.lower()
                 for path_part in ("/press/", "/newsroom/", "/news/", "/media/")
             )
+            is_primary = is_primary or has_primary_path
 
-            # Check tier 1
-            is_tier1 = self._is_domain_in_set(domain, TIER_1_DOMAINS)
-            if is_tier1:
-                tier = 1
-                score = 1.0
-                notes.append("Tier 1 source (highest credibility)")
+            # Add notes based on tier
+            tier_notes = {
+                1: "Tier 1 source (highest credibility)",
+                2: "Tier 2 source (high credibility)",
+                3: "Tier 3 source (moderate credibility)",
+                4: "Low credibility source",
+            }
+            if tier in tier_notes:
+                notes.append(tier_notes[tier])
 
-            # Check tier 2
-            is_tier2 = self._is_domain_in_set(domain, TIER_2_DOMAINS)
-            if not is_tier1 and is_tier2:
-                tier = 2
-                score = 0.8
-                notes.append("Tier 2 source (high credibility)")
+            # Low credibility check
+            is_low_cred = tier == 4
 
-            # Check tier 3
-            is_tier3 = self._is_domain_in_set(domain, TIER_3_DOMAINS)
-            if not is_tier1 and not is_tier2 and is_tier3:
-                tier = 3
-                score = 0.6
-                notes.append("Tier 3 source (moderate credibility)")
-
-            # Check low credibility
-            is_low_credibility = self._is_domain_in_set(domain, LOW_CREDIBILITY_DOMAINS)
-            if is_low_credibility:
-                tier = 0
-                score = 0.1
-                notes.append("Low credibility source")
-
-            # Apply bonuses
-            if is_academic and tier == 0:
+            # Apply bonuses for unknown domains with academic/government TLDs
+            if tier == 0 and is_academic:
                 tier = 2
                 score = max(score, 0.75)
                 notes.append("Academic source")
 
-            if is_government and tier == 0:
+            if tier == 0 and is_government:
                 tier = 2
                 score = max(score, 0.8)
                 notes.append("Government source")
 
-            if is_primary_source:
+            if is_primary:
                 notes.append("Primary source (company newsroom/press release)")
                 if tier == 0:
                     tier = 3
@@ -344,8 +214,8 @@ class SourceVerifier:
                 tier=tier or 4,  # Unknown sources get tier 4
                 is_academic=is_academic,
                 is_government=is_government,
-                is_primary_source=is_primary_source,
-                is_low_credibility=is_low_credibility,
+                is_primary_source=is_primary,
+                is_low_credibility=is_low_cred,
                 notes=notes,
             )
 
