@@ -829,10 +829,11 @@ def _search_with_fallback(self, query: str) -> list[dict]:
 > UC Chrome with direct Google search bypasses detection.
 
 **Candidate Extraction:**
-Uses existing `_score_linkedin_candidate()` function pattern:
+Uses `_calculate_contradiction_penalty()` helper with inline scoring:
 - Parse search results for LinkedIn URLs
 - Extract vanity name (e.g., `/in/sarah-chen-phd`)
 - Capture preview text (headline, location)
+- Score via `profile_matcher.score_person_candidate()` or inline logic
 - Limit to top 10 candidates per tier
 
 ---
