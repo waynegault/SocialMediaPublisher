@@ -27,7 +27,9 @@ pillow>=12.0.0
 playwright>=1.57.0
 selenium>=4.39.0
 undetected-chromedriver>=3.5.0
+nodriver>=0.38  # Successor to undetected-chromedriver with better anti-detection
 browser-cookie3>=0.20.0
+opencv-python>=4.10.0  # Required for nodriver's cf_verify (Cloudflare bypass)
 
 # Web scraping
 ddgs>=9.10.0

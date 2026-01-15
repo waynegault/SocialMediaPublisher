@@ -236,26 +236,183 @@ After reviewing the code paths, consolidation is **not recommended** because:
 
 ---
 
+## Phase 12: Config Synchronization & Missing Settings (HIGH PRIORITY)
+**Goal:** Add missing .env settings to Config class and fix direct os.getenv() calls.
+
+### Issues Found:
+1. Several .env settings are not defined in Config class
+2. Some modules bypass Config class with direct os.getenv() calls
+3. `API_TIMEOUT_DEFAULT` is defined but never used - hardcoded timeouts everywhere
+4. Pydantic settings and legacy Config class have potential for value drift
+
+### Changes Required:
+- [ ] 12.1 Add missing settings to Config class:
+  - `OPENAI_API_KEY` - referenced via os.getenv in rag_engine.py
+  - `STORIES_PER_CYCLE` - in .env but not Config (use MAX_STORIES_PER_DAY?)
+  - `PUBLISH_WINDOW_HOURS` - in .env but not Config
+- [ ] 12.2 Replace direct os.getenv() calls with Config class:
+  - `linkedin_profile_lookup.py` lines 4567-4568: LINKEDIN_LI_AT, LINKEDIN_JSESSIONID
+  - `linkedin_profile_lookup.py` line 4742: LINKEDIN_AUTHOR_URN
+  - `linkedin_voyager_client.py` lines 110-111: LINKEDIN_LI_AT, LINKEDIN_JSESSIONID
+  - `rag_engine.py` line 858: OPENAI_API_KEY
+- [ ] 12.3 Use `API_TIMEOUT_DEFAULT` instead of hardcoded timeouts
+- [ ] 12.4 Add LinkedIn limits to Config (currently hardcoded):
+  - `LINKEDIN_DAILY_COMMENT_LIMIT` (default: 25)
+  - `LINKEDIN_HOURLY_COMMENT_LIMIT` (default: 5)
+  - `LINKEDIN_WEEKLY_CONNECTION_LIMIT` (default: 100)
+  - `LINKEDIN_DAILY_CONNECTION_LIMIT` (default: 20)
+
+---
+
+## Phase 13: Remove Deprecated Dict Caches (MEDIUM PRIORITY)
+**Goal:** Complete migration to LinkedInCache by removing legacy dict-based caches.
+
+### Issues Found:
+1. `linkedin_profile_lookup.py` has deprecated class-level dict caches (lines 727-760)
+2. `linkedin_voyager_client.py` has dict-based fallback caches (lines 314-316)
+3. `company_mention_enricher.py` has ValidationCache duplicating person caching logic
+
+### Changes Required:
+- [ ] 13.1 Remove deprecated caches from `linkedin_profile_lookup.py`:
+  - `_shared_person_cache`
+  - `_shared_found_profiles_by_name`
+  - `_shared_company_url_to_name`
+  - `_shared_failed_lookups`
+  - `_shared_company_cache`
+- [ ] 13.2 Remove dict fallback caches from `linkedin_voyager_client.py`:
+  - `_person_cache`
+  - `_org_cache`
+  - `_search_cache`
+- [ ] 13.3 Migrate `ValidationCache` in `company_mention_enricher.py` to use `LinkedInCache`
+- [ ] 13.4 Update all code paths to use only `LinkedInCache`
+
+---
+
+## Phase 14: Consolidate LinkedIn Match Scoring (MEDIUM PRIORITY)
+**Goal:** Remove duplicate match scoring implementations.
+
+### Issues Found:
+1. `linkedin_profile_lookup.py` has 100-line match scoring implementation (lines 495-595)
+2. `linkedin_voyager_client.py` correctly uses `score_person_candidate()` from `profile_matcher.py`
+3. `linkedin_rapidapi_client.py` correctly uses `calculate_match_score()`
+
+### Changes Required:
+- [ ] 14.1 Refactor `linkedin_profile_lookup.py` to use `profile_matcher.score_person_candidate()`
+- [ ] 14.2 Remove duplicate scoring logic from `linkedin_profile_lookup.py`
+- [ ] 14.3 Create `parse_full_name()` utility in `text_utils.py` for consistent name parsing
+- [ ] 14.4 Update all modules to use the shared name parsing utility
+
+---
+
+## Phase 15: Consolidate DuckDuckGo Search (LOW PRIORITY)
+**Goal:** Unify duplicate DuckDuckGo search implementations.
+
+### Issues Found:
+1. `searcher.py` line 840: inline DDGS usage in `_search_local()`
+2. `searcher.py` line 1564: reusable `_fetch_duckduckgo_results()` wrapper
+
+### Changes Required:
+- [ ] 15.1 Refactor `_search_local()` to use `_fetch_duckduckgo_results()`
+- [ ] 15.2 Remove duplicate DDGS initialization code
+
+---
+
+## Phase 16: Extract URL Redirect Resolution (LOW PRIORITY)
+**Goal:** Move redirect resolution logic to url_utils.py.
+
+### Issues Found:
+1. `company_mention_enricher.py` has 120+ lines of redirect resolution (lines 519-620)
+2. Multiple strategies: HEAD, GET, browser fallback
+
+### Changes Required:
+- [ ] 16.1 Create `resolve_redirect_url()` function in `url_utils.py`
+- [ ] 16.2 Update `company_mention_enricher.py` to use the new utility
+
+---
+
+## Phase 17: Create Unified AI Response Helper (LOW PRIORITY)
+**Goal:** Consolidate AI response pattern (local LLM → Gemini fallback).
+
+### Issues Found:
+1. `searcher.py` lines 3064-3080: `_try_ai_response()` with fallback
+2. Multiple modules have inline local_client → Gemini fallback pattern
+3. `verifier.py` lines 230-270: similar fallback logic
+
+### Changes Required:
+- [ ] 17.1 Create `ai_generate()` helper in `api_client.py`
+- [ ] 17.2 Update all modules to use the unified helper
+
+---
+
+## Phase 18: Standardize LinkedIn Rate Limiting (LOW PRIORITY)
+**Goal:** Ensure all LinkedIn modules use centralized api_client rate limiting.
+
+### Issues Found:
+1. `linkedin_engagement.py` creates standalone AdaptiveRateLimiter
+2. `linkedin_networking.py` creates standalone AdaptiveRateLimiter
+3. Should use `api_client.linkedin_limiter` instead
+
+### Changes Required:
+- [ ] 18.1 Remove custom rate limiter from `linkedin_engagement.py`
+- [ ] 18.2 Remove custom rate limiter from `linkedin_networking.py`
+- [ ] 18.3 Update both modules to use `api_client.linkedin_limiter`
+
+---
+
+## Phase 19: Remove Model Aliases (LOW PRIORITY)
+**Goal:** Use consistent model names across all LinkedIn modules.
+
+### Issues Found:
+1. `linkedin_voyager_client.py`: `LinkedInPerson = LinkedInProfile` alias
+2. `linkedin_rapidapi_client.py`: `LinkedInProfileResult = LinkedInProfile` alias
+
+### Changes Required:
+- [ ] 19.1 Replace all `LinkedInPerson` usage with `LinkedInProfile`
+- [ ] 19.2 Replace all `LinkedInProfileResult` usage with `LinkedInProfile`
+- [ ] 19.3 Remove alias definitions
+
+---
+
+## Phase 20: Centralize LinkedIn Public ID Extraction (LOW PRIORITY)
+**Goal:** Move public_id extraction to a shared utility.
+
+### Issues Found:
+1. Pattern `/in/` public ID extraction duplicated in 4+ files
+2. `linkedin_profile_lookup.py` has `_extract_public_id()` function
+
+### Changes Required:
+- [ ] 20.1 Move `_extract_public_id()` to `url_utils.py` as `extract_linkedin_public_id()`
+- [ ] 20.2 Update all files to use the shared utility
+
+---
+
 ## Implementation Order
 
-### Quick Wins (Do First):
-1. Phase 1: Domain Credibility Consolidation
-2. Phase 4: URL Utilities Consolidation
-3. Phase 11: .env Settings Validation ✓
+### Quick Wins (Do First) - COMPLETED:
+1. ✅ Phase 1: Domain Credibility Consolidation
+2. ✅ Phase 4: URL Utilities Consolidation
+3. ✅ Phase 11: .env Settings Validation
 
-### High Impact (Do Next):
-4. Phase 2: LinkedIn Cache Consolidation
-5. Phase 3: HTTP Session Consolidation
-6. Phase 5: LinkedIn Data Models Unification
+### High Impact (Do Next) - COMPLETED:
+4. ✅ Phase 2: LinkedIn Cache Consolidation
+5. ✅ Phase 3: HTTP Session Consolidation
+6. ✅ Phase 5: LinkedIn Data Models Unification
 
-### Medium Priority (Do Later):
-7. Phase 6: Publishing Service Consolidation
-8. Phase 7: Match Scoring Consolidation
+### Medium Priority (Do Now):
+7. **Phase 12: Config Synchronization & Missing Settings** ⬅️ START HERE
+8. Phase 13: Remove Deprecated Dict Caches
+9. Phase 14: Consolidate LinkedIn Match Scoring
 
-### Low Priority (Do When Time Permits):
-9. Phase 8: Rate Limiting Consolidation
-10. Phase 9: Dependency Injection Integration
-11. Phase 10: Database Abstraction Cleanup
+### Lower Priority (Do Later):
+10. Phase 15: Consolidate DuckDuckGo Search
+11. Phase 16: Extract URL Redirect Resolution
+12. Phase 17: Create Unified AI Response Helper
+13. Phase 18: Standardize LinkedIn Rate Limiting
+14. Phase 19: Remove Model Aliases
+15. Phase 20: Centralize LinkedIn Public ID Extraction
+
+### Skipped:
+- ⏭️ Phase 6: Publishing Service Consolidation (not recommended)
 
 ---
 
@@ -271,14 +428,16 @@ After each phase:
 
 ## Metrics for Success
 
-| Metric | Before | Target |
-|--------|--------|--------|
-| Duplicate domain lists | 2 | 1 |
-| Dict-based caches | 11 | 3 |
-| HTTP session implementations | 3 | 1 |
-| Profile data classes | 2 | 1 |
-| Publishing code paths | 3 | 1 |
-| Match scoring implementations | 3 | 1 |
+| Metric | Before | After Phases 1-11 | Target |
+|--------|--------|-------------------|--------|
+| Duplicate domain lists | 2 | 1 ✅ | 1 |
+| Dict-based caches | 11 | 6 | 0 |
+| HTTP session implementations | 3 | 1 ✅ | 1 |
+| Profile data classes | 2 | 1 ✅ | 1 |
+| Match scoring implementations | 3 | 2 | 1 |
+| Direct os.getenv() bypasses | 6 | 6 | 0 |
+| Hardcoded timeouts | 10+ | 10+ | 0 |
+| Custom rate limiters | 3 | 3 | 1 |
 
 ---
 

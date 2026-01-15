@@ -107,20 +107,11 @@ class LinkedInVoyagerClient:
             proxies: Optional proxy configuration for requests.
         """
         # Try to get credentials from multiple sources
-        self.li_at = li_at or os.getenv("LINKEDIN_LI_AT", "")
-        self.jsessionid = jsessionid or os.getenv("LINKEDIN_JSESSIONID", "")
+        # First check passed parameters, then Config class
+        from config import Config
 
-        # Also check Config if not found in environment
-        if not self.li_at:
-            try:
-                from config import Config
-
-                self.li_at = getattr(Config, "LINKEDIN_LI_AT", "") or ""
-                self.jsessionid = (
-                    self.jsessionid or getattr(Config, "LINKEDIN_JSESSIONID", "") or ""
-                )
-            except Exception:
-                pass
+        self.li_at = li_at or Config.LINKEDIN_LI_AT
+        self.jsessionid = jsessionid or Config.LINKEDIN_JSESSIONID
 
         self.proxies = proxies
 
@@ -855,7 +846,7 @@ class HybridLinkedInLookup:
         # Skip Voyager API if known to be blocked (which is the default now)
         if HybridLinkedInLookup._voyager_api_blocked:
             logger.debug("Voyager API blocked, using RapidAPI + browser fallback")
-        elif os.getenv("LINKEDIN_LI_AT"):
+        elif Config.LINKEDIN_LI_AT:
             try:
                 self.voyager_client = LinkedInVoyagerClient()
                 # Don't bother with auth check - it uses deprecated endpoints

@@ -593,7 +593,7 @@ class RateLimitedAPIClient:
     def browser_on_captcha(self, endpoint: str = "search") -> None:
         """Mark a CAPTCHA/rate limit event for browser operations."""
         full_endpoint = f"browser_{endpoint}"
-        self.browser_limiter.on_error_429(endpoint=full_endpoint)
+        self.browser_limiter.on_429_error(endpoint=full_endpoint)
 
     def log_metrics(self) -> None:
         """Log current rate limiter metrics."""
