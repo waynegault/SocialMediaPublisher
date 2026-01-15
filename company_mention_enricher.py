@@ -1609,12 +1609,47 @@ EXTRACTION RULES:
             r"^research$",
         ]
 
+        # Patterns that indicate AI explanation rather than org name
+        ai_explanation_patterns = [
+            "not applicable",
+            "this is not",
+            "no organization",
+            "none mentioned",
+            "not specified",
+            "generalized",
+            "generic",
+            "various companies",
+            "multiple",
+            "several",
+            "unspecified",
+            "headline",
+            "actual research",
+        ]
+
         # Use shared constants from ner_engine
         valid_orgs: set[str] = set()
         for org in organizations:
             if not org:
                 continue
             norm = org.lower().strip()
+
+            # Skip if org name is too long (likely an AI explanation)
+            if len(org) > 100:
+                logger.debug(f"Pre-filtering overly long org: '{org[:50]}...'")
+                continue
+
+            # Skip if too many words (likely a sentence/explanation)
+            word_count = len(norm.split())
+            if word_count > 10:
+                logger.debug(
+                    f"Pre-filtering org with too many words ({word_count}): '{org[:50]}...'"
+                )
+                continue
+
+            # Skip AI explanation patterns
+            if any(pattern in norm for pattern in ai_explanation_patterns):
+                logger.debug(f"Pre-filtering AI explanation org: '{org[:50]}'")
+                continue
 
             # Skip known invalid names (uses shared INVALID_ORG_NAMES from ner_engine)
             if norm in INVALID_ORG_NAMES:

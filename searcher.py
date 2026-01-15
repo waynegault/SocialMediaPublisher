@@ -1428,7 +1428,52 @@ class StorySearcher:
                 # Extract organizations (list of company/institution names)
                 organizations = data.get("organizations", [])
                 if isinstance(organizations, list):
-                    organizations = [str(org).strip() for org in organizations if org]
+                    # Validate and filter organizations
+                    validated_orgs = []
+                    # Patterns that indicate AI explanation rather than org name
+                    invalid_org_patterns = [
+                        "not applicable",
+                        "this is not",
+                        "no organization",
+                        "none mentioned",
+                        "not specified",
+                        "unknown",
+                        "n/a",
+                        "generalized",
+                        "generic",
+                        "various",
+                        "multiple",
+                        "several",
+                        "unspecified",
+                    ]
+                    for org in organizations:
+                        org_str = str(org).strip()
+                        if not org_str or len(org_str) < 2:
+                            continue
+                        # Skip if org name is too long (likely an explanation)
+                        if len(org_str) > 100:
+                            logger.debug(
+                                f"Skipping overly long org name: {org_str[:50]}..."
+                            )
+                            continue
+                        # Skip if contains invalid patterns
+                        org_lower = org_str.lower()
+                        if any(
+                            pattern in org_lower for pattern in invalid_org_patterns
+                        ):
+                            logger.debug(
+                                f"Skipping invalid org (AI explanation): {org_str[:50]}"
+                            )
+                            continue
+                        # Skip if it looks like a sentence (has too many words)
+                        word_count = len(org_str.split())
+                        if word_count > 10:
+                            logger.debug(
+                                f"Skipping org with too many words ({word_count}): {org_str[:50]}..."
+                            )
+                            continue
+                        validated_orgs.append(org_str)
+                    organizations = validated_orgs
                 else:
                     organizations = []
 
