@@ -1404,6 +1404,11 @@ class CompanyMentionEnricher:
         different employer name variations (e.g., 'DEFRA' vs 'Department for Environment,
         Food & Rural Affairs' vs 'Government'). When duplicates are found, we keep the
         record with the most complete LinkedIn profile information.
+
+        Name normalization handles:
+        - Titles: "Dr. John Smith" -> "john smith"
+        - Middle initials: "Paula T. Hammond" -> "paula hammond"
+        - Suffixes: "John Smith Jr." -> "john smith"
         """
         # Track best record for each normalized name
         best_by_name: dict[str, dict] = {}
@@ -1426,6 +1431,30 @@ class CompanyMentionEnricher:
                 if name.startswith(prefix):
                     name = name[len(prefix) :]
                     break
+
+            # Remove common suffixes
+            for suffix in [
+                " jr",
+                " jr.",
+                " sr",
+                " sr.",
+                " iii",
+                " ii",
+                " iv",
+                " phd",
+                " ph.d",
+                " md",
+                " m.d",
+            ]:
+                if name.endswith(suffix):
+                    name = name[: -len(suffix)]
+                    break
+
+            # Remove middle initials (single letter followed by optional period and space)
+            # "paula t. hammond" -> "paula hammond"
+            # "john a b smith" -> "john smith"
+            name = re.sub(r"\s+[a-z]\.?\s+", " ", name)  # Remove middle initials
+            name = re.sub(r"\s+", " ", name).strip()  # Normalize whitespace
 
             if not name:
                 continue

@@ -1833,7 +1833,7 @@ class ValidationServer:
 
         @self.app.route("/api/stories/<int:story_id>/accept", methods=["POST"])
         def accept_story(story_id: int):
-            """Accept a story for publication."""
+            """Accept a story for publication (human approval)."""
             try:
                 story = self.db.get_story(story_id)
                 if not story:
@@ -1841,6 +1841,8 @@ class ValidationServer:
 
                 story.verification_status = "approved"
                 story.verification_reason = "Manually approved via human validation"
+                story.human_approved = True
+                story.human_approved_at = datetime.now()
                 self.db.update_story(story)
 
                 return jsonify(story.to_dict())
@@ -1850,7 +1852,7 @@ class ValidationServer:
 
         @self.app.route("/api/stories/<int:story_id>/reject", methods=["POST"])
         def reject_story(story_id: int):
-            """Reject a story."""
+            """Reject a story (human rejection)."""
             try:
                 story = self.db.get_story(story_id)
                 if not story:
@@ -1858,6 +1860,8 @@ class ValidationServer:
 
                 story.verification_status = "rejected"
                 story.verification_reason = "Manually rejected via human validation"
+                story.human_approved = False
+                story.human_approved_at = None
                 self.db.update_story(story)
 
                 return jsonify(story.to_dict())

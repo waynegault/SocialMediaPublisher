@@ -2210,8 +2210,35 @@ NOT_FOUND"""
             logger.info(f"Skipping invalid organization name: '{company_name}'")
             return (None, None)
 
-        start_time = time.time()
         company_name = company_name.strip()
+
+        # === Check cache first (using normalized name for better matching) ===
+        # This prevents duplicate searches for the same org with slight variations
+        cache_key = self._normalize_org_name(company_name)
+        if cache_key in self._company_cache:
+            cached = self._company_cache[cache_key]
+            if cached:
+                logger.info(f"Company cache hit: {company_name} -> {cached[0]}")
+                return (cached[0], cached[1])
+            else:
+                logger.debug(
+                    f"Company cache hit (not found previously): {company_name}"
+                )
+                return (None, None)
+
+        # Also check with original name as key (for backwards compatibility)
+        if company_name in self._company_cache:
+            cached = self._company_cache[company_name]
+            if cached:
+                logger.info(f"Company cache hit: {company_name} -> {cached[0]}")
+                return (cached[0], cached[1])
+            else:
+                logger.debug(
+                    f"Company cache hit (not found previously): {company_name}"
+                )
+                return (None, None)
+
+        start_time = time.time()
         logger.info(f"Searching LinkedIn for company: {company_name}")
 
         # Track URLs we validate in Playwright fallback to avoid duplicate work
@@ -4533,8 +4560,23 @@ NOT_FOUND"""
 
         # Look up parent organizations first (as fallback), using instance cache
         for i, company in enumerate(companies):
+            # Use normalized key for consistent cache matching
+            cache_key = self._normalize_org_name(company)
+
+            # Check cache with normalized key first
+            if cache_key in self._company_cache:
+                cached = self._company_cache[cache_key]
+                if cached:
+                    logger.info(f"Company cache hit: {company} -> {cached[0]}")
+                    company_data[company] = cached
+                    companies_found += 1
+                else:
+                    logger.debug(f"Company cache hit (not found): {company}")
+                    companies_not_found += 1
+                continue
+
+            # Also check with original name (backwards compatibility)
             if company in self._company_cache:
-                # Cache hit
                 cached = self._company_cache[company]
                 if cached:
                     logger.info(f"Company cache hit: {company} -> {cached[0]}")
@@ -4552,18 +4594,21 @@ NOT_FOUND"""
                 # Look up the organization URN via LinkedIn API
                 urn = self.lookup_organization_urn(linkedin_url)
                 company_data[company] = (linkedin_url, slug, urn)
+                # Store with normalized key for better matching
+                self._company_cache[cache_key] = (linkedin_url, slug, urn)
+                # Also store with original key for backwards compatibility
                 self._company_cache[company] = (linkedin_url, slug, urn)
                 # Register this company's LinkedIn URL for canonical name mapping
-                company_norm = self._normalize_org_name(company)
                 if (
                     linkedin_url
                     not in LinkedInCompanyLookup._shared_company_url_to_name
                 ):
                     LinkedInCompanyLookup._shared_company_url_to_name[linkedin_url] = (
-                        company_norm
+                        cache_key
                     )
                 companies_found += 1
             else:
+                self._company_cache[cache_key] = None
                 self._company_cache[company] = None
                 companies_not_found += 1
 
@@ -4861,6 +4906,266 @@ NOT_FOUND"""
             # Reset browser if it crashed
             self._uc_driver = None
             return None
+
+    def lookup_urn_and_connect(
+        self,
+        profile_url: str,
+        message: str | None = None,
+        send_connection: bool = True,
+    ) -> tuple[Optional[str], bool, str]:
+        """
+        Combined URN extraction and connection request to avoid visiting profile twice.
+
+        This is more efficient than calling lookup_person_urn() and then
+        send_connection_via_browser() separately, as it only opens the profile once.
+
+        Args:
+            profile_url: LinkedIn profile URL (e.g., https://www.linkedin.com/in/username)
+            message: Optional connection request message (max 300 chars)
+            send_connection: Whether to send connection request (default True)
+
+        Returns:
+            Tuple of (urn, connection_sent, connection_result_message)
+            - urn: Person URN if found, None otherwise
+            - connection_sent: True if connection request was sent successfully
+            - connection_result_message: Description of connection result
+        """
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+
+        if not profile_url or "linkedin.com/in/" not in profile_url:
+            return (None, False, "Invalid profile URL")
+
+        driver = self._get_uc_driver()
+        if driver is None:
+            return (None, False, "Browser driver not available")
+
+        # Ensure user is logged in to LinkedIn
+        if not self._ensure_linkedin_login(driver):
+            return (None, False, "LinkedIn login required")
+
+        logger.debug(f"Combined URN lookup + connection for: {profile_url}")
+
+        urn: Optional[str] = None
+        connection_sent = False
+        connection_msg = "Not attempted"
+
+        try:
+            # Navigate to profile
+            driver.get(profile_url)
+            time.sleep(4 + random.random() * 2)  # Wait for page load
+
+            # Check if profile exists
+            if "Page not found" in driver.page_source or "/404" in driver.current_url:
+                return (None, False, "Profile not found")
+
+            page_source = driver.page_source
+
+            # === Step 1: Extract URN ===
+            vanity_match = re.search(r"linkedin\.com/in/([\w\-]+)", profile_url)
+            vanity_name = vanity_match.group(1) if vanity_match else None
+
+            if vanity_name:
+                # Look for memberRelationship URN after the target's publicIdentifier
+                member_rel_pattern = rf'"publicIdentifier":"{re.escape(vanity_name)}"[\s\S]{{0,500}}?"\*memberRelationship":"urn:li:fsd_memberRelationship:([A-Za-z0-9_-]+)"'
+                member_match = re.search(member_rel_pattern, page_source)
+                if member_match:
+                    profile_id = member_match.group(1)
+                    urn = f"urn:li:person:{profile_id}"
+                    logger.info(f"Found person URN (memberRelationship): {urn}")
+
+                if not urn:
+                    # Alternative: fsd_profile pattern
+                    profile_block_pattern = rf'"publicIdentifier":"{re.escape(vanity_name)}"[\s\S]{{0,500}}?"entityUrn":"urn:li:fsd_profile:([A-Za-z0-9_-]+)"'
+                    profile_match = re.search(profile_block_pattern, page_source)
+                    if profile_match:
+                        profile_id = profile_match.group(1)
+                        urn = f"urn:li:person:{profile_id}"
+                        logger.info(
+                            f"Found person URN (matched publicIdentifier): {urn}"
+                        )
+
+            if not urn:
+                # Fallback: Look for fsd_profile in profile context
+                profile_data_match = re.search(
+                    r'"Profile"[^}]*"entityUrn":"(urn:li:fsd_profile:[A-Za-z0-9_-]+)"',
+                    page_source,
+                )
+                if profile_data_match:
+                    profile_id = profile_data_match.group(1).split(":")[-1]
+                    urn = f"urn:li:person:{profile_id}"
+                    logger.info(f"Found person URN (Profile entity): {urn}")
+
+            if not urn:
+                logger.warning(f"Could not extract URN from profile: {profile_url}")
+
+            # === Step 2: Send connection request (if enabled) ===
+            if not send_connection:
+                connection_msg = "Skipped (disabled)"
+                return (urn, False, connection_msg)
+
+            # Check if already connected or pending
+            page_text_lower = page_source.lower()
+            if "pending" in page_text_lower and "invitation" in page_text_lower:
+                connection_msg = "Invitation already pending"
+                return (urn, False, connection_msg)
+
+            # Look for Connect button
+            connect_button = None
+            connect_selectors = [
+                'button[aria-label*="Invite"][aria-label*="connect"]',
+                'button[aria-label*="Connect with"]',
+                '//button[contains(., "Connect")]',
+                '//button[contains(@aria-label, "connect")]',
+            ]
+
+            # Try CSS selectors
+            for selector in connect_selectors[:2]:
+                try:
+                    buttons = driver.find_elements(By.CSS_SELECTOR, selector)
+                    for btn in buttons:
+                        btn_text = btn.text.strip().lower()
+                        if "connect" in btn_text and btn.is_displayed():
+                            connect_button = btn
+                            break
+                    if connect_button:
+                        break
+                except Exception:
+                    continue
+
+            # Try XPath selectors
+            if not connect_button:
+                for selector in connect_selectors[2:]:
+                    try:
+                        buttons = driver.find_elements(By.XPATH, selector)
+                        for btn in buttons:
+                            if btn.is_displayed():
+                                btn_text = btn.text.strip().lower()
+                                if (
+                                    "connect" in btn_text
+                                    and "disconnect" not in btn_text
+                                ):
+                                    connect_button = btn
+                                    break
+                        if connect_button:
+                            break
+                    except Exception:
+                        continue
+
+            # Final fallback: find any button with "Connect" text
+            if not connect_button:
+                try:
+                    all_buttons = driver.find_elements(By.TAG_NAME, "button")
+                    for btn in all_buttons:
+                        try:
+                            btn_text = btn.text.strip().lower()
+                            aria_label = (btn.get_attribute("aria-label") or "").lower()
+                            if (
+                                btn.is_displayed()
+                                and ("connect" in btn_text or "connect" in aria_label)
+                                and "disconnect" not in btn_text
+                                and "message" not in btn_text
+                            ):
+                                connect_button = btn
+                                break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+            if not connect_button:
+                if "message" in page_text_lower and "connect" not in page_text_lower:
+                    connection_msg = "Already connected (Message button visible)"
+                else:
+                    connection_msg = "Connect button not found"
+                return (urn, False, connection_msg)
+
+            # Click Connect button
+            driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center'});", connect_button
+            )
+            time.sleep(0.5 + random.random() * 0.5)
+            connect_button.click()
+            time.sleep(2 + random.random())
+
+            # Handle connection modal with message
+            try:
+                if message:
+                    # Click "Add a note"
+                    add_note_buttons = driver.find_elements(
+                        By.XPATH, '//button[contains(., "Add a note")]'
+                    )
+                    for btn in add_note_buttons:
+                        if btn.is_displayed():
+                            btn.click()
+                            time.sleep(1 + random.random())
+                            break
+
+                    # Fill in message
+                    try:
+                        textarea = WebDriverWait(driver, 5).until(
+                            EC.presence_of_element_located(
+                                (
+                                    By.CSS_SELECTOR,
+                                    'textarea[name="message"], textarea#custom-message',
+                                )
+                            )
+                        )
+                        textarea.clear()
+                        for char in message[:300]:
+                            textarea.send_keys(char)
+                            time.sleep(0.02 + random.random() * 0.02)
+                        time.sleep(0.5)
+                    except Exception as e:
+                        logger.debug(f"Could not find message textarea: {e}")
+
+                # Click Send
+                send_buttons = driver.find_elements(
+                    By.XPATH,
+                    '//button[contains(@aria-label, "Send") or contains(., "Send invitation") or contains(., "Send")]',
+                )
+                for btn in send_buttons:
+                    btn_text = btn.text.strip().lower()
+                    if (
+                        btn.is_displayed()
+                        and "send" in btn_text
+                        and "without" not in btn_text
+                    ):
+                        btn.click()
+                        time.sleep(1)
+                        connection_sent = True
+                        connection_msg = "Connection request sent" + (
+                            " with message" if message else ""
+                        )
+                        logger.info(f"Connection request sent to {profile_url}")
+                        break
+
+                if not connection_sent:
+                    # Try "Send without a note" as fallback
+                    send_without = driver.find_elements(
+                        By.XPATH, '//button[contains(., "Send without")]'
+                    )
+                    for btn in send_without:
+                        if btn.is_displayed():
+                            btn.click()
+                            time.sleep(1)
+                            connection_sent = True
+                            connection_msg = "Connection request sent (without note)"
+                            break
+
+            except Exception as e:
+                logger.debug(f"Error in connection modal: {e}")
+                # The connection button may have sent directly
+                connection_sent = True
+                connection_msg = "Connection request sent (confirmed)"
+
+            return (urn, connection_sent, connection_msg)
+
+        except Exception as e:
+            logger.error(f"Error in combined lookup/connect for {profile_url}: {e}")
+            self._uc_driver = None
+            return (None, False, f"Error: {e}")
 
     def close(self) -> None:
         """Clean up HTTP client and browser resources, and save cache."""

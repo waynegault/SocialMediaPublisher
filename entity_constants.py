@@ -132,6 +132,13 @@ INVALID_ORG_PATTERNS: list[str] = [
     r"^how\s+",  # Headlines: "How [org]..."
     r"^why\s+",  # Headlines: "Why [org]..."
     r"^what\s+",  # Headlines: "What [org]..."
+    r"^china\s+",  # Country + verb headlines (e.g., "China Cracks", "China Develops")
+    r"^usa?\s+",  # "US Develops", "USA Announces"
+    r"^uk\s+",  # "UK Unveils"
+    r"^india\s+",  # "India Launches"
+    r"^japan\s+",  # "Japan Creates"
+    r"\bnot\s+applicable\b",  # AI explanation text
+    r"^not\s+",  # "Not applicable", "Not specified"
 ]
 
 # =============================================================================

@@ -171,7 +171,15 @@ class MultiSourceVerificationResult:
     issues: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
-        status = "✓ VERIFIED" if self.is_verified else "⚠ NEEDS MORE SOURCES"
+        # Show verification status with credibility-based indicator
+        if self.is_verified and self.average_credibility >= 0.6:
+            status = "✓ HIGH CREDIBILITY"
+        elif self.is_verified and self.average_credibility >= 0.4:
+            status = "✓ VERIFIED"
+        elif self.is_verified:
+            status = "⚠ LOW CREDIBILITY"
+        else:
+            status = "⚠ NEEDS MORE SOURCES"
         return (
             f"{status} ({self.source_count} sources, "
             f"avg credibility: {self.average_credibility:.1%}, "
