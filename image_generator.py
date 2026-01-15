@@ -28,6 +28,7 @@ from api_client import api_client
 from config import Config
 from database import Database, Story
 from rate_limiter import AdaptiveRateLimiter
+from url_utils import resolve_relative_url
 
 
 # =============================================================================
@@ -1052,17 +1053,8 @@ Keep response under 100 words."""
                 ):
                     continue
 
-                # Resolve relative URLs
-                if img_url.startswith("//"):
-                    img_url = "https:" + img_url
-                elif img_url.startswith("/"):
-                    # Extract domain from source_url
-                    from urllib.parse import urlparse
-
-                    parsed = urlparse(source_url)
-                    img_url = f"{parsed.scheme}://{parsed.netloc}{img_url}"
-                elif not img_url.startswith("http"):
-                    img_url = f"{base_url}/{img_url}"
+                # Resolve relative URLs using url_utils
+                img_url = resolve_relative_url(img_url, source_url)
 
                 content_images.append(img_url)
                 if len(content_images) >= 3:  # Limit to 3 content images
