@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple, TypedDict, cast
 
-import httpx
+import requests
 from google import genai  # type: ignore
 
 from api_client import api_client
@@ -461,9 +461,6 @@ class LinkedInCompanyLookup:
             logger.warning(
                 "GEMINI_API_KEY not configured - LinkedIn company lookup disabled"
             )
-
-        # HTTP client for LinkedIn API calls
-        self._http_client: Optional[httpx.Client] = None
 
         # === UNIFIED CACHE (replaces class-level dict caches) ===
         # All LinkedIn lookups now use the centralized LinkedInCache with SQLite backend
@@ -2049,18 +2046,13 @@ class LinkedInCompanyLookup:
 
         return (success_count, failure_count, errors)
 
-    def _get_http_client(self) -> httpx.Client:
-        """Get or create HTTP client for LinkedIn API calls."""
-        if self._http_client is None:
-            self._http_client = httpx.Client(
-                timeout=10.0,
-                headers={
-                    "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
-                    "X-Restli-Protocol-Version": "2.0.0",
-                    "LinkedIn-Version": "202401",
-                },
-            )
-        return self._http_client
+    def _get_linkedin_headers(self) -> dict:
+        """Get standard headers for LinkedIn API calls."""
+        return {
+            "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
+            "X-Restli-Protocol-Version": "2.0.0",
+            "LinkedIn-Version": "202401",
+        }
 
     def lookup_organization_by_vanity_name(
         self, vanity_name: str
@@ -2097,10 +2089,13 @@ class LinkedInCompanyLookup:
         logger.info(f"Looking up LinkedIn organization by vanity name: {vanity_name}")
 
         try:
-            client = self._get_http_client()
-            response = client.get(
-                "https://api.linkedin.com/v2/organizations",
+            response = api_client.linkedin_request(
+                method="GET",
+                url="https://api.linkedin.com/v2/organizations",
                 params={"q": "vanityName", "vanityName": vanity_name},
+                headers=self._get_linkedin_headers(),
+                timeout=10,
+                endpoint="org_lookup",
             )
 
             if response.status_code == 200:
@@ -2134,7 +2129,7 @@ class LinkedInCompanyLookup:
                 )
                 return None
 
-        except httpx.TimeoutException:
+        except requests.exceptions.Timeout:
             logger.warning(f"Timeout calling LinkedIn API for: {vanity_name}")
             return None
         except Exception as e:
@@ -5250,13 +5245,9 @@ NOT_FOUND"""
             return (None, False, f"Error: {e}")
 
     def close(self) -> None:
-        """Clean up HTTP client and browser resources, and save cache."""
+        """Clean up browser resources and save cache."""
         # Save cache before closing
         self.save_cache_to_disk()
-
-        if self._http_client:
-            self._http_client.close()
-            self._http_client = None
         self.close_browser()
 
 
@@ -5788,7 +5779,6 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         lookup = LinkedInCompanyLookup(genai_client=None)
         # When no genai_client passed and no API key, client is None
         assert lookup._uc_driver is None
-        assert lookup._http_client is None
         lookup.close()
 
     def test_context_manager():

@@ -161,13 +161,14 @@ def archive_url_wayback(url: str, timeout: int = 10) -> str | None:
     wayback_save_url = f"https://web.archive.org/save/{url}"
 
     try:
-        # Send a HEAD request to trigger archiving
+        # Send a HEAD request to trigger archiving via centralized client
         # We don't need to wait for the full page to load
-        response = requests.head(
+        response = api_client.http_head(
             wayback_save_url,
             timeout=timeout,
             allow_redirects=True,
             headers={"User-Agent": "SocialMediaPublisher/1.0 (URL Archiver)"},
+            endpoint="wayback",
         )
 
         if response.status_code in (200, 302, 303):

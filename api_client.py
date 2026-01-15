@@ -482,6 +482,69 @@ class RateLimitedAPIClient:
                 self.http_limiter.on_429_error(endpoint=full_endpoint, retry_after=30)
             raise
 
+    def http_head(
+        self,
+        url: str,
+        headers: Optional[dict] = None,
+        timeout: int = 10,
+        allow_redirects: bool = True,
+        endpoint: str = "default",
+    ) -> requests.Response:
+        """
+        Rate-limited HTTP HEAD request.
+
+        Args:
+            url: URL to check
+            headers: Request headers
+            timeout: Request timeout
+            allow_redirects: Follow redirects
+            endpoint: Logical endpoint name for rate limiting
+
+        Returns:
+            requests.Response
+        """
+        return self.http_request(
+            method="HEAD",
+            url=url,
+            headers=headers,
+            timeout=timeout,
+            allow_redirects=allow_redirects,
+            endpoint=endpoint,
+        )
+
+    def http_put(
+        self,
+        url: str,
+        headers: Optional[dict] = None,
+        data: Optional[Any] = None,
+        json: Optional[dict] = None,
+        timeout: int = 10,
+        endpoint: str = "default",
+    ) -> requests.Response:
+        """
+        Rate-limited HTTP PUT request.
+
+        Args:
+            url: URL to put to
+            headers: Request headers
+            data: Raw data or binary content
+            json: JSON body
+            timeout: Request timeout
+            endpoint: Logical endpoint name for rate limiting
+
+        Returns:
+            requests.Response
+        """
+        return self.http_request(
+            method="PUT",
+            url=url,
+            headers=headers,
+            data=data,
+            json=json,
+            timeout=timeout,
+            endpoint=endpoint,
+        )
+
     # =========================================================================
     # Metrics
     # =========================================================================

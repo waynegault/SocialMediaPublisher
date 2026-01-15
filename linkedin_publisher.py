@@ -2,7 +2,6 @@
 
 import logging
 import re
-import requests
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -199,12 +198,13 @@ class LinkedInPublisher:
                 "Content-Type": "application/octet-stream",
             }
 
-            # Note: Using requests directly for binary upload (api_client handles JSON)
-            upload_response = requests.put(
+            # Use centralized client for rate limiting and retry logic
+            upload_response = api_client.http_put(
                 upload_url,
                 headers=upload_headers,
                 data=image_data,
                 timeout=60,
+                endpoint="linkedin_upload",
             )
 
             if upload_response.status_code in (200, 201):
