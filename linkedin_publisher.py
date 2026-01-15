@@ -933,18 +933,18 @@ class LinkedInPublisher:
             else:
                 post_param = f"shares=List({post_urn})"
 
+            # The API expects the full URN format: urn:li:organization:123456
             if org_id:
-                url = (
-                    f"https://api.linkedin.com/rest/organizationalEntityShareStatistics"
-                    f"?q=organizationalEntity&organizationalEntity={org_id}&{post_param}"
-                )
+                org_urn_full = f"urn:li:organization:{org_id}"
             else:
-                # Last-resort: include the full URN (may cause error if API expects a Long)
-                org_urn_encoded = quote(org_urn_value, safe="")
-                url = (
-                    f"https://api.linkedin.com/rest/organizationalEntityShareStatistics"
-                    f"?q=organizationalEntity&organizationalEntity={org_urn_encoded}&{post_param}"
-                )
+                # Already have full URN
+                org_urn_full = org_urn_value
+
+            org_urn_encoded = quote(org_urn_full, safe="")
+            url = (
+                f"https://api.linkedin.com/rest/organizationalEntityShareStatistics"
+                f"?q=organizationalEntity&organizationalEntity={org_urn_encoded}&{post_param}"
+            )
 
             # LinkedIn REST API version header
             version = "202501"

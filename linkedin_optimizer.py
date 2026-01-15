@@ -76,6 +76,21 @@ class LinkedInOptimizer:
         r"connect with me",
         r"what's your take",
         r"have you experienced",
+        # Job-seeking CTAs
+        r"tag.{0,20}(hiring|manager|recruiter)",
+        r"dm\s+me",
+        r"message\s+me",
+        r"introductions?",
+        r"refer",
+        r"know\s+of.{0,20}openings?",
+        r"appreciate.{0,30}(tag|help|share|connect)",
+        r"grateful.{0,30}(connection|introduction|referral)",
+        r"welcome.{0,20}(introduction|connection)",
+        r"love\s+to\s+hear",
+        r"looking\s+for\s+(roles?|opportunities|positions?)",
+        r"actively\s+(seeking|looking|interviewing)",
+        r"hiring\s+managers?",
+        r"recruiters?",
     ]
 
     # Patterns LinkedIn algorithm may penalize (imported from content_validation)

@@ -81,8 +81,12 @@ class Story:
     image_alt_text: Optional[str] = None  # Accessibility alt text describing the image
 
     # --- 5. VERIFICATION ---
-    verification_status: str = "pending"  # pending, approved, rejected
+    verification_status: str = (
+        "pending"  # pending, approved, rejected (AI recommendation)
+    )
     verification_reason: Optional[str] = None  # AI's reason for approval/rejection
+    human_approved: bool = False  # True only when human explicitly approves via GUI
+    human_approved_at: Optional[datetime] = None  # When human approved
 
     # --- 6. SCHEDULING/PUBLISHING ---
     scheduled_time: Optional[datetime] = None
@@ -133,6 +137,10 @@ class Story:
             # 5. Verification
             "verification_status": self.verification_status,
             "verification_reason": self.verification_reason,
+            "human_approved": self.human_approved,
+            "human_approved_at": self.human_approved_at.isoformat()
+            if self.human_approved_at
+            else None,
             # 6. Scheduling/Publishing
             "scheduled_time": self.scheduled_time.isoformat()
             if self.scheduled_time
@@ -190,6 +198,12 @@ class Story:
             image_alt_text=row["image_alt_text"],
             verification_status=row["verification_status"],
             verification_reason=row["verification_reason"],
+            human_approved=bool(row["human_approved"])
+            if "human_approved" in row.keys()
+            else False,
+            human_approved_at=_parse_datetime(row["human_approved_at"])
+            if "human_approved_at" in row.keys()
+            else None,
             publish_status=row["publish_status"],
             scheduled_time=_parse_datetime(row["scheduled_time"]),
             published_time=_parse_datetime(row["published_time"]),
@@ -724,6 +738,8 @@ class Database:
                     image_alt_text = ?,
                     verification_status = ?,
                     verification_reason = ?,
+                    human_approved = ?,
+                    human_approved_at = ?,
                     publish_status = ?,
                     scheduled_time = ?,
                     published_time = ?,
@@ -757,6 +773,8 @@ class Database:
                     story.image_alt_text,
                     story.verification_status,
                     story.verification_reason,
+                    1 if story.human_approved else 0,
+                    story.human_approved_at,
                     story.publish_status,
                     story.scheduled_time,
                     story.published_time,
@@ -857,13 +875,36 @@ class Database:
             return [Story.from_row(row) for row in cursor.fetchall()]
 
     def get_approved_unpublished_stories(self, limit: int) -> list[Story]:
-        """Get approved stories that haven't been published."""
+        """Get HUMAN-approved stories that haven't been published.
+
+        Only returns stories where human_approved=True, not just AI-recommended.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM stories
+                WHERE human_approved = 1
+                AND publish_status = 'unpublished'
+                ORDER BY quality_score DESC, acquire_date DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            return [Story.from_row(row) for row in cursor.fetchall()]
+
+    def get_ai_recommended_stories(self, limit: int = 100) -> list[Story]:
+        """Get AI-recommended stories awaiting human review.
+
+        Returns stories where AI approved but human hasn't reviewed yet.
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
                 SELECT * FROM stories
                 WHERE verification_status = 'approved'
+                AND human_approved = 0
                 AND publish_status = 'unpublished'
                 ORDER BY quality_score DESC, acquire_date DESC
                 LIMIT ?
@@ -886,7 +927,7 @@ class Database:
             return [Story.from_row(row) for row in cursor.fetchall()]
 
     def get_scheduled_stories_due(self) -> list[Story]:
-        """Get stories that are scheduled and due for publishing."""
+        """Get stories that are scheduled, human-approved, and due for publishing."""
         now = datetime.now()
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -894,6 +935,7 @@ class Database:
                 """
                 SELECT * FROM stories
                 WHERE publish_status = 'scheduled'
+                AND human_approved = 1
                 AND scheduled_time <= ?
                 ORDER BY scheduled_time ASC
                 """,
@@ -1682,17 +1724,21 @@ class Database:
             stats = {}
 
             cursor.execute("SELECT COUNT(*) FROM people")
-            stats["total_people"] = cursor.fetchone()[0]
+            stats["total"] = cursor.fetchone()[
+                0
+            ]  # Fixed: key was 'total_people' but display used 'total'
 
             cursor.execute(
                 "SELECT COUNT(*) FROM people WHERE relationship_type = 'direct'"
             )
-            stats["direct_people"] = cursor.fetchone()[0]
+            stats["direct_count"] = cursor.fetchone()[0]  # Fixed: key to match display
 
             cursor.execute(
                 "SELECT COUNT(*) FROM people WHERE relationship_type = 'indirect'"
             )
-            stats["indirect_people"] = cursor.fetchone()[0]
+            stats["indirect_count"] = cursor.fetchone()[
+                0
+            ]  # Fixed: key to match display
 
             cursor.execute(
                 "SELECT COUNT(*) FROM people WHERE linkedin_profile IS NOT NULL AND linkedin_profile != ''"
@@ -1713,6 +1759,11 @@ class Database:
                 "SELECT COUNT(*) FROM people WHERE connection_status = 'connected'"
             )
             stats["connected"] = cursor.fetchone()[0]
+
+            # Count connections actually sent (pending + connected)
+            stats["connections_sent"] = (
+                stats["pending_connections"] + stats["connected"]
+            )
 
             cursor.execute(
                 "SELECT COUNT(DISTINCT linkedin_profile) FROM people WHERE linkedin_profile IS NOT NULL"

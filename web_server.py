@@ -460,13 +460,15 @@ def create_stories_api_blueprint(db: Database) -> Blueprint:
 
     @bp.route("/<int:story_id>/accept", methods=["POST"])
     def accept_story(story_id: int):
-        """Accept a story for publication."""
+        """Accept a story for publication (human approval)."""
         try:
             story = db.get_story(story_id)
             if not story:
                 return jsonify({"error": "Story not found"}), 404
             story.verification_status = "approved"
             story.verification_reason = "Manually approved via human validation"
+            story.human_approved = True
+            story.human_approved_at = datetime.now()
             db.update_story(story)
             return jsonify(story.to_dict())
         except Exception as e:
@@ -475,13 +477,15 @@ def create_stories_api_blueprint(db: Database) -> Blueprint:
 
     @bp.route("/<int:story_id>/reject", methods=["POST"])
     def reject_story(story_id: int):
-        """Reject a story."""
+        """Reject a story (human rejection)."""
         try:
             story = db.get_story(story_id)
             if not story:
                 return jsonify({"error": "Story not found"}), 404
             story.verification_status = "rejected"
             story.verification_reason = "Manually rejected via human validation"
+            story.human_approved = False
+            story.human_approved_at = None
             db.update_story(story)
             return jsonify(story.to_dict())
         except Exception as e:

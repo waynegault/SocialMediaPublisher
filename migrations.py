@@ -275,6 +275,30 @@ class Migration005AddSchedulingInfo(Migration):
         pass  # Keep for data safety
 
 
+class Migration006AddHumanApproval(Migration):
+    """Add human approval tracking - posts can only be published after human approval."""
+
+    version = 6
+    name = "add_human_approval"
+    description = "Add human_approved flag to enforce human review before publishing"
+
+    def up(self, cursor: sqlite3.Cursor) -> None:
+        """Add human approval columns."""
+        cursor.execute("PRAGMA table_info(stories)")
+        columns = {row[1] for row in cursor.fetchall()}
+
+        if "human_approved" not in columns:
+            cursor.execute(
+                "ALTER TABLE stories ADD COLUMN human_approved INTEGER DEFAULT 0"
+            )
+        if "human_approved_at" not in columns:
+            cursor.execute("ALTER TABLE stories ADD COLUMN human_approved_at TEXT")
+
+    def down(self, cursor: sqlite3.Cursor) -> None:
+        """Remove human approval columns."""
+        pass  # Keep for data safety
+
+
 # =============================================================================
 # Migrator Class
 # =============================================================================
@@ -290,6 +314,7 @@ class Migrator:
         Migration003AddContentHash,
         Migration004AddSourceCredibility,
         Migration005AddSchedulingInfo,
+        Migration006AddHumanApproval,
     ]
 
     def __init__(self, db_path: str | None = None) -> None:
