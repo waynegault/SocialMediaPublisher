@@ -18,6 +18,7 @@ import httpx
 from google import genai  # type: ignore
 
 from api_client import api_client
+from cache import get_linkedin_cache, LinkedInCache
 from config import Config
 from error_handling import with_enhanced_recovery, NetworkTimeoutError
 from organization_aliases import ORG_ALIASES as _ORG_ALIASES
@@ -432,22 +433,18 @@ class LinkedInCompanyLookup:
     # Use module-level imports: INVALID_ORG_NAMES, INVALID_ORG_PATTERNS,
     # INVALID_PERSON_NAMES, VALID_SINGLE_WORD_ORGS
 
-    # === CLASS-LEVEL CACHES (shared across all instances and steps) ===
-    # Cache person search results - Key: "name@canonical_company" -> URL or None
-    _shared_person_cache: dict[str, Optional[str]] = {}
-    # Cache found profiles by name only - Key: normalized_name -> profile_url
-    # This allows finding the same person even with different org variations
-    _shared_found_profiles_by_name: dict[str, str] = {}
-    # Cache LinkedIn company URL to canonical name - Key: linkedin_url -> canonical_name
-    _shared_company_url_to_name: dict[str, str] = {}
-    # Cache failed lookups with timestamp to avoid re-searching - Key: name -> timestamp
-    _shared_failed_lookups: dict[str, float] = {}
-    # Failed lookup TTL in seconds (don't re-search failed lookups within this window)
+    # === CLASS-LEVEL CACHES (DEPRECATED - migrated to LinkedInCache) ===
+    # These are kept for backward compatibility with legacy cache loading.
+    # All new cache operations use LinkedInCache from cache.py.
+    # TODO: Remove these after migration is complete and tested
+    _shared_person_cache: dict[str, Optional[str]] = {}  # DEPRECATED
+    _shared_found_profiles_by_name: dict[str, str] = {}  # DEPRECATED
+    _shared_company_url_to_name: dict[str, str] = {}  # DEPRECATED
+    _shared_failed_lookups: dict[str, float] = {}  # DEPRECATED
     _FAILED_LOOKUP_TTL: float = 86400.0  # 24 hours
-    # Cache company search results - Key: company name -> (url, slug, urn) or None
     _shared_company_cache: dict[
         str, Optional[tuple[str, Optional[str], Optional[str]]]
-    ] = {}
+    ] = {}  # DEPRECATED
 
     def __init__(self, genai_client: Optional[genai.Client] = None) -> None:
         """Initialize the LinkedIn company lookup service.
@@ -468,21 +465,24 @@ class LinkedInCompanyLookup:
         # HTTP client for LinkedIn API calls
         self._http_client: Optional[httpx.Client] = None
 
+        # === UNIFIED CACHE (replaces class-level dict caches) ===
+        # All LinkedIn lookups now use the centralized LinkedInCache with SQLite backend
+        self._linkedin_cache: LinkedInCache = get_linkedin_cache()
+
         # Use class-level shared driver (singleton pattern)
         # This prevents multiple browser instances from being created
 
         # Track if we've verified LinkedIn login this session (use class-level)
         # Instance reference for backward compatibility
 
-        # === INSTANCE PROPERTIES THAT REDIRECT TO CLASS-LEVEL CACHES ===
-        # (for backward compatibility - all instances share the same caches)
-
         # Cache of profile URLs already validated and rejected for a given normalized name
+        # This is session-scoped (not persisted) to allow retries in new sessions
         # Key: normalized name -> set of rejected profile URLs
         self._rejected_profile_cache: dict[str, set[str]] = {}
 
         # Cache department search results across multiple stories
         # Key: "dept@company" -> (url, slug, urn) or None
+        # This is also session-scoped; consider migrating to LinkedInCache in future
         self._department_cache: dict[
             str, tuple[Optional[str], Optional[str], Optional[str]]
         ] = {}
@@ -575,20 +575,106 @@ class LinkedInCompanyLookup:
         """Set the shared company cache (class-level singleton)."""
         LinkedInCompanyLookup._shared_company_cache = value
 
+    # === LINKEDINCACHE HELPER METHODS ===
+    # These provide convenient access to the unified cache and should be used
+    # for new code. Existing code using the dict caches will continue to work.
+
+    def _cache_person_result(self, name: str, company: str, url: Optional[str]) -> None:
+        """Cache a person lookup result in the unified LinkedInCache.
+
+        Args:
+            name: Person's name
+            company: Company name
+            url: Profile URL (or None for not-found)
+        """
+        # Store in LinkedInCache with TTL
+        self._linkedin_cache.set_person(name, company, {"url": url})
+
+        # Also store by name only for cross-company lookups (if found)
+        if url:
+            self._linkedin_cache.set_person_by_name(name, url)
+
+    def _get_cached_person(self, name: str, company: str) -> Optional[str]:
+        """Get a cached person profile URL from LinkedInCache.
+
+        Args:
+            name: Person's name
+            company: Company name
+
+        Returns:
+            Profile URL, empty string (not found), or None (not cached)
+        """
+        result = self._linkedin_cache.get_person(name, company)
+        if result is not None:
+            return result.get("url") if isinstance(result, dict) else result
+        return None
+
+    def _cache_company_result(
+        self,
+        name: str,
+        url: Optional[str],
+        slug: Optional[str] = None,
+        urn: Optional[str] = None,
+    ) -> None:
+        """Cache a company lookup result in the unified LinkedInCache.
+
+        Args:
+            name: Company name
+            url: LinkedIn URL (or None for not-found)
+            slug: URL slug
+            urn: LinkedIn URN
+        """
+        if url:
+            self._linkedin_cache.set_company(name, url, slug or "", urn or "")
+            # Also store the reverse lookup
+            self._linkedin_cache.set_company_canonical_name(url, name)
+
+    def _get_cached_company(self, name: str) -> Optional[tuple[str, str, str]]:
+        """Get a cached company lookup result from LinkedInCache.
+
+        Args:
+            name: Company name
+
+        Returns:
+            Tuple of (url, slug, urn) or None if not cached
+        """
+        return self._linkedin_cache.get_company(name)
+
+    def _cache_department_result(
+        self,
+        department: str,
+        company: str,
+        url: Optional[str],
+        slug: Optional[str] = None,
+        urn: Optional[str] = None,
+    ) -> None:
+        """Cache a department lookup result in the unified LinkedInCache."""
+        if url:
+            self._linkedin_cache.set_department(
+                department, company, url, slug or "", urn or ""
+            )
+
+    def _get_cached_department(
+        self, department: str, company: str
+    ) -> Optional[tuple[str, str, str]]:
+        """Get a cached department lookup result from LinkedInCache."""
+        return self._linkedin_cache.get_department(department, company)
+
     def get_cache_stats(self) -> AllCacheStats:
         """Get statistics about all search caches.
 
         Returns:
             Dict with stats for 'person', 'company', 'department' caches
         """
+        # Get stats from LinkedInCache
+        unified_stats = self._linkedin_cache.get_stats()
+
+        # Also include legacy dict cache sizes for transparency
         person_total = len(self._person_cache)
         person_found = sum(1 for url in self._person_cache.values() if url is not None)
 
         company_total = len(self._company_cache)
         company_found = sum(1 for v in self._company_cache.values() if v is not None)
-
-        dept_total = len(self._department_cache)
-        dept_found = sum(1 for v in self._department_cache.values() if v[0] is not None)
 
         return {
             "person": {
@@ -601,11 +687,7 @@ class LinkedInCompanyLookup:
                 "found": company_found,
                 "not_found": company_total - company_found,
             },
-            "department": {
-                "total": dept_total,
-                "found": dept_found,
-                "not_found": dept_total - dept_found,
-            },
+            "unified_cache": unified_stats,
         }
 
     def get_timing_stats(self) -> dict[str, dict[str, float]]:

@@ -799,6 +799,102 @@ class LinkedInCache:
         key = self._make_key(self.NS_COMPANY, name)
         self._cache.set(key, (url, slug, urn), disk_ttl=self.ORG_TTL)
 
+    # === Person by Name Only Cache ===
+
+    def get_person_by_name(self, name: str) -> str | None:
+        """
+        Get cached person profile URL by name only (ignoring company).
+
+        This enables cross-company lookups - if we found "John Smith" at any
+        company, we can reuse that URL for other company associations.
+
+        Args:
+            name: Person's name
+
+        Returns:
+            Profile URL or None
+        """
+        key = self._make_key(self.NS_PERSON, "name_only", name)
+        return self._cache.get(key)
+
+    def set_person_by_name(self, name: str, url: str) -> None:
+        """
+        Cache person profile URL by name only for cross-company lookups.
+
+        Args:
+            name: Person's name
+            url: Profile URL (must be non-None - only cache found profiles)
+        """
+        if url:
+            key = self._make_key(self.NS_PERSON, "name_only", name)
+            self._cache.set(key, url, disk_ttl=self.PERSON_TTL)
+
+    # === Company Reverse Lookup Cache (URL → Canonical Name) ===
+
+    NS_COMPANY_REVERSE = "linkedin:company_reverse"
+
+    def get_company_canonical_name(self, linkedin_url: str) -> str | None:
+        """
+        Get canonical company name from LinkedIn URL (reverse lookup).
+
+        Args:
+            linkedin_url: LinkedIn company URL
+
+        Returns:
+            Canonical company name or None
+        """
+        key = self._make_key(self.NS_COMPANY_REVERSE, linkedin_url)
+        return self._cache.get(key)
+
+    def set_company_canonical_name(
+        self, linkedin_url: str, canonical_name: str
+    ) -> None:
+        """
+        Cache LinkedIn URL to canonical company name mapping.
+
+        Args:
+            linkedin_url: LinkedIn company URL
+            canonical_name: Canonical company name
+        """
+        key = self._make_key(self.NS_COMPANY_REVERSE, linkedin_url)
+        self._cache.set(key, canonical_name, disk_ttl=self.ORG_TTL)
+
+    # === Department Cache ===
+
+    NS_DEPARTMENT = "linkedin:department"
+
+    def get_department(
+        self, department: str, company: str
+    ) -> tuple[str, str, str] | None:
+        """
+        Get cached department page lookup result.
+
+        Args:
+            department: Department name (e.g., "Engineering", "Marketing")
+            company: Parent company name
+
+        Returns:
+            Tuple of (url, slug, urn) or None
+        """
+        key = self._make_key(self.NS_DEPARTMENT, department, company)
+        return self._cache.get(key)
+
+    def set_department(
+        self, department: str, company: str, url: str, slug: str = "", urn: str = ""
+    ) -> None:
+        """
+        Cache a department page lookup result.
+
+        Args:
+            department: Department name
+            company: Parent company name
+            url: LinkedIn department URL
+            slug: URL slug
+            urn: LinkedIn URN
+        """
+        key = self._make_key(self.NS_DEPARTMENT, department, company)
+        self._cache.set(key, (url, slug, urn), disk_ttl=self.ORG_TTL)
+
     # === Failed Lookups Cache ===
 
     def is_failed_lookup(self, name: str, company: str = "") -> bool:
