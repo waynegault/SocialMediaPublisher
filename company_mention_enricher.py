@@ -25,8 +25,12 @@ from database import Database, Story
 # Import shared entity validation constants from entity_constants (no optional dependencies)
 from entity_constants import (
     INVALID_ORG_NAMES,
+    INVALID_ORG_PATTERNS,
     VALID_SINGLE_WORD_ORGS,
     INVALID_PERSON_NAMES,
+    INVALID_PERSON_PATTERNS,
+    is_invalid_org_name,
+    is_invalid_person_name,
 )
 
 # Patterns that look like organization names rather than person names
@@ -1588,49 +1592,18 @@ EXTRACTION RULES:
         Returns:
             Filtered set containing only valid organization names
         """
-        # Import org validation from LinkedIn lookup
-        try:
-            from linkedin_profile_lookup import LinkedInCompanyLookup
-        except ImportError:
-            logger.debug("LinkedIn lookup unavailable for org validation")
-            return organizations
-
-        # Additional invalid patterns for partial/fragmented org names
-        invalid_patterns = [
-            r"^the\s+",  # Articles at start aren't org names alone
-            r"begins?\b",  # Headlines: "Center Begins..."
-            r"unveils?\b",
-            r"announces?\b",
-            r"creates?\b",
-            r"discovers?\b",
-            r"\bmomentum\b",  # "Interdisciplinary Momentum"
-            r"\bnew\s+way\b",
-            r"^chemical$",  # Single word "Chemical"
-            r"^research$",
-        ]
-
-        # Patterns that indicate AI explanation rather than org name
-        ai_explanation_patterns = [
-            "not applicable",
-            "this is not",
-            "no organization",
-            "none mentioned",
-            "not specified",
-            "generalized",
-            "generic",
-            "various companies",
-            "multiple",
-            "several",
-            "unspecified",
-            "headline",
-            "actual research",
-        ]
-
-        # Use shared constants from ner_engine
         valid_orgs: set[str] = set()
         for org in organizations:
             if not org:
                 continue
+
+            # Use centralized validation (handles patterns, length, AI explanations)
+            if is_invalid_org_name(org):
+                logger.debug(
+                    f"Pre-filtering invalid org (centralized check): '{org[:50]}'"
+                )
+                continue
+
             norm = org.lower().strip()
 
             # Skip if org name is too long (likely an AI explanation)
@@ -1646,40 +1619,31 @@ EXTRACTION RULES:
                 )
                 continue
 
-            # Skip AI explanation patterns
-            if any(pattern in norm for pattern in ai_explanation_patterns):
-                logger.debug(f"Pre-filtering AI explanation org: '{org[:50]}'")
-                continue
-
-            # Skip known invalid names (uses shared INVALID_ORG_NAMES from ner_engine)
-            if norm in INVALID_ORG_NAMES:
-                logger.debug(f"Pre-filtering invalid org: '{org}'")
-                continue
-
             # Skip single generic words (unless they're known companies)
             words = norm.split()
             if len(words) == 1 and norm not in VALID_SINGLE_WORD_ORGS:
                 logger.debug(f"Pre-filtering single-word org: '{org}'")
                 continue
 
-            # Skip person names that ended up in org list (like "Srinivasan")
-            # Person names typically don't have org indicators
-            if len(words) == 1:
-                # Single word that looks like a name (capitalized, common surname pattern)
-                # but isn't a valid single-word org
-                is_all_caps_or_title = org[0].isupper() if org else False
-                if is_all_caps_or_title and norm not in VALID_SINGLE_WORD_ORGS:
-                    logger.debug(f"Pre-filtering potential surname org: '{org}'")
-                    continue
-
-            # Skip patterns that indicate headlines or partial names
-            skip = False
-            for pattern in invalid_patterns:
-                if re.search(pattern, norm, re.IGNORECASE):
-                    logger.debug(f"Pre-filtering pattern-matched org: '{org}'")
-                    skip = True
-                    break
-            if skip:
+            # Skip patterns that indicate AI explanation rather than org name
+            ai_explanation_patterns = [
+                "not applicable",
+                "this is not",
+                "no organization",
+                "none mentioned",
+                "not specified",
+                "generalized",
+                "generic",
+                "various companies",
+                "multiple ",  # "multiple companies"
+                "several ",  # "several organizations"
+                "unspecified",
+                "headline",
+                "actual research",
+                " - ",  # Dash with spaces often indicates explanation
+            ]
+            if any(pattern in norm for pattern in ai_explanation_patterns):
+                logger.debug(f"Pre-filtering AI explanation org: '{org[:50]}'")
                 continue
 
             valid_orgs.add(org)
@@ -2396,14 +2360,31 @@ Return ONLY valid JSON, no explanation."""
             data = json.loads(response_text)
             leaders = data.get("leaders", [])
 
-            # Ensure each leader has required fields with defaults
+            # Validate and filter each leader - filter out AI explanation text
+            validated_leaders = []
             for leader in leaders:
+                name = leader.get("name", "").strip()
+                if not name:
+                    continue
+
+                # Use centralized validation to reject invalid names
+                if is_invalid_person_name(name):
+                    logger.debug(f"Filtering invalid indirect person: '{name[:50]}'")
+                    continue
+
+                # Set defaults and add to validated list
                 leader.setdefault("role_type", "executive")
                 leader.setdefault("department", "")
                 leader.setdefault("location", "")
                 leader.setdefault("linkedin_profile", "")
+                validated_leaders.append(leader)
 
-            return leaders
+            if len(validated_leaders) < len(leaders):
+                logger.debug(
+                    f"Filtered indirect people: {len(leaders)} -> {len(validated_leaders)}"
+                )
+
+            return validated_leaders
 
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse leaders JSON: {e}")

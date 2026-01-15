@@ -121,6 +121,17 @@ INVALID_ORG_PATTERNS: list[str] = [
     r"benchmark",
     r"record",
     r"-old\b",  # "decade-old", "year-old"
+    r"\bcrack",  # "Cracks", "Cracking" - headline verbs (e.g., "China Cracks")
+    r"\bsolv",  # "Solves", "Solving"
+    r"\bwin",  # "Wins"
+    r"\bbeat",  # "Beats"
+    r"\bcode\b",  # "The Code" - often part of headlines
+    r"\bsecret\b",  # "Secret" - headline word
+    r"manufactur",  # "Manufacturing" as headline action
+    r"\bhigh-performance\b",  # Technical descriptor, not org
+    r"^how\s+",  # Headlines: "How [org]..."
+    r"^why\s+",  # Headlines: "Why [org]..."
+    r"^what\s+",  # Headlines: "What [org]..."
 ]
 
 # =============================================================================
@@ -143,7 +154,33 @@ INVALID_PERSON_NAMES: set[str] = {
     "team",
     "anonymous",
     "unknown",
+    "n/a",
+    "none",
+    "not applicable",
+    "not specified",
+    "tba",
+    "tbd",
+    "placeholder",
 }
+
+# Patterns that indicate AI explanation text rather than a real person name
+# These are checked as substrings (case-insensitive)
+INVALID_PERSON_PATTERNS: list[str] = [
+    "not applicable",
+    "this is not",
+    "no organization",
+    "none mentioned",
+    "not specified",
+    "generalized",
+    "headline",
+    "actual research",
+    "the organization",
+    "the company",
+    "the university",
+    "not a person",
+    "not an individual",
+    " - ",  # Dash with spaces often indicates explanation
+]
 
 # =============================================================================
 # Valid Single-Word Organizations
@@ -210,7 +247,26 @@ def is_invalid_person_name(name: str) -> bool:
         return True
 
     normalized = name.lower().strip()
-    return normalized in INVALID_PERSON_NAMES
+
+    # Check against invalid names set
+    if normalized in INVALID_PERSON_NAMES:
+        return True
+
+    # Check against AI explanation patterns (substring match)
+    for pattern in INVALID_PERSON_PATTERNS:
+        if pattern in normalized:
+            return True
+
+    # Reject names that are too long (likely AI explanations)
+    if len(name) > 60:
+        return True
+
+    # Reject names with too many words (real names are typically 2-4 words)
+    word_count = len(normalized.split())
+    if word_count > 6:
+        return True
+
+    return False
 
 
 def is_valid_single_word_org(name: str) -> bool:

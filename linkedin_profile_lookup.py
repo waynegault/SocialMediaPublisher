@@ -28,7 +28,9 @@ from entity_constants import (
     INVALID_ORG_NAMES,
     INVALID_ORG_PATTERNS,
     INVALID_PERSON_NAMES,
+    INVALID_PERSON_PATTERNS,
     VALID_SINGLE_WORD_ORGS,
+    is_invalid_person_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -858,6 +860,7 @@ class LinkedInCompanyLookup:
         - Generic placeholders like "Individual Researcher", "Staff Writer"
         - Role descriptions that aren't actual names
         - Very short names (likely parsing errors)
+        - AI explanation text (e.g., "Not applicable - This is not an organization...")
 
         Args:
             name: Person name to validate
@@ -868,13 +871,13 @@ class LinkedInCompanyLookup:
         if not name:
             return False
 
-        # Normalize for checking
-        norm = name.lower().strip()
-
-        # Check against known invalid person names
-        if norm in INVALID_PERSON_NAMES:
-            logger.debug(f"Skipping invalid person name: '{name}' (in blocklist)")
+        # Use centralized validation first (handles patterns, length, word count)
+        if is_invalid_person_name(name):
+            logger.debug(f"Skipping invalid person name: '{name}' (failed validation)")
             return False
+
+        # Normalize for additional checks
+        norm = name.lower().strip()
 
         # Very short names (< 3 chars) are likely errors
         if len(norm) < 3:
