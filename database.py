@@ -496,6 +496,13 @@ class Database:
             self._migrate_add_column(cursor, "promotion", "TEXT", existing_columns)
             # Image alt text for accessibility
             self._migrate_add_column(cursor, "image_alt_text", "TEXT", existing_columns)
+            # Human approval tracking
+            self._migrate_add_column(
+                cursor, "human_approved", "INTEGER DEFAULT 0", existing_columns
+            )
+            self._migrate_add_column(
+                cursor, "human_approved_at", "TEXT", existing_columns
+            )
 
             # System state table for tracking last check date, etc.
             cursor.execute("""
