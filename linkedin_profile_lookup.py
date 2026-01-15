@@ -2979,6 +2979,20 @@ NOT_FOUND"""
             driver.get(profile_url)
             time.sleep(1.5)  # Wait for page to load
 
+            # Check if LinkedIn requires login (authwall)
+            current_url = driver.current_url.lower()
+            if "/login" in current_url or "/authwall" in current_url:
+                logger.debug(f"LinkedIn login required to view profile: {profile_url}")
+                if self._ensure_linkedin_login(driver):
+                    # Retry loading the profile after login
+                    driver.get(profile_url)
+                    time.sleep(1.5)
+                else:
+                    logger.warning(
+                        "Could not log in to LinkedIn for profile validation"
+                    )
+                    return False
+
             # Extract the profile name from the page
             # LinkedIn profile titles are typically "FirstName LastName - Title | LinkedIn"
             page_title = driver.title.lower() if driver.title else ""
