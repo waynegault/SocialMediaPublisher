@@ -457,6 +457,78 @@ class CoreServicesProvider(ServiceProvider):
             container.register_instance("config", EnvironmentConfig.development())
 
 
+class CacheServicesProvider(ServiceProvider):
+    """Provider for caching services.
+
+    Registers singletons for:
+    - LinkedInCache: Persistent cache for LinkedIn lookups
+    - api_client: Rate-limited API client
+    """
+
+    def register(self, container: ServiceContainer) -> None:
+        """Register caching services."""
+        # LinkedInCache singleton (lazy loaded)
+        def create_linkedin_cache() -> "LinkedInCache":
+            from cache import LinkedInCache
+            return LinkedInCache.get_instance()
+
+        container.register(
+            "linkedin_cache",
+            create_linkedin_cache,
+            singleton=True,
+            lazy=True,
+            tags=["cache", "linkedin"],
+        )
+
+        # RateLimitedAPIClient singleton (lazy loaded)
+        def create_api_client() -> "RateLimitedAPIClient":
+            from api_client import api_client
+            return api_client
+
+        container.register(
+            "api_client",
+            create_api_client,
+            singleton=True,
+            lazy=True,
+            tags=["api", "rate_limiter"],
+        )
+
+    def boot(self, container: ServiceContainer) -> None:
+        """Boot caching services - no initialization needed."""
+        pass
+
+
+class DatabaseServicesProvider(ServiceProvider):
+    """Provider for database services.
+
+    Registers:
+    - Database: Main story database abstraction
+    """
+
+    def register(self, container: ServiceContainer) -> None:
+        """Register database services."""
+        def create_database(db_path: str | None = None) -> "Database":
+            from database import Database
+            from config import Config
+            path = db_path or Config.STORIES_DB_PATH
+            return Database(path)
+
+        container.register(
+            "database",
+            create_database,
+            singleton=True,
+            lazy=True,
+            tags=["database", "storage"],
+        )
+
+
+# Type hints for lazy imports
+if TYPE_CHECKING:
+    from cache import LinkedInCache
+    from api_client import RateLimitedAPIClient
+    from database import Database
+
+
 # =============================================================================
 # Application Builder
 # =============================================================================

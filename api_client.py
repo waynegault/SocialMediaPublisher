@@ -74,6 +74,16 @@ class RateLimitedAPIClient:
             rate_limiter_429_backoff=0.5,
         )
 
+        # Browser-based searches - very conservative (CAPTCHA prevention)
+        # Used by linkedin_profile_lookup for browser-based searches
+        self.browser_limiter = AdaptiveRateLimiter(
+            initial_fill_rate=0.125,  # 1 request per 8 seconds
+            min_fill_rate=0.05,  # Minimum: 1 per 20 seconds
+            max_fill_rate=0.2,  # Maximum: 1 per 5 seconds
+            success_threshold=3,
+            rate_limiter_429_backoff=0.3,  # Aggressive backoff on CAPTCHA
+        )
+
         # Session pool for connection reuse
         self._sessions: dict[str, requests.Session] = {}
 
@@ -556,7 +566,34 @@ class RateLimitedAPIClient:
             "imagen": self.imagen_limiter.get_metrics(),
             "linkedin": self.linkedin_limiter.get_metrics(),
             "http": self.http_limiter.get_metrics(),
+            "browser": self.browser_limiter.get_metrics(),
         }
+
+    def browser_wait(self, endpoint: str = "search") -> float:
+        """
+        Wait according to browser rate limiter.
+
+        Used by browser-based search operations that need CAPTCHA prevention.
+        Returns the actual wait time.
+
+        Args:
+            endpoint: Logical endpoint (e.g., 'google', 'bing', 'linkedin')
+
+        Returns:
+            Actual time waited in seconds
+        """
+        full_endpoint = f"browser_{endpoint}"
+        return self.browser_limiter.wait(endpoint=full_endpoint)
+
+    def browser_on_success(self, endpoint: str = "search") -> None:
+        """Mark a successful browser operation."""
+        full_endpoint = f"browser_{endpoint}"
+        self.browser_limiter.on_success(endpoint=full_endpoint)
+
+    def browser_on_captcha(self, endpoint: str = "search") -> None:
+        """Mark a CAPTCHA/rate limit event for browser operations."""
+        full_endpoint = f"browser_{endpoint}"
+        self.browser_limiter.on_error_429(endpoint=full_endpoint)
 
     def log_metrics(self) -> None:
         """Log current rate limiter metrics."""

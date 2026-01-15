@@ -305,6 +305,125 @@ def calculate_match_score(
     return min(score, 1.0)
 
 
+@dataclass
+class ScoredCandidate:
+    """Result of scoring a LinkedIn profile candidate."""
+
+    score: float
+    signals: list[str]
+
+
+# Common skip words for company name comparison
+COMPANY_SKIP_WORDS: frozenset[str] = frozenset(
+    {"inc", "llc", "ltd", "corp", "corporation", "the", "company", "group"}
+)
+
+
+def score_person_candidate(
+    candidate_first_name: str,
+    candidate_last_name: str,
+    candidate_headline: str,
+    candidate_location: str,
+    candidate_public_id: str,
+    target_first_name: str,
+    target_last_name: str,
+    target_company: str,
+    target_title: str | None = None,
+    target_location: str | None = None,
+) -> ScoredCandidate:
+    """
+    Score a LinkedIn profile candidate against target criteria.
+
+    This is the detailed multi-signal scoring function used for
+    ranking multiple candidates from search results.
+
+    Scoring weights:
+    - Exact name match: +4.0
+    - Last name match: +2.0 (with +1.0 bonus for first name variant)
+    - Name in full name: +2.5
+    - Company match in headline: +3.0
+    - Title match: +1.5
+    - Location match: +1.0
+    - No public ID penalty: -2.0
+
+    Args:
+        candidate_*: Fields from the candidate profile
+        target_*: Target criteria to match against
+
+    Returns:
+        ScoredCandidate with score and matched signals
+    """
+    score = 0.0
+    signals: list[str] = []
+
+    # Normalize inputs
+    first_lower = target_first_name.lower()
+    last_lower = target_last_name.lower()
+    company_lower = target_company.lower()
+    title_lower = target_title.lower() if target_title else ""
+    location_lower = target_location.lower() if target_location else ""
+
+    candidate_full = f"{candidate_first_name} {candidate_last_name}".lower()
+    candidate_first = candidate_first_name.lower()
+    candidate_last = candidate_last_name.lower()
+    headline_lower = candidate_headline.lower()
+    candidate_loc_lower = candidate_location.lower()
+
+    # Extract significant company words
+    company_words = [
+        w
+        for w in company_lower.split()
+        if w not in COMPANY_SKIP_WORDS and len(w) > 2
+    ]
+
+    # === Name matching ===
+    if candidate_first == first_lower and candidate_last == last_lower:
+        score += 4.0
+        signals.append("exact_name")
+    elif candidate_last == last_lower:
+        score += 2.0
+        signals.append("last_name")
+        # Check if first name is variant
+        if first_lower in candidate_full or candidate_first.startswith(first_lower[:3]):
+            score += 1.0
+            signals.append("first_name_variant")
+    elif first_lower in candidate_full and last_lower in candidate_full:
+        score += 2.5
+        signals.append("name_in_full")
+
+    # === Company matching (in headline) ===
+    if company_words:
+        company_match = any(word in headline_lower for word in company_words)
+        if company_match:
+            score += 3.0
+            signals.append("company_match")
+
+    # === Title matching ===
+    if title_lower:
+        title_words = [w for w in title_lower.split() if len(w) > 3]
+        title_match = any(word in headline_lower for word in title_words)
+        if title_match:
+            score += 1.5
+            signals.append("title_match")
+
+    # === Location matching ===
+    if location_lower and candidate_loc_lower:
+        location_parts = [p.strip() for p in location_lower.split(",")]
+        location_match = any(
+            part in candidate_loc_lower for part in location_parts if len(part) > 2
+        )
+        if location_match:
+            score += 1.0
+            signals.append("location_match")
+
+    # === Penalty for OUT_OF_NETWORK ===
+    if not candidate_public_id or "UNKNOWN" in candidate_public_id.upper():
+        score -= 2.0
+        signals.append("no_public_id")
+
+    return ScoredCandidate(score=score, signals=signals)
+
+
 class RoleType(str, Enum):
     """Classification of role types for matching."""
 

@@ -490,10 +490,8 @@ class LinkedInCompanyLookup:
         self._gemini_disabled = False
 
         # Rate limiting for search engines to avoid CAPTCHA
-        self._last_search_time: float = 0.0
-        self._min_search_interval: float = (
-            8.0  # Minimum seconds between searches (increased to avoid CAPTCHA)
-        )
+        # Basic timing now handled by api_client.browser_limiter
+        # We keep specialized CAPTCHA cooldown and progressive slowdown here
         self._consecutive_searches: int = 0
         self._captcha_cooldown_until: float = 0.0  # Timestamp when cooldown ends
         # NOTE: _driver_search_count is now class-level (_shared_driver_search_count)
@@ -3645,16 +3643,10 @@ NOT_FOUND"""
                     )
                     return None
 
-                # Enforce minimum interval between searches
-                time_since_last = current_time - self._last_search_time
-                if time_since_last < self._min_search_interval:
-                    wait_time = self._min_search_interval - time_since_last
-                    # Add randomness to appear more human (3-7 seconds extra)
-                    wait_time += 3 + random.random() * 4
-                    logger.debug(
-                        f"Rate limiting: waiting {wait_time:.1f}s before search"
-                    )
-                    time.sleep(wait_time)
+                # Use centralized browser rate limiter for basic timing
+                wait_time = api_client.browser_wait(endpoint=Config.SEARCH_ENGINE.lower())
+                if wait_time > 0.5:
+                    logger.debug(f"Browser rate limiter: waited {wait_time:.1f}s")
 
                 # Progressive slowdown: every 3 consecutive searches, add extra delay
                 self._consecutive_searches += 1
@@ -3670,7 +3662,6 @@ NOT_FOUND"""
                     )
                     time.sleep(extra_delay)
 
-                self._last_search_time = time.time()
                 self._driver_search_count += 1  # Track searches for driver rotation
 
                 encoded_query = urllib.parse.quote(search_query)
@@ -3768,11 +3759,12 @@ NOT_FOUND"""
                                 pass
                             continue
                         else:
-                            # All retries exhausted - enter cooldown
+                            # All retries exhausted - enter cooldown and notify limiter
                             cooldown_seconds = 60
                             self._captcha_cooldown_until = (
                                 time.time() + cooldown_seconds
                             )
+                            api_client.browser_on_captcha(endpoint=preferred_engine)
                             logger.error(
                                 f"{engine_name} CAPTCHA persisted after {max_captcha_retries} retries - "
                                 f"entering {cooldown_seconds}s cooldown"
@@ -3781,6 +3773,7 @@ NOT_FOUND"""
 
                     # Success - got search results, reset consecutive counter
                     self._consecutive_searches = 0
+                    api_client.browser_on_success(endpoint=preferred_engine)
                     used_engine = engine_name
                     logger.debug(f"Using {engine_name} search results")
                     break

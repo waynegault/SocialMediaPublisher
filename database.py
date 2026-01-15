@@ -863,6 +863,173 @@ class Database:
             )
             return [Story.from_row(row) for row in cursor.fetchall()]
 
+    def get_stories_needing_promotion(self, require_image: bool = False) -> list[Story]:
+        """Get stories that need a promotion message assigned.
+
+        Args:
+            require_image: If True, only return stories with images
+
+        Returns:
+            List of stories needing promotion messages
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if require_image:
+                cursor.execute("""
+                    SELECT * FROM stories
+                    WHERE (promotion IS NULL OR promotion = '')
+                      AND image_path IS NOT NULL
+                    ORDER BY id DESC
+                """)
+            else:
+                cursor.execute("""
+                    SELECT * FROM stories
+                    WHERE promotion IS NULL OR promotion = ''
+                    ORDER BY id DESC
+                """)
+            return [Story.from_row(row) for row in cursor.fetchall()]
+
+    def get_stories_needing_profile_lookup(self) -> list[Story]:
+        """Get stories with people who need LinkedIn profile lookup.
+
+        Returns stories where direct_people or indirect_people exist
+        but some entries are missing linkedin_profile URLs.
+        """
+        import json as json_module
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM stories
+                WHERE (direct_people IS NOT NULL AND direct_people != '[]')
+                   OR (indirect_people IS NOT NULL AND indirect_people != '[]')
+            """)
+            stories_needing_profiles = []
+            for row in cursor.fetchall():
+                story = Story.from_row(row)
+                all_people = story.direct_people + story.indirect_people
+                # Check if any people need profiles
+                needs_lookup = any(
+                    not (p.get("linkedin_profile") or "").strip() for p in all_people
+                )
+                if needs_lookup:
+                    stories_needing_profiles.append(story)
+            return stories_needing_profiles
+
+    def get_stories_needing_urn_extraction(self) -> list[tuple[list, list]]:
+        """Get people entries that need URN extraction.
+
+        Returns list of (direct_people, indirect_people) tuples for stories
+        where people have linkedin_profile but no linkedin_urn.
+        """
+        import json as json_module
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT direct_people, indirect_people FROM stories
+                WHERE (direct_people LIKE '%linkedin_profile%')
+                   OR (indirect_people LIKE '%linkedin_profile%')
+            """)
+            results = []
+            for row in cursor.fetchall():
+                direct = json_module.loads(row["direct_people"]) if row["direct_people"] else []
+                indirect = json_module.loads(row["indirect_people"]) if row["indirect_people"] else []
+                results.append((direct, indirect))
+            return results
+
+    def count_people_needing_urns(self) -> int:
+        """Count people entries that have linkedin_profile but no linkedin_urn."""
+        results = self.get_stories_needing_urn_extraction()
+        count = 0
+        for direct, indirect in results:
+            for p in direct + indirect:
+                if p.get("linkedin_profile") and not p.get("linkedin_urn"):
+                    count += 1
+        return count
+
+    def get_stories_needing_indirect_people(self) -> list[Story]:
+        """Get stories with organizations but no indirect_people.
+
+        Returns stories that have organizations extracted but haven't
+        had indirect people (org leadership) looked up yet.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM stories
+                WHERE organizations IS NOT NULL
+                AND organizations != '[]'
+                AND (indirect_people IS NULL OR indirect_people = '[]')
+            """)
+            return [Story.from_row(row) for row in cursor.fetchall()]
+
+    def update_story_indirect_people(self, story_id: int, indirect_people: list) -> None:
+        """Update a story's indirect_people field.
+
+        Args:
+            story_id: ID of the story to update
+            indirect_people: List of indirect people dicts
+        """
+        import json as json_module
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE stories SET indirect_people = ? WHERE id = ?",
+                (json_module.dumps(indirect_people), story_id),
+            )
+
+    def update_story_promotion(self, story_id: int, promotion: str) -> None:
+        """Update a story's promotion message.
+
+        Args:
+            story_id: ID of the story to update
+            promotion: Promotion message text
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE stories SET promotion = ? WHERE id = ?",
+                (promotion, story_id),
+            )
+
+    def mark_stories_enriched(self) -> int:
+        """Mark stories as enriched after all enrichment steps complete.
+
+        Updates stories from 'pending' to 'enriched' if they have
+        direct_people or indirect_people populated.
+
+        Returns:
+            Count of stories updated
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE stories
+                SET enrichment_status = 'enriched'
+                WHERE enrichment_status = 'pending'
+                AND (
+                    (direct_people IS NOT NULL AND direct_people != '[]')
+                    OR (indirect_people IS NOT NULL AND indirect_people != '[]')
+                )
+            """)
+            return cursor.rowcount
+
+    def get_recent_stories(self, limit: int = 100) -> list[tuple[int, str, int]]:
+        """Get recent stories with basic info for listing.
+
+        Returns:
+            List of (id, title, quality_score) tuples
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, title, quality_score FROM stories ORDER BY id DESC LIMIT ?",
+                (limit,),
+            )
+            return [(row["id"], row["title"], row["quality_score"]) for row in cursor.fetchall()]
+
     def get_stories_needing_enrichment(self) -> list[Story]:
         """Get stories that need company mention enrichment.
 

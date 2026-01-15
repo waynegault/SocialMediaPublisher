@@ -280,35 +280,20 @@ class ContentEngine:
         ]
 
         # Get stories that need a promotion message
-        with self.db._get_connection() as conn:
-            cursor = conn.cursor()
-            if require_image:
-                cursor.execute("""
-                    SELECT id, title, summary
-                    FROM stories
-                    WHERE (promotion IS NULL OR promotion = '')
-                      AND image_path IS NOT NULL
-                    ORDER BY id DESC
-                """)
-            else:
-                cursor.execute("""
-                    SELECT id, title, summary
-                    FROM stories
-                    WHERE promotion IS NULL OR promotion = ''
-                    ORDER BY id DESC
-                """)
-            rows = cursor.fetchall()
+        stories = self.db.get_stories_needing_promotion(require_image=require_image)
 
-        if not rows:
+        if not stories:
             return 0
 
         examples_text = "\n".join(f"- {ex}" for ex in style_examples)
         assigned = 0
 
-        for row in rows:
-            story_id = row["id"]
-            title = row["title"]
-            summary = row["summary"] or ""
+        for story in stories:
+            story_id = story.id
+            if story_id is None:
+                continue
+            title = story.title
+            summary = story.summary or ""
 
             prompt = f"""Generate a DIRECT, ACTION-ORIENTED job-seeking message for LinkedIn that connects to this specific story.
 
@@ -385,12 +370,7 @@ OUTPUT: Write ONLY the promotion message, nothing else."""
                         else f"As a {signature_detail}, actively seeking opportunities."
                     )
 
-            with self.db._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "UPDATE stories SET promotion = ? WHERE id = ?",
-                    (promotion, story_id),
-                )
+            self.db.update_story_promotion(story_id, promotion)
 
             assigned += 1
 
@@ -709,16 +689,10 @@ def _test_search(engine: ContentEngine) -> None:
         if new_count > 0:
             print("\nNewly saved stories (by quality score):")
             # Get the most recent stories, sorted by quality score
-            with engine.db._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT id, title, quality_score FROM stories ORDER BY id DESC LIMIT ?",
-                    (new_count,),
-                )
-                rows = cursor.fetchall()
-                # Sort by quality score descending (highest first)
-                for row in sorted(rows, key=lambda r: r[2], reverse=True):
-                    print(f"  - [{row[0]}] {row[1][:60]}... (Score: {row[2]})")
+            recent_stories = engine.db.get_recent_stories(limit=new_count)
+            # Sort by quality score descending (highest first)
+            for story_id, title, quality_score in sorted(recent_stories, key=lambda r: r[2], reverse=True):
+                print(f"  - [{story_id}] {title[:60]}... (Score: {quality_score})")
 
         # Step 2: Full enrichment (direct+indirect people, LinkedIn profiles, URNs)
         # This consolidates the previous Steps 2-4 into a single efficient pass
@@ -770,36 +744,7 @@ def _test_search(engine: ContentEngine) -> None:
 
 def _get_stories_needing_profile_lookup(engine: ContentEngine) -> list:
     """Get all stories that have people needing LinkedIn profile lookup."""
-    import json as json_module
-
-    stories_needing_profiles = []
-    with engine.db._get_connection() as conn:
-        cursor = conn.cursor()
-        # Check both direct_people and indirect_people (the new primary fields)
-        cursor.execute("""
-            SELECT id, direct_people, indirect_people FROM stories
-            WHERE (direct_people IS NOT NULL AND direct_people != '[]')
-               OR (indirect_people IS NOT NULL AND indirect_people != '[]')
-        """)
-        for row in cursor.fetchall():
-            direct_people = (
-                json_module.loads(row["direct_people"]) if row["direct_people"] else []
-            )
-            indirect_people = (
-                json_module.loads(row["indirect_people"])
-                if row["indirect_people"]
-                else []
-            )
-            all_people = direct_people + indirect_people
-            # Check if any people need profiles
-            needs_lookup = any(
-                not (p.get("linkedin_profile") or "").strip() for p in all_people
-            )
-            if needs_lookup:
-                story = engine.db.get_story(row["id"])
-                if story:
-                    stories_needing_profiles.append(story)
-    return stories_needing_profiles
+    return engine.db.get_stories_needing_profile_lookup()
 
 
 def _run_profile_lookup_silent(engine: ContentEngine) -> int:
@@ -818,29 +763,8 @@ def _run_profile_lookup_silent(engine: ContentEngine) -> int:
 
 def _run_urn_extraction_silent(engine: ContentEngine) -> tuple[int, int]:
     """Run URN extraction without verbose output. Returns (enriched, pending) counts."""
-    import json as json_module
-
-    # Check how many people need URN extraction across direct_people and indirect_people
-    pending = 0
-    with engine.db._get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT direct_people, indirect_people FROM stories
-            WHERE (direct_people LIKE '%linkedin_profile%')
-               OR (indirect_people LIKE '%linkedin_profile%')
-        """)
-        for row in cursor.fetchall():
-            direct_people = (
-                json_module.loads(row["direct_people"]) if row["direct_people"] else []
-            )
-            indirect_people = (
-                json_module.loads(row["indirect_people"])
-                if row["indirect_people"]
-                else []
-            )
-            for p in direct_people + indirect_people:
-                if p.get("linkedin_profile") and not p.get("linkedin_urn"):
-                    pending += 1
+    # Check how many people need URN extraction
+    pending = engine.db.count_people_needing_urns()
 
     if pending == 0:
         print("  → All people already have URNs")
@@ -861,14 +785,8 @@ def _run_urn_extraction_silent(engine: ContentEngine) -> tuple[int, int]:
 def _run_promotion_assignment_silent(engine: ContentEngine) -> int:
     """Assign promotion messages to stories without verbose output. Returns count assigned."""
     # Count stories needing promotion
-    with engine.db._get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT COUNT(*) as count
-            FROM stories
-            WHERE promotion IS NULL OR promotion = ''
-        """)
-        count = cursor.fetchone()["count"]
+    stories_needing = engine.db.get_stories_needing_promotion()
+    count = len(stories_needing)
 
     if count == 0:
         print("  → All stories already have promotion messages")
@@ -888,29 +806,21 @@ def _run_promotion_assignment_silent(engine: ContentEngine) -> int:
 
 def _run_indirect_people_enrichment_silent(engine: ContentEngine) -> int:
     """Find indirect people (org leadership) for organizations. Returns count enriched."""
-    import json as json_module
-
     # Get stories with organizations but no indirect_people
-    with engine.db._get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, title, organizations, indirect_people FROM stories
-            WHERE organizations IS NOT NULL
-            AND organizations != '[]'
-            AND (indirect_people IS NULL OR indirect_people = '[]')
-        """)
-        rows = cursor.fetchall()
+    stories = engine.db.get_stories_needing_indirect_people()
 
-    if not rows:
+    if not stories:
         print("  → All stories already have indirect people")
         return 0
 
-    print(f"  → Finding indirect people for {len(rows)} stories with organizations...")
+    print(f"  → Finding indirect people for {len(stories)} stories with organizations...")
 
     enriched = 0
-    for row in rows:
-        story_id = row["id"]
-        orgs = json_module.loads(row["organizations"]) if row["organizations"] else []
+    for story in stories:
+        story_id = story.id
+        if story_id is None:
+            continue
+        orgs = story.organizations
 
         if not orgs:
             continue
@@ -968,33 +878,16 @@ def _run_indirect_people_enrichment_silent(engine: ContentEngine) -> int:
                     logger.debug(f"Error looking up LinkedIn profiles: {e}")
 
             # Update story with indirect_people
-            with engine.db._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "UPDATE stories SET indirect_people = ? WHERE id = ?",
-                    (json_module.dumps(indirect_people), story_id),
-                )
+            engine.db.update_story_indirect_people(story_id, indirect_people)
             enriched += 1
 
-    print(f"  → Updated {enriched}/{len(rows)} stories with indirect people")
+    print(f"  → Updated {enriched}/{len(stories)} stories with indirect people")
     return enriched
 
 
 def _mark_stories_enriched(engine: ContentEngine) -> int:
     """Mark stories as enriched after all enrichment steps complete. Returns count updated."""
-    with engine.db._get_connection() as conn:
-        cursor = conn.cursor()
-        # Mark stories as enriched if they have direct_people or indirect_people
-        cursor.execute("""
-            UPDATE stories
-            SET enrichment_status = 'enriched'
-            WHERE enrichment_status = 'pending'
-            AND (
-                (direct_people IS NOT NULL AND direct_people != '[]')
-                OR (indirect_people IS NOT NULL AND indirect_people != '[]')
-            )
-        """)
-        updated = cursor.rowcount
+    updated = engine.db.mark_stories_enriched()
 
     if updated > 0:
         print(f"  → Marked {updated} stories as enriched")
