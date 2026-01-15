@@ -666,6 +666,175 @@ def clear_global_cache() -> None:
 
 
 # =============================================================================
+# LinkedIn Profile Cache
+# =============================================================================
+
+
+class LinkedInCache:
+    """
+    Specialized cache for LinkedIn profile and organization lookups.
+
+    Provides namespaced caching with appropriate TTLs for different data types:
+    - Person profiles: 7 days (profiles don't change often)
+    - Organizations: 30 days (company pages change rarely)
+    - Failed lookups: 24 hours (retry failures after a day)
+
+    This consolidates the various caching patterns used across:
+    - linkedin_voyager_client.py (_person_cache, _org_cache)
+    - linkedin_profile_lookup.py (_shared_person_cache, _shared_company_cache, etc.)
+    """
+
+    # TTL constants (in seconds)
+    PERSON_TTL = 7 * 24 * 60 * 60  # 7 days
+    ORG_TTL = 30 * 24 * 60 * 60  # 30 days
+    FAILED_TTL = 24 * 60 * 60  # 24 hours
+
+    # Namespaces
+    NS_PERSON = "linkedin:person"
+    NS_ORG = "linkedin:org"
+    NS_COMPANY = "linkedin:company"
+    NS_FAILED = "linkedin:failed"
+
+    _instance: "LinkedInCache | None" = None
+
+    def __init__(self, cache: TwoLevelCache | None = None) -> None:
+        """
+        Initialize the LinkedIn cache.
+
+        Args:
+            cache: Optional cache instance. Uses global cache if not provided.
+        """
+        self._cache = cache or get_cache()
+
+    @classmethod
+    def get_instance(cls) -> "LinkedInCache":
+        """Get or create the singleton instance."""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def _make_key(self, namespace: str, *parts: str) -> str:
+        """Generate a namespaced cache key."""
+        normalized = "|".join(p.lower().strip() for p in parts if p)
+        hash_val = hashlib.md5(normalized.encode()).hexdigest()[:16]
+        return f"{namespace}:{hash_val}"
+
+    # === Person Cache ===
+
+    def get_person(self, name: str, company: str = "") -> Any | None:
+        """
+        Get a cached person profile.
+
+        Args:
+            name: Person's name
+            company: Company/organization (optional, improves key specificity)
+
+        Returns:
+            Cached profile data or None
+        """
+        key = self._make_key(self.NS_PERSON, name, company)
+        return self._cache.get(key)
+
+    def set_person(self, name: str, company: str, value: Any) -> None:
+        """
+        Cache a person profile.
+
+        Args:
+            name: Person's name
+            company: Company/organization
+            value: Profile data to cache (dict, dataclass, or None for not-found)
+        """
+        key = self._make_key(self.NS_PERSON, name, company)
+        # Convert dataclass to dict if needed
+        if hasattr(value, "__dataclass_fields__"):
+            from dataclasses import asdict
+
+            value = asdict(value)
+        self._cache.set(key, value, disk_ttl=self.PERSON_TTL)
+
+    def get_person_by_url(self, url: str) -> Any | None:
+        """Get a cached person profile by URL."""
+        key = self._make_key(self.NS_PERSON, "url", url)
+        return self._cache.get(key)
+
+    def set_person_by_url(self, url: str, value: Any) -> None:
+        """Cache a person profile by URL."""
+        key = self._make_key(self.NS_PERSON, "url", url)
+        if hasattr(value, "__dataclass_fields__"):
+            from dataclasses import asdict
+
+            value = asdict(value)
+        self._cache.set(key, value, disk_ttl=self.PERSON_TTL)
+
+    # === Organization Cache ===
+
+    def get_org(self, name: str) -> Any | None:
+        """Get a cached organization."""
+        key = self._make_key(self.NS_ORG, name)
+        return self._cache.get(key)
+
+    def set_org(self, name: str, value: Any) -> None:
+        """Cache an organization."""
+        key = self._make_key(self.NS_ORG, name)
+        if hasattr(value, "__dataclass_fields__"):
+            from dataclasses import asdict
+
+            value = asdict(value)
+        self._cache.set(key, value, disk_ttl=self.ORG_TTL)
+
+    # === Company Cache (URL -> name mapping) ===
+
+    def get_company(self, name: str) -> tuple[str, str, str] | None:
+        """
+        Get cached company lookup result.
+
+        Returns:
+            Tuple of (url, slug, urn) or None
+        """
+        key = self._make_key(self.NS_COMPANY, name)
+        return self._cache.get(key)
+
+    def set_company(self, name: str, url: str, slug: str = "", urn: str = "") -> None:
+        """Cache a company lookup result."""
+        key = self._make_key(self.NS_COMPANY, name)
+        self._cache.set(key, (url, slug, urn), disk_ttl=self.ORG_TTL)
+
+    # === Failed Lookups Cache ===
+
+    def is_failed_lookup(self, name: str, company: str = "") -> bool:
+        """Check if a lookup previously failed (and is still in cooldown)."""
+        key = self._make_key(self.NS_FAILED, name, company)
+        return self._cache.get(key) is not None
+
+    def mark_failed_lookup(self, name: str, company: str = "") -> None:
+        """Mark a lookup as failed (to avoid re-searching for 24h)."""
+        key = self._make_key(self.NS_FAILED, name, company)
+        self._cache.set(key, True, disk_ttl=self.FAILED_TTL)
+
+    # === Bulk Operations ===
+
+    def clear_person_cache(self) -> None:
+        """Clear all person cache entries (requires cache iteration)."""
+        # Note: This is expensive - only use for debugging/testing
+        pass  # TwoLevelCache doesn't support prefix deletion yet
+
+    def get_stats(self) -> dict[str, Any]:
+        """Get cache statistics."""
+        stats = self._cache.get_stats()
+        return {
+            "hits": stats.hits,
+            "misses": stats.misses,
+            "total_entries": stats.total_entries,
+            "hit_rate": f"{stats.hit_rate:.1f}%",
+        }
+
+
+def get_linkedin_cache() -> LinkedInCache:
+    """Get the LinkedIn cache singleton."""
+    return LinkedInCache.get_instance()
+
+
+# =============================================================================
 # Unit Tests
 # =============================================================================
 
