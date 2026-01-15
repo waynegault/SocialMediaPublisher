@@ -26,6 +26,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from text_utils import calculate_similarity
+
 if TYPE_CHECKING:
     from test_framework import TestSuite
 
@@ -66,21 +68,7 @@ def normalize_url(url: str) -> str:
     return url
 
 
-def calculate_similarity(text1: str, text2: str) -> float:
-    """Calculate word-based similarity between two texts."""
-    if not text1 or not text2:
-        return 0.0
-
-    words1 = set(text1.lower().split())
-    words2 = set(text2.lower().split())
-
-    if not words1 or not words2:
-        return 0.0
-
-    intersection = len(words1 & words2)
-    union = len(words1 | words2)
-
-    return intersection / union if union > 0 else 0.0
+# calculate_similarity is now imported from text_utils
 
 
 def parse_json_safely(text: str) -> tuple[bool, Any]:

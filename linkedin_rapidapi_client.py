@@ -139,8 +139,12 @@ class FreshLinkedInAPIClient:
         self._cache_hits = 0
         self._api_calls = 0
 
-        # Session for connection pooling
-        self._session = requests.Session()
+        # Use centralized session factory with retry logic
+        self._session = api_client.get_session(
+            name="linkedin_rapidapi",
+            retries=3,
+            backoff_factor=0.5,
+        )
         self._session.headers.update(
             {
                 "X-RapidAPI-Key": self.api_key or "",
