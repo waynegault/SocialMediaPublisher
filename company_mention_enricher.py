@@ -22,17 +22,12 @@ from text_utils import strip_markdown_code_block
 from config import Config
 from database import Database, Story
 
-# Import shared entity validation constants from ner_engine
-try:
-    from ner_engine import (
-        INVALID_ORG_NAMES,
-        VALID_SINGLE_WORD_ORGS,
-        INVALID_PERSON_NAMES,
-    )
-except ImportError:
-    INVALID_ORG_NAMES = set()
-    VALID_SINGLE_WORD_ORGS = set()
-    INVALID_PERSON_NAMES = set()
+# Import shared entity validation constants from entity_constants (no optional dependencies)
+from entity_constants import (
+    INVALID_ORG_NAMES,
+    VALID_SINGLE_WORD_ORGS,
+    INVALID_PERSON_NAMES,
+)
 
 # Patterns that look like organization names rather than person names
 ORG_NAME_PATTERNS: list[str] = [

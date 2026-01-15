@@ -22,20 +22,13 @@ from config import Config
 from error_handling import with_enhanced_recovery, NetworkTimeoutError
 from rate_limiter import AdaptiveRateLimiter
 
-# Import shared constants from ner_engine
-try:
-    from ner_engine import (
-        INVALID_ORG_NAMES,
-        INVALID_ORG_PATTERNS,
-        INVALID_PERSON_NAMES,
-        VALID_SINGLE_WORD_ORGS,
-    )
-except ImportError:
-    # Fallback if ner_engine not available
-    INVALID_ORG_NAMES = set()
-    INVALID_ORG_PATTERNS = []
-    INVALID_PERSON_NAMES = set()
-    VALID_SINGLE_WORD_ORGS = set()
+# Import shared constants from entity_constants (no optional dependencies)
+from entity_constants import (
+    INVALID_ORG_NAMES,
+    INVALID_ORG_PATTERNS,
+    INVALID_PERSON_NAMES,
+    VALID_SINGLE_WORD_ORGS,
+)
 
 logger = logging.getLogger(__name__)
 
