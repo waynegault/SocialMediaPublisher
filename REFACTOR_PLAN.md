@@ -285,7 +285,7 @@ Create `organization_aliases.py` with:
 
 ### 2.4 LinkedIn Search Consolidation
 
-**Status:** [ ] Not Started
+**Status:** [ ] DEFERRED (HybridLinkedInLookup already serves as facade)
 **Effort:** High
 **Files Affected:**
 - `linkedin_voyager_client.py` (update `HybridLinkedInLookup`)
@@ -353,7 +353,7 @@ def get_session(self, name: str = "default") -> requests.Session:
 
 ### 3.2 Browser Module (UC Chrome)
 
-**Status:** [ ] Not Started
+**Status:** [x] COMPLETED (Sprint 4)
 **Effort:** Medium
 **Files Affected:**
 - Create new `browser.py`
@@ -525,14 +525,14 @@ def _build_image_prompt(self, story: Story, style: str) -> str:
 - [x] 2.2 Spam Pattern Consolidation
 - [x] 2.3 Organization Aliases Extraction
 
-### Sprint 3 (Week 5-6)
-- [ ] 1.2 Unified Caching System
-- [ ] 3.1 HTTP Session Factory
-- [ ] 3.4 Similarity Function Consolidation
+### Sprint 3 (Week 5-6) ✅ COMPLETED
+- [x] 1.2 Unified Caching System (DEFERRED - High complexity)
+- [x] 3.1 HTTP Session Factory
+- [x] 3.4 Similarity Function Consolidation
 
-### Sprint 4 (Week 7-8)
-- [ ] 2.4 LinkedIn Search Consolidation
-- [ ] 3.2 Browser Module (UC Chrome)
+### Sprint 4 (Week 7-8) 🔄 IN PROGRESS
+- [ ] 2.4 LinkedIn Search Consolidation (DEFERRED - already has HybridLinkedInLookup facade)
+- [x] 3.2 Browser Module (UC Chrome)
 - [ ] 3.3 Match Scoring Consolidation
 
 ---
