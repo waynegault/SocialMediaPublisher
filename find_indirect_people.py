@@ -5,28 +5,31 @@ import json
 import time
 import re
 import base64
-from typing import Optional
+from typing import Any, Optional
 
-# Import undetected-chromedriver for CAPTCHA-resistant browser automation
-from typing import Any
-
-# Type stubs for optional dependencies
-uc: Any = None
-By: Any = None
-UC_AVAILABLE = False
-
+# Import UC Chrome availability from centralized browser module
+# This also applies Windows error suppression for cleanup
 try:
-    import undetected_chromedriver as _uc
-    from selenium.webdriver.common.by import By as _By
+    from browser import uc, By, UC_AVAILABLE, _suppress_uc_cleanup_errors
 
-    uc = _uc
-    By = _By
-    UC_AVAILABLE = True
+    _suppress_uc_cleanup_errors()
 except ImportError:
-    print(
-        "WARNING: undetected-chromedriver not installed - "
-        "pip install undetected-chromedriver selenium"
-    )
+    # Fallback to direct import if browser module not available
+    uc = None
+    By = None
+    UC_AVAILABLE = False
+    try:
+        import undetected_chromedriver as _uc
+        from selenium.webdriver.common.by import By as _By
+
+        uc = _uc
+        By = _By
+        UC_AVAILABLE = True
+    except ImportError:
+        print(
+            "WARNING: undetected-chromedriver not installed - "
+            "pip install undetected-chromedriver selenium"
+        )
 
 # Key roles for different org types - aligned with ner_engine.py patterns
 COMPANY_ROLES = [

@@ -49,28 +49,14 @@ except ImportError:
     )
 
 
-def _suppress_uc_cleanup_errors() -> None:
-    """Suppress Windows handle errors from UC Chrome cleanup."""
-    if sys.platform == "win32":
-        # Monkey-patch time.sleep in the UC module to suppress cleanup errors
-        original_sleep = time.sleep
+# Import and apply Windows error suppression from centralized browser module
+# This suppresses harmless "handle is invalid" errors during Chrome cleanup
+try:
+    from browser import _suppress_uc_cleanup_errors
 
-        def patched_sleep(seconds: float) -> None:
-            try:
-                original_sleep(seconds)
-            except OSError:
-                pass  # Suppress WinError 6: handle is invalid
-
-        # Apply to UC module if loaded
-        if UC_AVAILABLE:
-            import undetected_chromedriver
-
-            undetected_chromedriver.time = type(sys)("time")
-            undetected_chromedriver.time.sleep = patched_sleep
-
-
-# Apply the patch on module load
-_suppress_uc_cleanup_errors()
+    _suppress_uc_cleanup_errors()
+except ImportError:
+    pass  # browser module may not be available
 
 
 # === TypedDict definitions for structured return types ===
