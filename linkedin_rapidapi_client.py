@@ -25,82 +25,18 @@ API Documentation: https://rapidapi.com/freshdata-freshdata-default/api/fresh-li
 
 import logging
 import hashlib
-from dataclasses import dataclass
 from typing import Optional, List, Dict, Any, Callable
 
 import requests
 
 from api_client import api_client
 from config import Config
+from models import LinkedInProfile
+
+# Alias for backward compatibility within this module
+LinkedInProfileResult = LinkedInProfile
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class LinkedInProfileResult:
-    """Result from LinkedIn profile search."""
-
-    linkedin_url: str
-    public_id: str  # e.g., "john-smith-123"
-    first_name: str
-    last_name: str
-    full_name: str
-    headline: str
-    job_title: str
-    company: str
-    company_linkedin_url: str = ""
-    location: str = ""
-    profile_image_url: str = ""
-    about: str = ""
-    match_score: float = 0.0
-
-    # Additional fields for validation
-    company_domain: str = ""
-    company_industry: str = ""
-    connection_count: int = 0
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for caching."""
-        return {
-            "linkedin_url": self.linkedin_url,
-            "public_id": self.public_id,
-            "first_name": self.first_name,
-            "last_name": self.last_name,
-            "full_name": self.full_name,
-            "headline": self.headline,
-            "job_title": self.job_title,
-            "company": self.company,
-            "company_linkedin_url": self.company_linkedin_url,
-            "location": self.location,
-            "profile_image_url": self.profile_image_url,
-            "about": self.about,
-            "match_score": self.match_score,
-            "company_domain": self.company_domain,
-            "company_industry": self.company_industry,
-            "connection_count": self.connection_count,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "LinkedInProfileResult":
-        """Create from dictionary (cache retrieval)."""
-        return cls(
-            linkedin_url=data.get("linkedin_url", ""),
-            public_id=data.get("public_id", ""),
-            first_name=data.get("first_name", ""),
-            last_name=data.get("last_name", ""),
-            full_name=data.get("full_name", ""),
-            headline=data.get("headline", ""),
-            job_title=data.get("job_title", ""),
-            company=data.get("company", ""),
-            company_linkedin_url=data.get("company_linkedin_url", ""),
-            location=data.get("location", ""),
-            profile_image_url=data.get("profile_image_url", ""),
-            about=data.get("about", ""),
-            match_score=data.get("match_score", 0.0),
-            company_domain=data.get("company_domain", ""),
-            company_industry=data.get("company_industry", ""),
-            connection_count=data.get("connection_count", 0),
-        )
 
 
 class FreshLinkedInAPIClient:

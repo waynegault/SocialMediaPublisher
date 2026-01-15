@@ -19,13 +19,16 @@ import logging
 import os
 import random
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote
 
 import requests
 
 from api_client import api_client
+from models import LinkedInProfile, LinkedInOrganization
+
+# Alias for backward compatibility within this module
+LinkedInPerson = LinkedInProfile
 
 # Import unified cache (optional - falls back to dict if not available)
 try:
@@ -36,65 +39,6 @@ except ImportError:
     _UNIFIED_CACHE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Data Classes
-# =============================================================================
-
-
-@dataclass
-class LinkedInPerson:
-    """Represents a person found on LinkedIn."""
-
-    urn_id: str  # LinkedIn URN ID (e.g., "ACoAABxxxxxx")
-    public_id: str  # Vanity URL slug
-    name: str
-    first_name: str = ""
-    last_name: str = ""
-    headline: str = ""  # Current job title/description
-    location: str = ""
-    profile_url: str = ""
-
-    # Matching metadata
-    distance: int = 0  # Connection distance (1=1st, 2=2nd, 3=3rd+)
-    match_score: float = 0.0
-    match_signals: list[str] = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        if self.urn_id and not self.profile_url:
-            self.profile_url = f"https://www.linkedin.com/in/{self.public_id}"
-
-    @property
-    def mention_urn(self) -> str:
-        """Get URN format for @mentions."""
-        return f"urn:li:person:{self.urn_id}" if self.urn_id else ""
-
-
-@dataclass
-class LinkedInOrganization:
-    """Represents an organization on LinkedIn."""
-
-    urn_id: str
-    public_id: str  # Vanity URL slug
-    name: str
-    page_type: str = "company"  # "company" or "school"
-    industry: str = ""
-    description: str = ""
-    location: str = ""
-    employee_count: str = ""
-    profile_url: str = ""
-
-    def __post_init__(self) -> None:
-        if self.public_id and not self.profile_url:
-            self.profile_url = (
-                f"https://www.linkedin.com/{self.page_type}/{self.public_id}"
-            )
-
-    @property
-    def mention_urn(self) -> str:
-        """Get URN format for @mentions."""
-        return f"urn:li:organization:{self.urn_id}" if self.urn_id else ""
 
 
 # =============================================================================
@@ -500,7 +444,7 @@ class LinkedInVoyagerClient:
                             LinkedInPerson(
                                 urn_id=urn_id,
                                 public_id=public_id,
-                                name=full_name,
+                                full_name=full_name,
                                 first_name=first_name,
                                 last_name=last_name,
                                 headline=headline,
@@ -622,7 +566,7 @@ class LinkedInVoyagerClient:
             return LinkedInPerson(
                 urn_id=profile.get("urn", "").split(":")[-1],
                 public_id=public_id,
-                name=f"{profile.get('firstName', '')} {profile.get('lastName', '')}".strip(),
+                full_name=f"{profile.get('firstName', '')} {profile.get('lastName', '')}".strip(),
                 first_name=profile.get("firstName", ""),
                 last_name=profile.get("lastName", ""),
                 headline=profile.get("headline", ""),
@@ -664,9 +608,12 @@ class LinkedInVoyagerClient:
         if self._unified_cache:
             cached = self._unified_cache.get_person(name, company)
             if cached is not None:
-                # Reconstruct LinkedInPerson from cached dict
+                # Reconstruct LinkedInPerson from cached dict using from_dict
                 if isinstance(cached, dict):
-                    return LinkedInPerson(**cached)
+                    # Handle legacy cache entries that used 'name' instead of 'full_name'
+                    if "name" in cached and "full_name" not in cached:
+                        cached["full_name"] = cached.pop("name")
+                    return LinkedInPerson.from_dict(cached)
                 return cached
             # Check if this was previously a failed lookup
             if self._unified_cache.is_failed_lookup(name, company):
@@ -856,7 +803,7 @@ class LinkedInVoyagerClient:
             cached = self._unified_cache.get_org(name)
             if cached is not None:
                 if isinstance(cached, dict):
-                    return LinkedInOrganization(**cached)
+                    return LinkedInOrganization.from_dict(cached)
                 return cached
 
         # Fall back to in-memory dict cache
