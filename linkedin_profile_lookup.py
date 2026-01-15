@@ -3477,6 +3477,16 @@ NOT_FOUND"""
         parts_unquoted.append("site:linkedin.com/in")
         unquoted_query = " ".join(parts_unquoted)
 
+        # Build name + location query (skip org, keep location for disambiguation)
+        # e.g., "arun raju" Riverside site:linkedin.com/in
+        # This works when "arun raju" "Center for Environmental Research and Technology" fails
+        location_query = ""
+        if query_name and location and location.strip():
+            location_parts = location.split(",")
+            location_city = location_parts[0].strip() if location_parts else ""
+            if location_city:
+                location_query = f'"{query_name}" {location_city} site:linkedin.com/in'
+
         # Build simple name-only query (last resort - just name + linkedin)
         # This helps when org name is too specific and returns no results
         # e.g., "gregory stephanopoulos" "linkedin" works when
@@ -3489,6 +3499,7 @@ NOT_FOUND"""
         search_queries = [
             ("quoted", quoted_query),
             ("unquoted", unquoted_query),
+            ("location", location_query),  # Name + location (no org)
             ("simple", simple_query),  # Name-only fallback
         ]
 
