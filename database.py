@@ -933,8 +933,16 @@ class Database:
             """)
             results = []
             for row in cursor.fetchall():
-                direct = json_module.loads(row["direct_people"]) if row["direct_people"] else []
-                indirect = json_module.loads(row["indirect_people"]) if row["indirect_people"] else []
+                direct = (
+                    json_module.loads(row["direct_people"])
+                    if row["direct_people"]
+                    else []
+                )
+                indirect = (
+                    json_module.loads(row["indirect_people"])
+                    if row["indirect_people"]
+                    else []
+                )
                 results.append((direct, indirect))
             return results
 
@@ -964,7 +972,9 @@ class Database:
             """)
             return [Story.from_row(row) for row in cursor.fetchall()]
 
-    def update_story_indirect_people(self, story_id: int, indirect_people: list) -> None:
+    def update_story_indirect_people(
+        self, story_id: int, indirect_people: list
+    ) -> None:
         """Update a story's indirect_people field.
 
         Args:
@@ -1028,7 +1038,10 @@ class Database:
                 "SELECT id, title, quality_score FROM stories ORDER BY id DESC LIMIT ?",
                 (limit,),
             )
-            return [(row["id"], row["title"], row["quality_score"]) for row in cursor.fetchall()]
+            return [
+                (row["id"], row["title"], row["quality_score"])
+                for row in cursor.fetchall()
+            ]
 
     def get_stories_needing_enrichment(self) -> list[Story]:
         """Get stories that need company mention enrichment.

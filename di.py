@@ -467,9 +467,11 @@ class CacheServicesProvider(ServiceProvider):
 
     def register(self, container: ServiceContainer) -> None:
         """Register caching services."""
+
         # LinkedInCache singleton (lazy loaded)
         def create_linkedin_cache() -> "LinkedInCache":
             from cache import LinkedInCache
+
             return LinkedInCache.get_instance()
 
         container.register(
@@ -483,6 +485,7 @@ class CacheServicesProvider(ServiceProvider):
         # RateLimitedAPIClient singleton (lazy loaded)
         def create_api_client() -> "RateLimitedAPIClient":
             from api_client import api_client
+
             return api_client
 
         container.register(
@@ -507,9 +510,11 @@ class DatabaseServicesProvider(ServiceProvider):
 
     def register(self, container: ServiceContainer) -> None:
         """Register database services."""
+
         def create_database(db_path: str | None = None) -> "Database":
             from database import Database
             from config import Config
+
             path = db_path or Config.STORIES_DB_PATH
             return Database(path)
 
