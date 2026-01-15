@@ -7,6 +7,7 @@ on URL structure, validation, and normalization.
 
 import logging
 import re
+from typing import Optional
 from urllib.parse import urlparse, urljoin
 
 import requests
@@ -235,6 +236,42 @@ def extract_path_keywords(url: str) -> set[str]:
 
     except Exception:
         return set()
+
+
+def extract_linkedin_public_id(url: str) -> Optional[str]:
+    """
+    Extract the public ID (username/vanity name) from a LinkedIn profile URL.
+
+    Args:
+        url: LinkedIn URL (e.g., "https://linkedin.com/in/john-doe-12345")
+
+    Returns:
+        The public ID (e.g., "john-doe-12345") or None if not found
+
+    Examples:
+        >>> extract_linkedin_public_id("https://linkedin.com/in/john-doe")
+        'john-doe'
+        >>> extract_linkedin_public_id("https://www.linkedin.com/in/jane-smith-12345/")
+        'jane-smith-12345'
+        >>> extract_linkedin_public_id("https://uk.linkedin.com/in/bob-jones")
+        'bob-jones'
+        >>> extract_linkedin_public_id("invalid-url")
+        None
+    """
+    if not url:
+        return None
+
+    # Handle both /in/ profile URLs and edge cases
+    match = re.search(r"linkedin\.com/in/([\w\-]+)", url)
+    if match:
+        public_id = match.group(1)
+        # Reject common error page slugs
+        invalid_slugs = {"login", "authwall", "error", "404", "unavailable", "uas"}
+        if public_id.lower() in invalid_slugs:
+            return None
+        return public_id
+
+    return None
 
 
 def validate_linkedin_url(url: str, url_type: str = "profile") -> bool:
