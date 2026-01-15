@@ -12,6 +12,8 @@ import logging
 import re
 from dataclasses import dataclass, field
 
+from content_validation import POST_SPAM_PATTERNS
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,18 +78,8 @@ class LinkedInOptimizer:
         r"have you experienced",
     ]
 
-    # Patterns LinkedIn algorithm may penalize
-    SPAM_PATTERNS = [
-        r"(?i)like if you agree",
-        r"(?i)share this post",
-        r"(?i)comment \d+ for",
-        r"(?i)drop an emoji",
-        r"(?i)follow me for",
-        r"(?i)link in (bio|comments)",
-        r"(?i)dm me for",
-        r"(?i)🔥{3,}",  # Excessive fire emojis
-        r"(?i)👇{3,}",  # Excessive pointing emojis
-    ]
+    # Patterns LinkedIn algorithm may penalize (imported from content_validation)
+    SPAM_PATTERNS = POST_SPAM_PATTERNS
 
     def __init__(self):
         """Initialize the LinkedIn optimizer."""

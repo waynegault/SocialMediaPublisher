@@ -27,6 +27,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from api_client import api_client
+
 logger = logging.getLogger(__name__)
 
 
@@ -171,9 +173,7 @@ class LinkedInVoyagerClient:
 
         self.proxies = proxies
 
-        # Rate limiting
-        self._last_request_time: float = 0
-        self._min_request_interval: float = 2.0  # 2 seconds between requests
+        # Request tracking (rate limiting now handled by api_client)
         self._request_count: int = 0
         self._max_requests_per_session: int = 100
 
@@ -234,17 +234,13 @@ class LinkedInVoyagerClient:
         logger.info("LinkedIn Voyager client initialized")
 
     def _rate_limit(self) -> None:
-        """Apply rate limiting between requests."""
-        now = time.time()
-        elapsed = now - self._last_request_time
+        """Apply rate limiting using centralized api_client limiter."""
+        # Use centralized LinkedIn rate limiter from api_client
+        wait_time = api_client.linkedin_limiter.wait(endpoint="voyager")
+        if wait_time > 0.5:
+            logger.debug(f"Voyager rate limiter: waited {wait_time:.1f}s")
 
-        if elapsed < self._min_request_interval:
-            sleep_time = self._min_request_interval - elapsed
-            # Add random jitter
-            sleep_time += random.uniform(0.5, 1.5)
-            time.sleep(sleep_time)
-
-        # Progressive slowdown after many requests
+        # Progressive slowdown after many requests (keep this extra safety measure)
         if self._request_count > 0 and self._request_count % 10 == 0:
             extra_delay = random.uniform(5, 10)
             logger.debug(
@@ -252,7 +248,6 @@ class LinkedInVoyagerClient:
             )
             time.sleep(extra_delay)
 
-        self._last_request_time = time.time()
         self._request_count += 1
 
     def _make_request(
@@ -302,6 +297,9 @@ class LinkedInVoyagerClient:
 
             if response.status_code == 429:
                 logger.warning("Rate limited by LinkedIn - backing off")
+                api_client.linkedin_limiter.on_429_error(
+                    endpoint="voyager", retry_after=60.0
+                )
                 time.sleep(60)  # Back off for 1 minute
                 return None
 
@@ -309,6 +307,8 @@ class LinkedInVoyagerClient:
                 logger.debug(f"LinkedIn API {endpoint} returned {response.status_code}")
                 return None
 
+            # Report success to rate limiter for adaptive adjustment
+            api_client.linkedin_limiter.on_success(endpoint="voyager")
             return response.json()
 
         except requests.exceptions.RequestException as e:

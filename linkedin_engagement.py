@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Optional
 
 from config import Config
+from content_validation import COMMENT_SPAM_PATTERNS as SPAM_PATTERNS
 from rate_limiter import AdaptiveRateLimiter
 
 logger = logging.getLogger(__name__)
@@ -157,25 +158,7 @@ COMMENT_TEMPLATES = {
     ],
 }
 
-# Spam patterns to avoid
-SPAM_PATTERNS = [
-    r"check out my",
-    r"visit my profile",
-    r"click (the )?link",
-    r"buy now",
-    r"limited offer",
-    r"free.*download",
-    r"guaranteed results",
-    r"make money",
-    r"dm me",
-    r"inbox me",
-    r"check inbox",
-    r"promo code",
-    r"discount",
-    r"subscribe to",
-    r"follow me",
-    r"like my",
-]
+# SPAM_PATTERNS imported from content_validation module (see import above)
 
 
 # =============================================================================
