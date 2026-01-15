@@ -12,13 +12,12 @@ from config import Config
 from database import Database, Story
 from opportunity_messages import get_random_opportunity_message
 from api_client import api_client
+from url_utils import extract_linkedin_public_id
 
 logger = logging.getLogger(__name__)
 
 # Pre-compiled regex for URN validation (must end with numeric ID)
 _URN_PATTERN = re.compile(r"^urn:li:(person|organization):\d+$")
-# Pattern for extracting public ID from LinkedIn URL
-_LINKEDIN_PUBLIC_ID_PATTERN = re.compile(r"linkedin\.com/in/([^/?]+)")
 
 
 @dataclass
@@ -749,12 +748,7 @@ class LinkedInPublisher:
 
     def _extract_public_id(self, linkedin_url: str) -> Optional[str]:
         """Extract the public ID (username) from a LinkedIn profile URL."""
-        if not linkedin_url:
-            return None
-        match = _LINKEDIN_PUBLIC_ID_PATTERN.search(linkedin_url)
-        if match:
-            return match.group(1)
-        return None
+        return extract_linkedin_public_id(linkedin_url)
 
     def verify_post_exists(self, post_id: str) -> tuple[bool, dict | None]:
         """

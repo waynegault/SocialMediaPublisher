@@ -50,6 +50,7 @@ from text_utils import (
     build_context_keywords,
     is_common_name,
 )
+from url_utils import extract_linkedin_public_id
 
 logger = logging.getLogger(__name__)
 
@@ -1244,9 +1245,7 @@ class ProfileMatcher:
             # For now, we trust its result but set appropriate confidence
             candidate = ProfileCandidate(
                 linkedin_url=profile_url,
-                vanity_name=profile_url.split("/in/")[-1].rstrip("/")
-                if "/in/" in profile_url
-                else "",
+                vanity_name=extract_linkedin_public_id(profile_url) or "",
             )
 
             result.matched_profile = candidate

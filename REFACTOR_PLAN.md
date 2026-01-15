@@ -377,8 +377,8 @@ After reviewing the code paths, consolidation is **not recommended** because:
 2. `linkedin_profile_lookup.py` has `_extract_public_id()` function
 
 ### Changes Required:
-- [ ] 20.1 Move `_extract_public_id()` to `url_utils.py` as `extract_linkedin_public_id()`
-- [ ] 20.2 Update all files to use the shared utility
+- [x] 20.1 Move `_extract_public_id()` to `url_utils.py` as `extract_linkedin_public_id()`
+- [x] 20.2 Update all files to use the shared utility
 
 ---
 
@@ -394,21 +394,22 @@ After reviewing the code paths, consolidation is **not recommended** because:
 5. ✅ Phase 3: HTTP Session Consolidation
 6. ✅ Phase 5: LinkedIn Data Models Unification
 
-### Medium Priority (Do Now):
-7. **Phase 12: Config Synchronization & Missing Settings** ⬅️ START HERE
-8. Phase 13: Remove Deprecated Dict Caches
+### Medium Priority - COMPLETED:
+7. ✅ Phase 12: Config Synchronization & Missing Settings
+8. Phase 13: Remove Deprecated Dict Caches (complex - deferred)
 9. Phase 14: Consolidate LinkedIn Match Scoring
 
-### Lower Priority (Do Later):
-10. Phase 15: Consolidate DuckDuckGo Search
+### Lower Priority:
+10. ✅ Phase 15: Consolidate DuckDuckGo Search
 11. Phase 16: Extract URL Redirect Resolution
 12. Phase 17: Create Unified AI Response Helper
-13. Phase 18: Standardize LinkedIn Rate Limiting
-14. Phase 19: Remove Model Aliases
-15. Phase 20: Centralize LinkedIn Public ID Extraction
+13. ⏭️ Phase 18: Standardize LinkedIn Rate Limiting (SKIPPED - custom limits are intentional)
+14. ✅ Phase 19: Remove Model Aliases
+15. ✅ Phase 20: Centralize LinkedIn Public ID Extraction
 
 ### Skipped:
 - ⏭️ Phase 6: Publishing Service Consolidation (not recommended)
+- ⏭️ Phase 18: LinkedIn Rate Limiting (engagement/networking need different rates)
 
 ---
 

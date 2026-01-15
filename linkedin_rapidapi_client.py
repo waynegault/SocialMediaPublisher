@@ -32,6 +32,7 @@ import requests
 from api_client import api_client
 from config import Config
 from models import LinkedInProfile
+from url_utils import extract_linkedin_public_id
 
 logger = logging.getLogger(__name__)
 
@@ -326,9 +327,7 @@ class FreshLinkedInAPIClient:
 
             # Build result - extract public_id from URL
             linkedin_url = best_result.get("linkedin_url", "")
-            public_id = ""
-            if linkedin_url and "/in/" in linkedin_url:
-                public_id = linkedin_url.split("/in/")[-1].rstrip("/")
+            public_id = extract_linkedin_public_id(linkedin_url) or ""
 
             # Get full name
             full_name = best_result.get("full_name", "")
@@ -477,9 +476,7 @@ class FreshLinkedInAPIClient:
             item = data["data"]
 
             # Extract public_id from URL
-            public_id = ""
-            if linkedin_url and "/in/" in linkedin_url:
-                public_id = linkedin_url.split("/in/")[-1].rstrip("/")
+            public_id = extract_linkedin_public_id(linkedin_url) or ""
 
             return LinkedInProfile(
                 linkedin_url=linkedin_url,
