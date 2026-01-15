@@ -227,76 +227,25 @@ class FreshLinkedInAPIClient:
         Calculate how well a result matches the search criteria.
 
         Returns a score from 0.0 to 1.0 where 1.0 is a perfect match.
+        
+        Uses centralized scoring from profile_matcher module.
         """
-        score = 0.0
-
-        # Name matching (50% of score)
-        # Support both first_name/last_name and full_name
-        result_name = result.get("full_name", "").lower().strip()
+        # Extract name from result (support both formats)
+        result_name = result.get("full_name", "").strip()
         if not result_name:
-            result_name = f"{result.get('first_name', '')} {result.get('last_name', '')}".lower().strip()
-        target_name_lower = target_name.lower().strip()
-
-        if result_name == target_name_lower:
-            score += 0.5
-        elif target_name_lower in result_name or result_name in target_name_lower:
-            score += 0.35
-        else:
-            # Partial name match
-            target_parts = set(target_name_lower.split())
-            result_parts = set(result_name.split())
-            overlap = len(target_parts & result_parts)
-            if overlap > 0:
-                score += 0.25 * (overlap / max(len(target_parts), 1))
-
-        # Company matching (40% of score)
-        result_company = result.get("company", "").lower().strip()
-        target_company_lower = target_company.lower().strip()
-
-        if result_company == target_company_lower:
-            score += 0.4
-        elif (
-            target_company_lower in result_company
-            or result_company in target_company_lower
-        ):
-            score += 0.3
-        else:
-            # Check headline for company mention
-            headline = result.get("headline", "").lower()
-            if target_company_lower in headline:
-                score += 0.25
-            else:
-                # Partial company match
-                target_parts = set(target_company_lower.split())
-                result_parts = set(result_company.split())
-                overlap = len(target_parts & result_parts)
-                if overlap > 0:
-                    score += 0.2 * (overlap / max(len(target_parts), 1))
-
-        # Title/Role bonus (10% of score)
-        job_title = result.get("job_title", "").lower()
-        headline = result.get("headline", "").lower()
-
-        # Common executive titles get a small bonus
-        executive_titles = [
-            "ceo",
-            "cto",
-            "cfo",
-            "coo",
-            "president",
-            "founder",
-            "director",
-            "vp",
-            "vice president",
-            "head of",
-            "chief",
-        ]
-        for title in executive_titles:
-            if title in job_title or title in headline:
-                score += 0.1
-                break
-
-        return min(score, 1.0)
+            result_name = f"{result.get('first_name', '')} {result.get('last_name', '')}".strip()
+        
+        # Use centralized scoring function
+        from profile_matcher import calculate_match_score
+        
+        return calculate_match_score(
+            target_name=target_name,
+            target_company=target_company,
+            result_name=result_name,
+            result_company=result.get("company", ""),
+            result_headline=result.get("headline", ""),
+            result_job_title=result.get("job_title", ""),
+        )
 
     def search_person(
         self,

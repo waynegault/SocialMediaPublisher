@@ -406,12 +406,21 @@ class BrowserPool:
 
 ### 3.3 Match Scoring Consolidation
 
-**Status:** [ ] Not Started
+**Status:** [x] PARTIALLY COMPLETED (Sprint 4)
 **Effort:** Medium
 **Files Affected:**
-- `profile_matcher.py` (keep as authoritative implementation)
-- `linkedin_rapidapi_client.py` (remove `_calculate_match_score()`)
-- `linkedin_voyager_client.py` (remove `_score_person_match()`)
+- `profile_matcher.py` (added `calculate_match_score()` helper function)
+- `linkedin_rapidapi_client.py` (now uses centralized scoring)
+- `linkedin_voyager_client.py` (kept custom scoring - works with LinkedInPerson objects)
+
+**Notes:**
+- Added `calculate_match_score()` to profile_matcher.py for simple name/company matching
+- linkedin_rapidapi_client.py now imports and uses centralized function
+- linkedin_voyager_client.py kept its own `_find_best_person_match()` because it:
+  - Works with LinkedInPerson dataclass objects (not dicts)
+  - Uses a different scoring scale (0-10+ vs 0-1)
+  - Attaches signals directly to candidate objects
+  - Handles title/location matching more granularly
 
 **Current Problem:**
 - 3 match scoring implementations:
