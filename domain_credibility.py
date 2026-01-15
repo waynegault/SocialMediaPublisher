@@ -283,7 +283,7 @@ def is_government_domain(url: str) -> bool:
 
 def is_primary_source(url: str) -> bool:
     """Check if URL is a primary source (company newsroom, blog, etc.).
-    
+
     Only matches subdomain patterns at the START of the domain.
     e.g., "newsroom.company.com" matches, but "random-blog.xyz" does not.
     """
