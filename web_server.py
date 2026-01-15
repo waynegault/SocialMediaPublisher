@@ -494,21 +494,42 @@ def create_stories_api_blueprint(db: Database) -> Blueprint:
 
     @bp.route("/<int:story_id>/publish", methods=["POST"])
     def publish_story(story_id: int):
-        """Publish a story to LinkedIn immediately."""
+        """Publish or schedule a story to LinkedIn.
+        
+        If the story has a scheduled_time in the future, it will be scheduled.
+        Otherwise, it will be published immediately.
+        """
         try:
             story = db.get_story(story_id)
             if not story:
                 return jsonify({"error": "Story not found"}), 404
-            if story.verification_status != "approved":
+            # Require human approval, not just AI approval
+            if not story.human_approved:
                 return jsonify(
-                    {"error": "Story must be approved before publishing"}
+                    {"error": "Story must be human-approved before publishing"}
                 ), 400
             if story.publish_status == "published":
                 return jsonify({"error": "Story is already published"}), 400
 
+            from datetime import datetime
+
             from linkedin_publisher import LinkedInPublisher
 
             publisher = LinkedInPublisher(db)
+
+            # Check if this should be scheduled or published immediately
+            now = datetime.now()
+            if story.scheduled_time and story.scheduled_time > now:
+                # Schedule for later - just mark as scheduled
+                story.publish_status = "scheduled"
+                db.update_story(story)
+                result = story.to_dict()
+                result["success"] = True
+                result["scheduled"] = True
+                result["scheduled_time"] = story.scheduled_time.isoformat()
+                return jsonify(result)
+
+            # Publish immediately
             post_id = publisher.publish_immediately(story)
 
             if post_id:
@@ -516,8 +537,11 @@ def create_stories_api_blueprint(db: Database) -> Blueprint:
                 if story:
                     result = story.to_dict()
                     result["success"] = True
+                    result["scheduled"] = False
                     return jsonify(result)
-                return jsonify({"success": True, "linkedin_post_id": post_id})
+                return jsonify(
+                    {"success": True, "scheduled": False, "linkedin_post_id": post_id}
+                )
             else:
                 return jsonify({"error": "Failed to publish to LinkedIn"}), 500
 
