@@ -17,7 +17,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-import httpx
 from google import genai
 from google.genai import types
 from openai import OpenAI
@@ -696,12 +695,13 @@ class ImageGenerator:
             )
 
             if response.data and response.data[0].url:
-                import httpx
                 from io import BytesIO
 
-                # Download the image
+                # Download the image using centralized client
                 image_url = response.data[0].url
-                image_response = httpx.get(image_url, timeout=30.0)
+                image_response = api_client.http_get(
+                    image_url, timeout=30, endpoint="dalle_download"
+                )
                 image_data = image_response.content
 
                 # Load image, add watermark, and save
@@ -846,14 +846,14 @@ class ImageGenerator:
         This provides rich visual context for generating more accurate images.
         """
         try:
-            # Download the image
-            response = httpx.get(
+            # Download the image using centralized client
+            response = api_client.http_get(
                 image_url,
-                timeout=10.0,
-                follow_redirects=True,
+                timeout=10,
                 headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 },
+                endpoint="source_image",
             )
 
             if response.status_code != 200:
@@ -983,13 +983,13 @@ Keep response under 100 words."""
 
         try:
             logger.debug(f"Fetching source content from: {source_url}")
-            response = httpx.get(
+            response = api_client.http_get(
                 source_url,
-                timeout=15.0,
-                follow_redirects=True,
+                timeout=15,
                 headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 },
+                endpoint="source_content",
             )
 
             if response.status_code != 200:

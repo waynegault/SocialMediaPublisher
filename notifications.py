@@ -24,8 +24,6 @@ from __future__ import annotations
 
 import json
 import smtplib
-import urllib.request
-import urllib.error
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
@@ -33,6 +31,10 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import requests
+
+from api_client import api_client
 
 if TYPE_CHECKING:
     from test_framework import TestSuite
@@ -249,28 +251,28 @@ class SlackChannel(NotificationChannel):
         }
 
         try:
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
+            # Use centralized HTTP client for rate limiting
+            response = api_client.http_post(
                 self._webhook_url,
-                data=data,
-                headers={"Content-Type": "application/json"},
+                json=payload,
+                timeout=10,
+                endpoint="slack_webhook",
             )
 
-            with urllib.request.urlopen(req, timeout=10) as response:
-                if response.status == 200:
-                    return NotificationResult(
-                        success=True,
-                        channel=self.name,
-                        message="Sent to Slack",
-                    )
-                else:
-                    return NotificationResult(
-                        success=False,
-                        channel=self.name,
-                        error=f"HTTP {response.status}",
-                    )
+            if response.status_code == 200:
+                return NotificationResult(
+                    success=True,
+                    channel=self.name,
+                    message="Sent to Slack",
+                )
+            else:
+                return NotificationResult(
+                    success=False,
+                    channel=self.name,
+                    error=f"HTTP {response.status_code}",
+                )
 
-        except urllib.error.URLError as e:
+        except requests.exceptions.RequestException as e:
             return NotificationResult(
                 success=False,
                 channel=self.name,
