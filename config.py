@@ -629,6 +629,72 @@ CRITICAL OUTPUT FORMAT:
 - The prompt MUST describe the specific subject/process from the story, not a generic scene.""",
     )
 
+    # Image refinement prompt for NO HUMAN mode - focus on technology/environments
+    # Placeholders: {story_title}, {story_summary}, {image_style}, {discipline}
+    IMAGE_REFINEMENT_PROMPT_NO_HUMAN: str = _get_str(
+        "IMAGE_REFINEMENT_PROMPT_NO_HUMAN",
+        """You are creating an image for a professional {discipline} publication.
+
+STORY TO ILLUSTRATE:
+- Title: {story_title}
+- Summary: {story_summary}
+
+CRITICAL: YOUR IMAGE MUST DIRECTLY ILLUSTRATE THIS SPECIFIC STORY
+Do NOT create a generic scene. Your image must show:
+- The exact subject or activity described (technology, equipment, experiment, facility, environment, product)
+- If the story mentions a specific organization, setting, device, species, or process — SHOW THAT
+- Match the environment to the story (lab, factory, field site, office, control room, facility, etc.)
+
+READ THE SOURCE ARTICLE CONTEXT ABOVE (if provided) for additional visual details.
+
+STEP 1 - EXTRACT THE KEY VISUAL ELEMENTS FROM SOURCE:
+Identify the specific equipment, technology, environments, materials, or processes mentioned.
+
+STEP 2 - CREATE A SCENE THAT DIRECTLY DEPICTS THE STORY:
+- Research breakthrough → show the experiment setup, samples, or instruments
+- Manufacturing/industry → show the machinery, production line, or products
+- Field work → show the environment, site, or natural phenomena
+- Technology → show the devices, systems, or infrastructure
+
+STEP 3 - SUGGEST AUTHENTIC SETTING:
+- Choose a setting appropriate to the field and story
+- Avoid explicit logos/branding; keep the look credible
+
+CRITICAL - NO PEOPLE AS CENTRAL SUBJECT:
+- DO NOT include any person as the main subject of the image
+- If people appear, they must be incidental background elements (small, distant, silhouettes)
+- Focus entirely on EQUIPMENT, TECHNOLOGY, ENVIRONMENTS, or PROCESSES
+- The subject matter should be a thing or place, NOT a person
+
+TECHNICAL ACCURACY IS CRITICAL:
+- Use specific details from the story
+- Match the environment to what the story implies
+- Include relevant equipment, machinery, or context objects
+
+AVOID:
+- Generic backgrounds
+- Any person as the central or prominent figure
+- Portrait-style compositions
+- Close-up or waist-up shots of people
+- Explicit company logos or trademarks
+
+CRITICAL - NO TEXT IN IMAGE:
+- NEVER include any text, words, labels, signs, or writing in the image
+
+GOOD IMAGE PROMPT EXAMPLE:
+"A photo of industrial laboratory equipment with precision instruments and sample containers on a clean workbench, modern research facility environment with soft ambient lighting, wide shot showing the full experimental setup, professional documentary photography style, editorial quality"
+
+STYLE: {image_style}
+
+CRITICAL OUTPUT FORMAT:
+- MUST start with "A photo of..." (this triggers photorealistic rendering)
+- Write ONLY the image prompt. Maximum 80 words.
+- NEVER include any text, labels, signs, or writing
+- NO PEOPLE as the main subject
+- End with photography/camera style keywords like "shot with professional camera, editorial quality"
+- The prompt MUST describe the specific subject/process from the story, not a generic scene.""",
+    )
+
     # Fallback image prompt template when LLM refinement fails
     # Placeholders: {story_title}, {appearance}, {discipline}
     IMAGE_FALLBACK_PROMPT: str = _get_str(
@@ -1401,6 +1467,8 @@ Return ONLY valid JSON, no explanation.""",
     SEARCH_PROMPT_TEMPLATE: str = _get_str("SEARCH_PROMPT_TEMPLATE", "")
     SEARCH_LOOKBACK_DAYS: int = _get_int("SEARCH_LOOKBACK_DAYS", 7)
     USE_LAST_CHECKED_DATE: bool = _get_bool("USE_LAST_CHECKED_DATE", True)
+    # Search engine for LinkedIn profile lookups (google, bing, duckduckgo)
+    SEARCH_ENGINE: str = _get_str("SEARCH_ENGINE", "google").lower()
     # Maximum number of stories to find per search (default 5)
     MAX_STORIES_PER_SEARCH: int = _get_int("MAX_STORIES_PER_SEARCH", 5)
     # Maximum number of people to search for LinkedIn profiles per story (reduces API calls)

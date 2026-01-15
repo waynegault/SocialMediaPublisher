@@ -1142,12 +1142,21 @@ Keep response under 100 words."""
             source_section += "Your image prompt MUST incorporate the specific visual elements described above.\n"
 
         # Build refinement prompt from config template with random appearance injected
-        refinement_prompt = Config.IMAGE_REFINEMENT_PROMPT.format(
-            story_title=story.title,
-            story_summary=story.summary,
-            image_style=Config.IMAGE_STYLE,
-            discipline=Config.DISCIPLINE,
-        )
+        # Use the appropriate refinement prompt based on HUMAN_IN_IMAGE setting
+        if Config.HUMAN_IN_IMAGE:
+            refinement_prompt = Config.IMAGE_REFINEMENT_PROMPT.format(
+                story_title=story.title,
+                story_summary=story.summary,
+                image_style=Config.IMAGE_STYLE,
+                discipline=Config.DISCIPLINE,
+            )
+        else:
+            refinement_prompt = Config.IMAGE_REFINEMENT_PROMPT_NO_HUMAN.format(
+                story_title=story.title,
+                story_summary=story.summary,
+                image_style=Config.IMAGE_STYLE,
+                discipline=Config.DISCIPLINE,
+            )
 
         # Conditionally inject appearance instruction based on HUMAN_IN_IMAGE setting
         if Config.HUMAN_IN_IMAGE:

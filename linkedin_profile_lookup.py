@@ -1801,7 +1801,14 @@ class LinkedInCompanyLookup:
                 for btn in send_buttons:
                     if btn.is_displayed():
                         btn.click()
-                        time.sleep(1)
+                        time.sleep(1.5)
+                        # Verify the connection was sent by checking for confirmation
+                        confirmed = self._verify_connection_sent(driver, profile_url)
+                        if confirmed:
+                            logger.info(
+                                f"Connection request CONFIRMED sent to {profile_url}"
+                            )
+                            return (True, "Connection request sent (confirmed)")
                         logger.info(f"Connection request sent to {profile_url}")
                         return (True, "Connection request sent")
 
@@ -1812,19 +1819,110 @@ class LinkedInCompanyLookup:
                 for btn in send_buttons:
                     if btn.is_displayed():
                         btn.click()
-                        time.sleep(1)
+                        time.sleep(1.5)
+                        # Verify the connection was sent
+                        confirmed = self._verify_connection_sent(driver, profile_url)
+                        if confirmed:
+                            logger.info(
+                                f"Connection request CONFIRMED sent to {profile_url}"
+                            )
+                            return (True, "Connection request sent (confirmed)")
                         logger.info(f"Connection request sent to {profile_url}")
                         return (True, "Connection request sent")
 
             except Exception as e:
                 logger.debug(f"Modal handling: {e}")
 
-            # If we clicked Connect and no modal appeared, it might have just sent
+            # If we clicked Connect and no modal appeared, verify if it was sent
+            time.sleep(1)
+            confirmed = self._verify_connection_sent(driver, profile_url)
+            if confirmed:
+                return (True, "Connection request sent (confirmed)")
             return (True, "Connection request sent (or modal appeared)")
 
         except Exception as e:
             logger.error(f"Browser connection error: {e}")
             return (False, f"Browser error: {str(e)}")
+
+    def _verify_connection_sent(self, driver, profile_url: str) -> bool:
+        """
+        Verify that a connection request was actually sent.
+
+        Checks for:
+        1. "Pending" button appearing (invitation sent, awaiting acceptance)
+        2. Success toast/notification message
+        3. Modal closed and Connect button no longer visible
+
+        Returns:
+            True if connection appears to have been sent successfully
+        """
+        try:
+            page_source = driver.page_source.lower()
+
+            # Check for pending invitation indicator
+            pending_indicators = [
+                "pending" in page_source and "invitation" in page_source,
+                "invitation sent" in page_source,
+                "request sent" in page_source,
+                "connection request sent" in page_source,
+            ]
+
+            if any(pending_indicators):
+                logger.debug("Connection verified: Found 'pending' or 'sent' indicator")
+                return True
+
+            # Check if the Connect button has changed to Pending
+            try:
+                pending_buttons = driver.find_elements(
+                    By.XPATH,
+                    '//button[contains(., "Pending")]',
+                )
+                for btn in pending_buttons:
+                    if btn.is_displayed():
+                        logger.debug("Connection verified: Found 'Pending' button")
+                        return True
+            except Exception:
+                pass
+
+            # Check for success toast message
+            try:
+                toasts = driver.find_elements(
+                    By.CSS_SELECTOR,
+                    '.artdeco-toast-item, [role="alert"], .msg-overlay-bubble-header',
+                )
+                for toast in toasts:
+                    toast_text = toast.text.lower()
+                    if "sent" in toast_text or "invitation" in toast_text:
+                        logger.debug(
+                            f"Connection verified: Toast message - {toast_text[:50]}"
+                        )
+                        return True
+            except Exception:
+                pass
+
+            # If Connect button is no longer visible, assume success
+            try:
+                connect_buttons = driver.find_elements(
+                    By.XPATH,
+                    '//button[contains(., "Connect")]',
+                )
+                visible_connect = [
+                    b
+                    for b in connect_buttons
+                    if b.is_displayed() and "connect" in b.text.lower()
+                ]
+                if not visible_connect:
+                    logger.debug(
+                        "Connection likely sent: Connect button no longer visible"
+                    )
+                    return True
+            except Exception:
+                pass
+
+        except Exception as e:
+            logger.debug(f"Connection verification error: {e}")
+
+        return False
 
     def send_bulk_connections_via_browser(
         self,
@@ -3379,10 +3477,19 @@ NOT_FOUND"""
         parts_unquoted.append("site:linkedin.com/in")
         unquoted_query = " ".join(parts_unquoted)
 
-        # Try both query strategies
+        # Build simple name-only query (last resort - just name + linkedin)
+        # This helps when org name is too specific and returns no results
+        # e.g., "gregory stephanopoulos" "linkedin" works when
+        # "gregory stephanopoulos" "MIT Department of Chemical Engineering" "linkedin" fails
+        simple_query = (
+            f'"{query_name}" linkedin site:linkedin.com/in' if query_name else ""
+        )
+
+        # Try multiple query strategies in order of specificity
         search_queries = [
             ("quoted", quoted_query),
             ("unquoted", unquoted_query),
+            ("simple", simple_query),  # Name-only fallback
         ]
 
         try:
@@ -3390,8 +3497,10 @@ NOT_FOUND"""
             import random
             import urllib.parse
 
-            # Try both query strategies (quoted first, then unquoted if no results)
+            # Try query strategies (quoted first, then unquoted, then simple name-only)
             for query_type, search_query in search_queries:
+                if not search_query:
+                    continue
                 logger.debug(f"UC Chrome search ({query_type}): {search_query}")
 
                 current_time = time.time()
@@ -3434,11 +3543,28 @@ NOT_FOUND"""
 
                 encoded_query = urllib.parse.quote(search_query)
 
-                # Try Google first (better LinkedIn results), fall back to Bing
-                search_engines = [
-                    ("Google", f"https://www.google.com/search?q={encoded_query}"),
-                    ("Bing", f"https://www.bing.com/search?q={encoded_query}"),
-                ]
+                # Build search engine list based on config preference
+                # Use configured engine first, then fall back to others
+                preferred_engine = Config.SEARCH_ENGINE.lower()
+                all_engines = {
+                    "google": (
+                        "Google",
+                        f"https://www.google.com/search?q={encoded_query}",
+                    ),
+                    "bing": ("Bing", f"https://www.bing.com/search?q={encoded_query}"),
+                    "duckduckgo": (
+                        "DuckDuckGo",
+                        f"https://duckduckgo.com/?q={encoded_query}",
+                    ),
+                }
+
+                # Start with preferred engine, then add others as fallbacks
+                search_engines = []
+                if preferred_engine in all_engines:
+                    search_engines.append(all_engines[preferred_engine])
+                for engine_key, engine_tuple in all_engines.items():
+                    if engine_key != preferred_engine:
+                        search_engines.append(engine_tuple)
 
                 page_source = None
                 captcha_count = 0
