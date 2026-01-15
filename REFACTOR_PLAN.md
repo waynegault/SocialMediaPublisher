@@ -314,30 +314,28 @@ After reviewing the code paths, consolidation is **not recommended** because:
 
 ---
 
-## Phase 16: Extract URL Redirect Resolution (LOW PRIORITY)
+## Phase 16: Extract URL Redirect Resolution (LOW PRIORITY) ⏭️ SKIPPED
 **Goal:** Move redirect resolution logic to url_utils.py.
 
-### Issues Found:
-1. `company_mention_enricher.py` has 120+ lines of redirect resolution (lines 519-620)
-2. Multiple strategies: HEAD, GET, browser fallback
+### Analysis:
+- Redirect resolution in `searcher.py` is specific to Vertex AI Search URLs
+- Browser fallback already exists in shared `browser.py` (`resolve_redirect_with_browser`)
+- The logic is tightly coupled to searcher's needs and not reusable elsewhere
 
-### Changes Required:
-- [ ] 16.1 Create `resolve_redirect_url()` function in `url_utils.py`
-- [ ] 16.2 Update `company_mention_enricher.py` to use the new utility
+### Decision: Not worth extracting - too context-specific
 
 ---
 
-## Phase 17: Create Unified AI Response Helper (LOW PRIORITY)
+## Phase 17: Create Unified AI Response Helper (LOW PRIORITY) - DEFERRED
 **Goal:** Consolidate AI response pattern (local LLM → Gemini fallback).
 
-### Issues Found:
-1. `searcher.py` lines 3064-3080: `_try_ai_response()` with fallback
-2. Multiple modules have inline local_client → Gemini fallback pattern
-3. `verifier.py` lines 230-270: similar fallback logic
+### Analysis:
+- Many call sites use `local_client.chat.completions.create()` directly
+- Modules affected: verifier.py, searcher.py, originality_checker.py
+- `api_client.gemini_generate()` already exists for Gemini rate limiting
+- Creating a unified helper would require updating many critical paths
 
-### Changes Required:
-- [ ] 17.1 Create `ai_generate()` helper in `api_client.py`
-- [ ] 17.2 Update all modules to use the unified helper
+### Decision: Deferred - high effort, low priority, extensive testing needed
 
 ---
 
@@ -398,18 +396,21 @@ After reviewing the code paths, consolidation is **not recommended** because:
 ### Medium Priority - COMPLETED:
 7. ✅ Phase 12: Config Synchronization & Missing Settings
 8. Phase 13: Remove Deprecated Dict Caches (complex - deferred)
-9. Phase 14: Consolidate LinkedIn Match Scoring
+9. ✅ Phase 14: Consolidate LinkedIn Match Scoring (dead code removed)
 
 ### Lower Priority:
 10. ✅ Phase 15: Consolidate DuckDuckGo Search
-11. Phase 16: Extract URL Redirect Resolution
-12. Phase 17: Create Unified AI Response Helper
+11. ⏭️ Phase 16: Extract URL Redirect Resolution (SKIPPED - too context-specific)
+12. ⏸️ Phase 17: Create Unified AI Response Helper (DEFERRED - high effort)
 13. ⏭️ Phase 18: Standardize LinkedIn Rate Limiting (SKIPPED - custom limits are intentional)
 14. ✅ Phase 19: Remove Model Aliases
 15. ✅ Phase 20: Centralize LinkedIn Public ID Extraction
 
-### Skipped:
+### Skipped/Deferred:
 - ⏭️ Phase 6: Publishing Service Consolidation (not recommended)
+- ⏸️ Phase 13: Remove Deprecated Dict Caches (complex - deferred)
+- ⏭️ Phase 16: URL Redirect Resolution (too context-specific to searcher)
+- ⏸️ Phase 17: Unified AI Response Helper (high effort, low priority)
 - ⏭️ Phase 18: LinkedIn Rate Limiting (engagement/networking need different rates)
 
 ---
