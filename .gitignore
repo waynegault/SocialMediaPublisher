@@ -53,3 +53,4 @@ content_engine.db
 /generated_images/
 /.playwright-mcp
 /.vscode
+/.pytest_cache

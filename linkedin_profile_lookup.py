@@ -20,6 +20,7 @@ from google import genai  # type: ignore
 from api_client import api_client
 from config import Config
 from error_handling import with_enhanced_recovery, NetworkTimeoutError
+from organization_aliases import ORG_ALIASES as _ORG_ALIASES
 from rate_limiter import AdaptiveRateLimiter
 
 # Import shared constants from entity_constants (no optional dependencies)
@@ -436,98 +437,10 @@ class LinkedInCompanyLookup:
     _shared_linkedin_login_verified: bool = False
     _shared_driver_lock = None  # Will be initialized on first use (threading.Lock)
 
-    # === ORGANIZATION NAME ALIASES ===
-    # Maps common abbreviations/variations to canonical organization names
-    # This prevents duplicate searches for "UChicago" vs "University of Chicago"
-    _ORG_ALIASES: dict[str, str] = {
-        # Universities - abbreviations
-        "uchicago": "university of chicago",
-        "u of c": "university of chicago",
-        "mit": "massachusetts institute of technology",
-        "caltech": "california institute of technology",
-        "cal tech": "california institute of technology",
-        "stanford": "stanford university",
-        "harvard": "harvard university",
-        "yale": "yale university",
-        "princeton": "princeton university",
-        "columbia": "columbia university",
-        "cornell": "cornell university",
-        "upenn": "university of pennsylvania",
-        "penn": "university of pennsylvania",
-        "berkeley": "university of california berkeley",
-        "uc berkeley": "university of california berkeley",
-        "ucla": "university of california los angeles",
-        "usc": "university of southern california",
-        "nyu": "new york university",
-        "ut austin": "university of texas at austin",
-        "ut": "university of texas at austin",
-        "gatech": "georgia institute of technology",
-        "georgia tech": "georgia institute of technology",
-        "purdue": "purdue university",
-        "umich": "university of michigan",
-        "u michigan": "university of michigan",
-        "northwestern": "northwestern university",
-        "vanderbilt": "vanderbilt university",
-        "vandy": "vanderbilt university",
-        "iowa state": "iowa state university",
-        "penn state": "pennsylvania state university",
-        "ohio state": "ohio state university",
-        "osu": "ohio state university",
-        "uva": "university of virginia",
-        "unc": "university of north carolina",
-        "duke": "duke university",
-        "rice": "rice university",
-        "cmu": "carnegie mellon university",
-        "carnegie mellon": "carnegie mellon university",
-        "jhu": "johns hopkins university",
-        "johns hopkins": "johns hopkins university",
-        "ucl": "university college london",
-        "oxford": "university of oxford",
-        "cambridge": "university of cambridge",
-        "eth": "eth zurich",
-        "epfl": "ecole polytechnique federale de lausanne",
-        "tsinghua": "tsinghua university",
-        "peking": "peking university",
-        "pku": "peking university",
-        # UChicago variations (Pritzker School etc.)
-        "uchicago pritzker school of molecular engineering": "university of chicago",
-        "pritzker school of molecular engineering": "university of chicago",
-        "pritzker molecular engineering": "university of chicago",
-        # University of Illinois variations
-        "uic": "university of illinois chicago",
-        "uiuc": "university of illinois urbana champaign",
-        "u of i": "university of illinois urbana champaign",
-        "university of illinois at chicago": "university of illinois chicago",
-        "university of illinois at urbana champaign": "university of illinois urbana champaign",
-        "university of illinois at urbana-champaign": "university of illinois urbana champaign",
-        # Argonne and other labs
-        "anl": "argonne national laboratory",
-        "argonne": "argonne national laboratory",
-        # Companies
-        "google": "google llc",
-        "meta": "meta platforms",
-        "facebook": "meta platforms",
-        "amazon": "amazon.com",
-        "aws": "amazon web services",
-        "microsoft": "microsoft corporation",
-        "msft": "microsoft corporation",
-        "apple": "apple inc",
-        "ibm": "international business machines",
-        "ge": "general electric",
-        "gm": "general motors",
-        "jpmorgan": "jpmorgan chase",
-        "jp morgan": "jpmorgan chase",
-        "goldman": "goldman sachs",
-        "mckinsey": "mckinsey & company",
-        "bcg": "boston consulting group",
-        "bain": "bain & company",
-        "deloitte": "deloitte consulting",
-        "pwc": "pricewaterhousecoopers",
-        "ey": "ernst & young",
-        "kpmg": "kpmg international",
-    }
+    # === ORGANIZATION NAME ALIASES (imported from organization_aliases module) ===
+    # See module-level import: from organization_aliases import ORG_ALIASES as _ORG_ALIASES
 
-    # === INVALID ENTITY NAMES (imported from ner_engine) ===
+    # === INVALID ENTITY NAMES (imported from entity_constants) ===
     # Use module-level imports: INVALID_ORG_NAMES, INVALID_ORG_PATTERNS,
     # INVALID_PERSON_NAMES, VALID_SINGLE_WORD_ORGS
 
@@ -768,8 +681,8 @@ class LinkedInCompanyLookup:
             norm = norm[4:].strip()
 
         # Check if it's an alias we know about
-        if norm in self._ORG_ALIASES:
-            canonical = self._ORG_ALIASES[norm]
+        if norm in _ORG_ALIASES:
+            canonical = _ORG_ALIASES[norm]
             logger.debug(f"Normalized org '{org_name}' -> '{canonical}'")
             return canonical
 
@@ -799,8 +712,8 @@ class LinkedInCompanyLookup:
                 break
 
         # Check stripped version in aliases
-        if stripped in self._ORG_ALIASES:
-            canonical = self._ORG_ALIASES[stripped]
+        if stripped in _ORG_ALIASES:
+            canonical = _ORG_ALIASES[stripped]
             logger.debug(f"Normalized org '{org_name}' (stripped) -> '{canonical}'")
             return canonical
 
@@ -825,9 +738,9 @@ class LinkedInCompanyLookup:
         # Check lowercase version against aliases
         norm = org_name.lower().strip()
 
-        if norm in self._ORG_ALIASES:
+        if norm in _ORG_ALIASES:
             # Return title-cased expanded name
-            expanded = self._ORG_ALIASES[norm]
+            expanded = _ORG_ALIASES[norm]
             # Title case but preserve common words
             result = " ".join(
                 word
@@ -867,8 +780,8 @@ class LinkedInCompanyLookup:
                 stripped = stripped[: -len(suffix)].strip()
                 break
 
-        if stripped in self._ORG_ALIASES:
-            expanded = self._ORG_ALIASES[stripped]
+        if stripped in _ORG_ALIASES:
+            expanded = _ORG_ALIASES[stripped]
             result = " ".join(
                 word
                 if word.lower() in ("of", "and", "the", "for", "at", "in", "on")
@@ -922,7 +835,7 @@ class LinkedInCompanyLookup:
         words = norm.split()
         if len(words) == 1:
             # Check if it's a known alias
-            if norm not in self._ORG_ALIASES:
+            if norm not in _ORG_ALIASES:
                 # Single word that's not a known alias - likely invalid
                 # Exceptions: very short common abbrevs handled in aliases
                 logger.debug(
@@ -938,7 +851,7 @@ class LinkedInCompanyLookup:
             return False
 
         # Very short names (1-2 chars) are likely errors unless they're aliases
-        if len(norm) <= 2 and norm not in self._ORG_ALIASES:
+        if len(norm) <= 2 and norm not in _ORG_ALIASES:
             logger.debug(f"Skipping too-short org name: '{org_name}'")
             return False
 

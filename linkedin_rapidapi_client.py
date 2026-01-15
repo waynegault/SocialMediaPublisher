@@ -24,13 +24,13 @@ API Documentation: https://rapidapi.com/freshdata-freshdata-default/api/fresh-li
 """
 
 import logging
-import time
 import hashlib
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any, Callable
 
 import requests
 
+from api_client import api_client
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -119,9 +119,6 @@ class FreshLinkedInAPIClient:
     BASE_URL = "https://fresh-linkedin-profile-data.p.rapidapi.com"
     API_HOST = "fresh-linkedin-profile-data.p.rapidapi.com"
 
-    # Rate limiting: RapidAPI typically allows 5-10 requests per second
-    MIN_REQUEST_INTERVAL = 0.2  # 200ms between requests
-
     def __init__(self, api_key: Optional[str] = None, cache: Optional[Any] = None):
         """
         Initialize the LinkedIn API client.
@@ -137,7 +134,7 @@ class FreshLinkedInAPIClient:
             )
 
         self.cache = cache
-        self._last_request_time = 0.0
+        # Rate limiting now handled by api_client centrally
         self._request_count = 0
         self._cache_hits = 0
         self._api_calls = 0
@@ -158,11 +155,11 @@ class FreshLinkedInAPIClient:
         return f"linkedin_profile:{hashlib.md5(normalized.encode()).hexdigest()}"
 
     def _rate_limit(self):
-        """Enforce rate limiting between requests."""
-        elapsed = time.time() - self._last_request_time
-        if elapsed < self.MIN_REQUEST_INTERVAL:
-            time.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
-        self._last_request_time = time.time()
+        """Enforce rate limiting using centralized api_client limiter."""
+        wait_time = api_client.linkedin_limiter.wait(endpoint="rapidapi")
+        if wait_time > 0.5:
+            logger.debug(f"RapidAPI rate limiter: waited {wait_time:.1f}s")
+        self._request_count += 1
 
     def _check_from_cache(
         self, name: str, company: str
@@ -375,7 +372,9 @@ class FreshLinkedInAPIClient:
 
             if response.status_code == 429:
                 logger.warning("Rate limited by RapidAPI. Waiting before retry...")
-                time.sleep(5)
+                api_client.linkedin_limiter.on_429_error(
+                    endpoint="rapidapi", retry_after=5.0
+                )
                 response = self._session.post(
                     url, json=payload, headers=headers, timeout=30
                 )
@@ -385,6 +384,9 @@ class FreshLinkedInAPIClient:
                     f"API error: {response.status_code} - {response.text[:200]}"
                 )
                 return None
+
+            # Report success to rate limiter
+            api_client.linkedin_limiter.on_success(endpoint="rapidapi")
 
             data = response.json()
 
@@ -566,9 +568,19 @@ class FreshLinkedInAPIClient:
 
             response = self._session.get(url, params=params, timeout=30)
 
+            if response.status_code == 429:
+                api_client.linkedin_limiter.on_429_error(
+                    endpoint="rapidapi", retry_after=5.0
+                )
+                logger.warning("Rate limited by RapidAPI on profile lookup")
+                return None
+
             if response.status_code != 200:
                 logger.error(f"API error: {response.status_code}")
                 return None
+
+            # Report success to rate limiter
+            api_client.linkedin_limiter.on_success(endpoint="rapidapi")
 
             data = response.json()
 
