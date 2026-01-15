@@ -22,6 +22,21 @@ from config import Config
 from error_handling import with_enhanced_recovery, NetworkTimeoutError
 from rate_limiter import AdaptiveRateLimiter
 
+# Import shared constants from ner_engine
+try:
+    from ner_engine import (
+        INVALID_ORG_NAMES,
+        INVALID_ORG_PATTERNS,
+        INVALID_PERSON_NAMES,
+        VALID_SINGLE_WORD_ORGS,
+    )
+except ImportError:
+    # Fallback if ner_engine not available
+    INVALID_ORG_NAMES = set()
+    INVALID_ORG_PATTERNS = []
+    INVALID_PERSON_NAMES = set()
+    VALID_SINGLE_WORD_ORGS = set()
+
 logger = logging.getLogger(__name__)
 
 # Import undetected-chromedriver for CAPTCHA-resistant browser automation
@@ -519,104 +534,9 @@ class LinkedInCompanyLookup:
         "kpmg": "kpmg international",
     }
 
-    # === INVALID ORG NAMES (skip searching for these) ===
-    # These are terms that appear as "affiliations" but aren't real organizations
-    # Includes: single generic words, research topics, materials, person names
-    _INVALID_ORG_NAMES: set[str] = {
-        # Generic terms
-        "molecular",
-        "chemistry",
-        "physics",
-        "biology",
-        "research",
-        "science",
-        "engineering",
-        "technology",
-        "materials",
-        "nanotechnology",
-        "computational",
-        "theoretical",
-        "applied",
-        "advanced",
-        "fundamental",
-        # Materials and topics (not organizations)
-        "mxenes",
-        "graphene",
-        "nanoparticles",
-        "nanomaterials",
-        "quantum",
-        "polymers",
-        "catalysis",
-        "electrochemistry",
-        "spectroscopy",
-        "synthesis",
-        # Single words that are person names (false positives from parsing)
-        "jiang",
-        "wang",
-        "zhang",
-        "chen",
-        "liu",
-        "li",
-        "yang",
-        "huang",
-        "zhou",
-        "wu",
-        # Other invalid patterns
-        "n/a",
-        "none",
-        "unknown",
-        "various",
-        "multiple",
-        "other",
-        "independent",
-        "freelance",
-        "self-employed",
-        "retired",
-    }
-
-    # === INVALID ORG NAME PATTERNS (regex patterns to skip) ===
-    # These patterns indicate the text is likely a headline or description, not an org
-    _INVALID_ORG_PATTERNS: list[str] = [
-        r"^new\s+",  # Headlines often start with "New ..."
-        r"smash",  # "Smashes", "Smashing" - headline verbs
-        r"breakthrough",
-        r"discover",
-        r"announc",  # "Announces", "Announced"
-        r"reveal",
-        r"launch",
-        r"unveil",
-        r"develop",
-        r"creat",  # "Creates", "Created"
-        r"powered",  # "Gold-Powered" etc.
-        r"benchmark",
-        r"record",
-        r"-old\b",  # "decade-old", "year-old"
-    ]
-
-    # === INVALID PERSON NAMES (skip searching for these) ===
-    # Generic placeholders that aren't actual person names
-    _INVALID_PERSON_NAMES: set[str] = {
-        "individual researcher",
-        "researcher",
-        "professor",
-        "scientist",
-        "engineer",
-        "author",
-        "contributor",
-        "correspondent",
-        "editor",
-        "staff",
-        "staff writer",
-        "team",
-        "research team",
-        "anonymous",
-        "unknown",
-        "n/a",
-        "none",
-        "various",
-        "multiple authors",
-        "et al",
-    }
+    # === INVALID ENTITY NAMES (imported from ner_engine) ===
+    # Use module-level imports: INVALID_ORG_NAMES, INVALID_ORG_PATTERNS,
+    # INVALID_PERSON_NAMES, VALID_SINGLE_WORD_ORGS
 
     # === CLASS-LEVEL CACHES (shared across all instances and steps) ===
     # Cache person search results - Key: "name@canonical_company" -> URL or None
@@ -1001,7 +921,7 @@ class LinkedInCompanyLookup:
             norm = norm[4:].strip()
 
         # Check against known invalid names
-        if norm in self._INVALID_ORG_NAMES:
+        if norm in INVALID_ORG_NAMES:
             logger.debug(f"Skipping invalid org name: '{org_name}' (in blocklist)")
             return False
 
@@ -1030,7 +950,7 @@ class LinkedInCompanyLookup:
             return False
 
         # Check against regex patterns (headlines, action verbs, etc.)
-        for pattern in self._INVALID_ORG_PATTERNS:
+        for pattern in INVALID_ORG_PATTERNS:
             if re.search(pattern, norm, re.IGNORECASE):
                 logger.debug(
                     f"Skipping org matching invalid pattern: '{org_name}' (pattern: {pattern})"
@@ -1060,7 +980,7 @@ class LinkedInCompanyLookup:
         norm = name.lower().strip()
 
         # Check against known invalid person names
-        if norm in self._INVALID_PERSON_NAMES:
+        if norm in INVALID_PERSON_NAMES:
             logger.debug(f"Skipping invalid person name: '{name}' (in blocklist)")
             return False
 
@@ -1455,10 +1375,13 @@ class LinkedInCompanyLookup:
             return None
 
     def _ensure_linkedin_login(self, driver) -> bool:
-        """Ensure user is logged in to LinkedIn, attempting auto-login if credentials available.
+        """Ensure user is logged in to LinkedIn with the correct account.
+
+        Verifies the logged-in account matches the configured LINKEDIN_USERNAME.
+        If a different account is logged in, logs out and re-authenticates.
 
         Returns:
-            True if logged in, False if user cancelled or login failed
+            True if logged in with correct account, False if login failed
         """
         if self._linkedin_login_verified:
             return True
@@ -1476,35 +1399,36 @@ class LinkedInCompanyLookup:
                 or "/authwall" in current_url
                 or "/checkpoint" in current_url
             ):
-                # Try automatic login if credentials are configured
-                if Config.LINKEDIN_USERNAME and Config.LINKEDIN_PASSWORD:
-                    logger.info("Attempting automatic LinkedIn login...")
-                    if self._auto_login(driver):
-                        self._linkedin_login_verified = True
-                        logger.info("Automatic LinkedIn login successful")
-                        return True
+                return self._perform_login(driver)
+
+            # We appear to be logged in - verify it's the correct account
+            if Config.LINKEDIN_USERNAME:
+                logged_in_email = self._get_logged_in_email(driver)
+                if logged_in_email:
+                    expected_email = Config.LINKEDIN_USERNAME.lower().strip()
+                    actual_email = logged_in_email.lower().strip()
+                    if actual_email != expected_email:
+                        logger.info(
+                            f"Wrong LinkedIn account logged in. Expected: {expected_email}, Got: {actual_email}"
+                        )
+                        print(f"\n⚠️  Wrong LinkedIn account detected: {actual_email}")
+                        print(f"   Expected account: {expected_email}")
+                        print("   Logging out and switching accounts...")
+
+                        # Reset login flag since we're switching accounts
+                        self._linkedin_login_verified = False
+
+                        # Log out and re-login with correct credentials
+                        if self._logout_linkedin(driver):
+                            time.sleep(2)  # Allow logout to fully complete
+                            return self._perform_login(driver)
+                        else:
+                            logger.error("Failed to log out of wrong account")
+                            return False
                     else:
-                        logger.warning("Automatic login failed, falling back to manual")
-
-                # Fall back to manual login
-                print("\n" + "=" * 60)
-                print("LinkedIn Login Required")
-                print("=" * 60)
-                print("A browser window has opened. Please log in to LinkedIn.")
-                print("This is required to extract @mention URNs from profiles.")
-                print("Your session will be saved for future runs.")
-                print(
-                    "\nTip: Add LINKEDIN_USERNAME and LINKEDIN_PASSWORD to .env for auto-login."
-                )
-                print("\nAfter logging in, press Enter to continue...")
-                input()
-
-                # Check if login succeeded
-                time.sleep(2)
-                current_url = driver.current_url
-                if "/login" in current_url or "/authwall" in current_url:
-                    print("Login not detected. Please try again.")
-                    return False
+                        logger.info(
+                            f"Verified correct LinkedIn account: {actual_email}"
+                        )
 
             self._linkedin_login_verified = True
             logger.info("LinkedIn login verified")
@@ -1513,6 +1437,154 @@ class LinkedInCompanyLookup:
         except Exception as e:
             logger.error(f"Error checking LinkedIn login: {e}")
             return False
+
+    def _get_logged_in_email(self, driver) -> Optional[str]:
+        """Get the email of the currently logged-in LinkedIn user.
+
+        Returns:
+            Email address if found, None otherwise
+        """
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+
+        try:
+            # Navigate to settings page which shows email
+            driver.get("https://www.linkedin.com/psettings/email")
+            time.sleep(2)
+
+            # Look for email in the settings page
+            try:
+                # Primary email is usually in a specific element
+                email_elements = driver.find_elements(
+                    By.CSS_SELECTOR, "[data-email], .email-address, [href^='mailto:']"
+                )
+                for elem in email_elements:
+                    text = (
+                        elem.get_attribute("data-email")
+                        or elem.get_attribute("href")
+                        or elem.text
+                    )
+                    if text and "@" in text:
+                        email = text.replace("mailto:", "").strip()
+                        logger.debug(f"Found logged-in email: {email}")
+                        return email
+
+                # Alternative: look in page text
+                page_source = driver.page_source
+                import re
+
+                # Find email pattern near "Primary email" or similar
+                email_match = re.search(
+                    r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", page_source
+                )
+                if email_match:
+                    email = email_match.group(0)
+                    # Filter out common non-user emails
+                    if not any(
+                        x in email.lower()
+                        for x in ["linkedin.com", "example.com", "email.com"]
+                    ):
+                        logger.debug(f"Found email from page source: {email}")
+                        return email
+
+            except Exception as e:
+                logger.debug(f"Error finding email element: {e}")
+
+            # Fallback: Try the account settings page
+            driver.get("https://www.linkedin.com/mypreferences/d/sign-in-and-security")
+            time.sleep(2)
+
+            import re
+
+            email_match = re.search(
+                r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", driver.page_source
+            )
+            if email_match:
+                email = email_match.group(0)
+                if not any(
+                    x in email.lower()
+                    for x in ["linkedin.com", "example.com", "email.com"]
+                ):
+                    return email
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error getting logged-in email: {e}")
+            return None
+
+    def _logout_linkedin(self, driver) -> bool:
+        """Log out of LinkedIn.
+
+        Returns:
+            True if logout successful, False otherwise
+        """
+        try:
+            # Direct navigation to logout endpoint
+            driver.get("https://www.linkedin.com/m/logout/")
+            time.sleep(3)
+
+            # Check if we're back at login page
+            current_url = driver.current_url
+            if (
+                "/login" in current_url
+                or "/authwall" in current_url
+                or "linkedin.com/home" in current_url
+            ):
+                logger.info("Successfully logged out of LinkedIn")
+                return True
+
+            # Alternative: try the settings logout
+            driver.get("https://www.linkedin.com/logout")
+            time.sleep(3)
+
+            return "/login" in driver.current_url or "/authwall" in driver.current_url
+
+        except Exception as e:
+            logger.error(f"Error logging out of LinkedIn: {e}")
+            return False
+
+    def _perform_login(self, driver) -> bool:
+        """Perform LinkedIn login with configured credentials or prompt for manual login.
+
+        Returns:
+            True if login successful, False otherwise
+        """
+        # Try automatic login if credentials are configured
+        if Config.LINKEDIN_USERNAME and Config.LINKEDIN_PASSWORD:
+            logger.info(
+                f"Attempting automatic LinkedIn login as {Config.LINKEDIN_USERNAME}..."
+            )
+            if self._auto_login(driver):
+                self._linkedin_login_verified = True
+                logger.info("Automatic LinkedIn login successful")
+                return True
+            else:
+                logger.warning("Automatic login failed, falling back to manual")
+
+        # Fall back to manual login
+        print("\n" + "=" * 60)
+        print("LinkedIn Login Required")
+        print("=" * 60)
+        print("A browser window has opened. Please log in to LinkedIn.")
+        print("This is required to extract @mention URNs from profiles.")
+        print("Your session will be saved for future runs.")
+        print(
+            "\nTip: Add linkedin_username and linkedin_password to .env for auto-login."
+        )
+        print("\nAfter logging in, press Enter to continue...")
+        input()
+
+        # Check if login succeeded
+        time.sleep(2)
+        current_url = driver.current_url
+        if "/login" in current_url or "/authwall" in current_url:
+            print("Login not detected. Please try again.")
+            return False
+
+        self._linkedin_login_verified = True
+        return True
 
     def _auto_login(self, driver) -> bool:
         """Attempt automatic login using credentials from config.
@@ -1524,26 +1596,54 @@ class LinkedInCompanyLookup:
             from selenium.webdriver.common.by import By
             from selenium.webdriver.support.ui import WebDriverWait
             from selenium.webdriver.support import expected_conditions as EC
+            from selenium.webdriver.common.keys import Keys
 
-            # Navigate to login page
+            # Clear cookies first to ensure clean login state
+            try:
+                driver.delete_all_cookies()
+            except Exception:
+                pass
+
+            # Navigate to login page with a fresh start
             driver.get("https://www.linkedin.com/login")
-            time.sleep(2)
+            time.sleep(3)  # Give page more time to fully load
+
+            # Wait for page to be ready
+            WebDriverWait(driver, 15).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
 
             # Wait for and fill username field
-            username_field = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.ID, "username"))
+            username_field = WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable((By.ID, "username"))
             )
+            username_field.click()
+            time.sleep(0.5)
             username_field.clear()
-            username_field.send_keys(Config.LINKEDIN_USERNAME)
+
+            # Type slowly to avoid detection
+            for char in Config.LINKEDIN_USERNAME:
+                username_field.send_keys(char)
+                time.sleep(0.05 + random.random() * 0.05)
 
             # Fill password field
-            password_field = driver.find_element(By.ID, "password")
+            password_field = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.ID, "password"))
+            )
+            password_field.click()
+            time.sleep(0.5)
             password_field.clear()
-            password_field.send_keys(Config.LINKEDIN_PASSWORD)
+
+            # Type password slowly
+            for char in Config.LINKEDIN_PASSWORD:
+                password_field.send_keys(char)
+                time.sleep(0.05 + random.random() * 0.05)
+
+            time.sleep(1)  # Brief pause before clicking
 
             # Click sign in button
-            sign_in_button = driver.find_element(
-                By.CSS_SELECTOR, "button[type='submit']"
+            sign_in_button = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))
             )
             sign_in_button.click()
 
@@ -1605,6 +1705,274 @@ class LinkedInCompanyLookup:
             cls._shared_driver_search_count = 0
             cls._shared_linkedin_login_verified = False
             logger.debug("Closed shared UC Chrome driver session")
+
+    def send_connection_via_browser(
+        self,
+        profile_url: str,
+        message: str | None = None,
+    ) -> tuple[bool, str]:
+        """
+        Send a LinkedIn connection request by visiting the profile and clicking Connect.
+
+        Uses undetected-chromedriver to automate the browser, avoiding API restrictions.
+
+        Args:
+            profile_url: LinkedIn profile URL (e.g., 'https://www.linkedin.com/in/username')
+            message: Optional custom message (max 300 chars) - requires LinkedIn Premium for custom messages
+
+        Returns:
+            Tuple of (success: bool, message: str describing result)
+        """
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+
+        driver = self._get_uc_driver()
+        if not driver:
+            return (
+                False,
+                "Browser automation not available - install undetected-chromedriver",
+            )
+
+        # Ensure logged in
+        if not self._ensure_linkedin_login(driver):
+            return (False, "LinkedIn login required")
+
+        try:
+            # Navigate to the profile
+            logger.debug(f"Visiting profile: {profile_url}")
+            driver.get(profile_url)
+            time.sleep(3 + random.random() * 2)  # Wait for page load
+
+            # Check if profile exists
+            if "Page not found" in driver.page_source or "/404" in driver.current_url:
+                return (False, "Profile not found")
+
+            # Look for Connect button - LinkedIn has multiple possible button configurations
+            connect_selectors = [
+                # Primary Connect button on profile page
+                'button[aria-label*="Invite"][aria-label*="connect"]',
+                'button[aria-label*="Connect with"]',
+                # Connect in the action buttons area
+                'div.pvs-profile-actions button:has-text("Connect")',
+                'button.artdeco-button--primary:has-text("Connect")',
+                # More general selectors
+                '//button[contains(., "Connect")]',
+                '//button[contains(@aria-label, "connect")]',
+            ]
+
+            connect_button = None
+
+            # Try CSS selectors first
+            for selector in connect_selectors[:4]:
+                try:
+                    buttons = driver.find_elements(By.CSS_SELECTOR, selector)
+                    for btn in buttons:
+                        btn_text = btn.text.strip().lower()
+                        if "connect" in btn_text and btn.is_displayed():
+                            connect_button = btn
+                            break
+                    if connect_button:
+                        break
+                except Exception:
+                    continue
+
+            # Try XPath selectors
+            if not connect_button:
+                for selector in connect_selectors[4:]:
+                    try:
+                        buttons = driver.find_elements(By.XPATH, selector)
+                        for btn in buttons:
+                            if btn.is_displayed():
+                                connect_button = btn
+                                break
+                        if connect_button:
+                            break
+                    except Exception:
+                        continue
+
+            # Final fallback: find any button with "Connect" text
+            if not connect_button:
+                try:
+                    all_buttons = driver.find_elements(By.TAG_NAME, "button")
+                    for btn in all_buttons:
+                        try:
+                            btn_text = btn.text.strip().lower()
+                            aria_label = (btn.get_attribute("aria-label") or "").lower()
+                            if (
+                                btn.is_displayed()
+                                and ("connect" in btn_text or "connect" in aria_label)
+                                and "disconnect" not in btn_text
+                                and "message" not in btn_text
+                            ):
+                                connect_button = btn
+                                break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+            if not connect_button:
+                # Check if already connected or pending
+                page_text = driver.page_source.lower()
+                if "pending" in page_text and "invitation" in page_text:
+                    return (False, "Invitation already pending")
+                if "message" in page_text and "connect" not in page_text:
+                    return (False, "Already connected (Message button visible)")
+                return (False, "Connect button not found - may already be connected")
+
+            # Scroll the button into view
+            driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center'});", connect_button
+            )
+            time.sleep(0.5 + random.random() * 0.5)
+
+            # Click the Connect button
+            logger.debug("Clicking Connect button...")
+            connect_button.click()
+            time.sleep(2 + random.random())
+
+            # Handle the connection modal (if it appears)
+            # LinkedIn may show "Add a note" or "Send without a note" options
+            try:
+                # If custom message provided, click "Add a note" and fill in the message
+                if message:
+                    # Look for "Add a note" button
+                    add_note_buttons = driver.find_elements(
+                        By.XPATH,
+                        '//button[contains(., "Add a note")]',
+                    )
+                    for btn in add_note_buttons:
+                        if btn.is_displayed():
+                            btn.click()
+                            time.sleep(1 + random.random())
+                            break
+
+                    # Find the textarea for the message and fill it
+                    try:
+                        textarea = WebDriverWait(driver, 5).until(
+                            EC.presence_of_element_located(
+                                (
+                                    By.CSS_SELECTOR,
+                                    'textarea[name="message"], textarea#custom-message',
+                                )
+                            )
+                        )
+                        textarea.clear()
+                        # Type the message slowly to appear human
+                        for char in message[:300]:  # LinkedIn limits to 300 chars
+                            textarea.send_keys(char)
+                            time.sleep(0.02 + random.random() * 0.02)
+                        time.sleep(0.5)
+                        logger.debug(f"Added custom message: {message[:50]}...")
+                    except Exception as e:
+                        logger.debug(f"Could not find message textarea: {e}")
+                        # Continue anyway - will try to send without custom message
+
+                    # Click Send button
+                    send_buttons = driver.find_elements(
+                        By.XPATH,
+                        '//button[contains(@aria-label, "Send") or contains(., "Send invitation") or contains(., "Send")]',
+                    )
+                    for btn in send_buttons:
+                        btn_text = btn.text.strip().lower()
+                        if (
+                            btn.is_displayed()
+                            and "send" in btn_text
+                            and "without" not in btn_text
+                        ):
+                            btn.click()
+                            time.sleep(1)
+                            logger.info(
+                                f"Connection request sent with message to {profile_url}"
+                            )
+                            return (True, "Connection request sent with message")
+
+                # Look for "Send without a note" button if no custom message
+                if not message:
+                    send_buttons = driver.find_elements(
+                        By.XPATH,
+                        '//button[contains(., "Send without a note") or contains(., "Send")]',
+                    )
+                    for btn in send_buttons:
+                        if btn.is_displayed() and "without" in btn.text.lower():
+                            btn.click()
+                            time.sleep(1)
+                            logger.info(f"Connection request sent to {profile_url}")
+                            return (True, "Connection request sent")
+
+                # If custom message provided or no "without note" option, look for send button
+                send_buttons = driver.find_elements(
+                    By.XPATH,
+                    '//button[contains(@aria-label, "Send") or contains(., "Send invitation")]',
+                )
+                for btn in send_buttons:
+                    if btn.is_displayed():
+                        btn.click()
+                        time.sleep(1)
+                        logger.info(f"Connection request sent to {profile_url}")
+                        return (True, "Connection request sent")
+
+                # If modal has a send button
+                send_buttons = driver.find_elements(
+                    By.CSS_SELECTOR, 'button[aria-label*="Send"]'
+                )
+                for btn in send_buttons:
+                    if btn.is_displayed():
+                        btn.click()
+                        time.sleep(1)
+                        logger.info(f"Connection request sent to {profile_url}")
+                        return (True, "Connection request sent")
+
+            except Exception as e:
+                logger.debug(f"Modal handling: {e}")
+
+            # If we clicked Connect and no modal appeared, it might have just sent
+            return (True, "Connection request sent (or modal appeared)")
+
+        except Exception as e:
+            logger.error(f"Browser connection error: {e}")
+            return (False, f"Browser error: {str(e)}")
+
+    def send_bulk_connections_via_browser(
+        self,
+        profile_urls: list[str],
+        delay_seconds: float = 5.0,
+    ) -> tuple[int, int, list[str]]:
+        """
+        Send connection requests to multiple profiles using browser automation.
+
+        Args:
+            profile_urls: List of LinkedIn profile URLs
+            delay_seconds: Delay between requests (default 5s for safety)
+
+        Returns:
+            Tuple of (success_count, failure_count, list of error messages)
+        """
+        success_count = 0
+        failure_count = 0
+        errors: list[str] = []
+
+        for i, url in enumerate(profile_urls):
+            success, result_msg = self.send_connection_via_browser(url)
+
+            if success:
+                success_count += 1
+                logger.info(f"[{i + 1}/{len(profile_urls)}] Connected: {url}")
+            else:
+                failure_count += 1
+                errors.append(f"{url}: {result_msg}")
+                logger.warning(
+                    f"[{i + 1}/{len(profile_urls)}] Failed: {url} - {result_msg}"
+                )
+
+            # Rate limiting delay between requests
+            if i < len(profile_urls) - 1:
+                # Add some randomness to appear more human
+                actual_delay = delay_seconds + random.random() * 3
+                time.sleep(actual_delay)
+
+        return (success_count, failure_count, errors)
 
     def _get_http_client(self) -> httpx.Client:
         """Get or create HTTP client for LinkedIn API calls."""
@@ -3065,7 +3433,8 @@ NOT_FOUND"""
         # === PRIMARY METHOD: Direct LinkedIn Search ===
         # Try LinkedIn's own search first - more accurate than Google/Bing
         # Only use for full name searches (not surname-only fallback)
-        if not is_single_name and company:
+        # Can be disabled via SKIP_LINKEDIN_DIRECT_SEARCH to avoid LinkedIn rate limits
+        if not Config.SKIP_LINKEDIN_DIRECT_SEARCH and not is_single_name and company:
             logger.info(
                 f"LinkedIn direct search for '{normalized_name or name}' at '{company}'"
             )
@@ -4961,10 +5330,10 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
 
     def test_extract_person_url():
         lookup = LinkedInCompanyLookup(genai_client=None)
-        text = "Visit https://www.linkedin.com/in/wayne-gault for profile"
+        text = "Visit https://www.linkedin.com/in/john-doe-test for profile"
         url = lookup._extract_person_url(text)
         assert url is not None
-        assert "wayne-gault" in url
+        assert "john-doe-test" in url
         lookup.close()
 
     def test_lookup_class_init():
@@ -4993,8 +5362,8 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     def test_lookup_person_urn_no_driver():
         """Test that lookup handles gracefully with or without browser driver."""
         lookup = LinkedInCompanyLookup(genai_client=None)
-        # Test with valid LinkedIn profile URL
-        result = lookup.lookup_person_urn("https://www.linkedin.com/in/wayne-gault")
+        # Test with valid LinkedIn profile URL (generic test user)
+        result = lookup.lookup_person_urn("https://www.linkedin.com/in/john-doe-test")
         # Result could be None (no driver) or a URN string (driver available)
         assert result is None or (
             isinstance(result, str) and result.startswith("urn:li:")

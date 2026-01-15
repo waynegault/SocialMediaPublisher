@@ -97,8 +97,19 @@ class SettingsModel(BaseSettings):
         default="", alias="LINKEDIN_ORGANIZATION_URN"
     )
     linkedin_author_name: str = Field(default="", alias="LINKEDIN_AUTHOR_NAME")
+
+    # --- Professional Discipline ---
+    # The user's professional discipline (e.g., "chemical engineer", "software developer")
+    discipline: str = Field(default="chemical engineer", alias="DISCIPLINE")
+
     linkedin_username: str = Field(default="", alias="LINKEDIN_USERNAME")
     linkedin_password: str = Field(default="", alias="LINKEDIN_PASSWORD")
+
+    # --- LinkedIn Search Settings ---
+    # Skip LinkedIn's direct search (subject to rate limits) and use Google/Bing instead
+    skip_linkedin_direct_search: bool = Field(
+        default=True, alias="SKIP_LINKEDIN_DIRECT_SEARCH"
+    )
 
     # --- LinkedIn Voyager API (for reliable profile lookups) ---
     # These cookies can be extracted from browser dev tools after logging into LinkedIn
@@ -162,7 +173,10 @@ class SettingsModel(BaseSettings):
 
     # --- Search Settings ---
     search_prompt: str = Field(
-        default="Find news stories about technology breakthroughs and innovations",
+        default=(
+            "I'm a professional {discipline}. I'm looking for the latest professional {discipline} "
+            "stories I can summarise for publication on my LinkedIn profile"
+        ),
         alias="SEARCH_PROMPT",
     )
     search_prompt_template: str = Field(default="", alias="SEARCH_PROMPT_TEMPLATE")
@@ -172,6 +186,10 @@ class SettingsModel(BaseSettings):
     use_last_checked_date: bool = Field(default=True, alias="USE_LAST_CHECKED_DATE")
     max_stories_per_search: int = Field(
         default=5, ge=1, le=50, alias="MAX_STORIES_PER_SEARCH"
+    )
+    # Maximum number of people to search for LinkedIn profiles per story (reduces API calls)
+    max_people_per_story: int = Field(
+        default=3, ge=1, le=20, alias="MAX_PEOPLE_PER_STORY"
     )
     dedup_similarity_threshold: float = Field(
         default=0.7, ge=0.0, le=1.0, alias="DEDUP_SIMILARITY_THRESHOLD"
@@ -280,8 +298,8 @@ class SettingsModel(BaseSettings):
         default=14, ge=1, alias="IMAGE_REGEN_CUTOFF_DAYS"
     )
 
-    # --- Signature Block ---
-    signature_block: str = Field(default="\n\n#News #Update", alias="SIGNATURE_BLOCK")
+    # --- Signature Details ---
+    signature_block_detail: str = Field(default="", alias="SIGNATURE_BLOCK_DETAIL")
 
     # --- Paths ---
     db_name: str = Field(default="content_engine.db", alias="DB_NAME")
@@ -308,7 +326,7 @@ class SettingsModel(BaseSettings):
     linkedin_profile_search_prompt: str = Field(
         default="", alias="LINKEDIN_PROFILE_SEARCH_PROMPT"
     )
-    org_leaders_prompt: str = Field(default="", alias="ORG_LEADERS_PROMPT")
+    indirect_people_prompt: str = Field(default="", alias="INDIRECT_PEOPLE_PROMPT")
     company_mention_prompt: str = Field(default="", alias="COMPANY_MENTION_PROMPT")
     individual_extraction_prompt: str = Field(
         default="", alias="INDIVIDUAL_EXTRACTION_PROMPT"
@@ -454,9 +472,24 @@ class Config:
     LINKEDIN_ORGANIZATION_URN: str = _get_str("LINKEDIN_ORGANIZATION_URN")
     # Author's display name for first-person story writing (e.g., "Wayne Gault")
     LINKEDIN_AUTHOR_NAME: str = _get_str("LINKEDIN_AUTHOR_NAME", "")
+
+    # --- Professional Discipline ---
+    # The user's professional discipline (e.g., "chemical engineer", "software developer")
+    DISCIPLINE: str = _get_str("DISCIPLINE", "chemical engineer")
+
     # LinkedIn browser login credentials (for profile URN extraction)
-    LINKEDIN_USERNAME: str = _get_str("LINKEDIN_USERNAME", "")
-    LINKEDIN_PASSWORD: str = _get_str("LINKEDIN_PASSWORD", "")
+    # Note: Uses lowercase keys to match .env file format
+    LINKEDIN_USERNAME: str = _get_str("linkedin_username", "")
+    LINKEDIN_PASSWORD: str = _get_str("linkedin_password", "")
+
+    # --- LinkedIn Voyager API (internal API using browser cookies) ---
+    # Extract these from browser dev tools after logging into LinkedIn
+    LINKEDIN_LI_AT: str = _get_str("LINKEDIN_LI_AT", "")
+    LINKEDIN_JSESSIONID: str = _get_str("LINKEDIN_JSESSIONID", "")
+
+    # --- LinkedIn Search Settings ---
+    # Skip LinkedIn's direct search (subject to rate limits) and use Google/Bing instead
+    SKIP_LINKEDIN_DIRECT_SEARCH: bool = _get_bool("SKIP_LINKEDIN_DIRECT_SEARCH", True)
 
     # --- RapidAPI Fresh LinkedIn Data API ---
     # Primary method for reliable LinkedIn profile lookups (90%+ success rate)
@@ -487,16 +520,14 @@ class Config:
     HF_PREFER_IF_CONFIGURED: bool = _get_bool("HF_PREFER_IF_CONFIGURED", True)
 
     # --- Image Style Settings ---
-    # Style directive for image generation prompts - technical industrial photography
+    # Style directive for image generation prompts - professional field photography
     IMAGE_STYLE: str = _get_str(
         "IMAGE_STYLE",
-        "industrial engineering photography, technical documentation style, "
-        "female engineer or scientist performing hands-on technical work, "
-        "sharp focus on equipment and processes with worker in context, "
-        "authentic PPE and workwear - hard hats, safety glasses, lab coats, coveralls, "
-        "real industrial or laboratory environment with visible technical detail, "
-        "natural workplace lighting supplemented by equipment glow, "
-        "photorealistic, editorial quality for engineering trade publication",
+        "documentary-style professional photography, authentic real-world setting for the subject matter, "
+        "female professional actively working, clear view of field-specific tools/subjects, "
+        "accurate PPE or professional attire appropriate to the field, "
+        "natural workplace lighting with contextual highlights, "
+        "photorealistic, editorial quality suitable for a professional publication",
     )
     # Aspect ratio for generated images (options: 1:1, 16:9, 9:16, 4:3, 3:4)
     IMAGE_ASPECT_RATIO: str = _get_str("IMAGE_ASPECT_RATIO", "16:9")
@@ -517,266 +548,244 @@ class Config:
     # Placeholders: {story_title}, {story_summary}, {image_style}
     IMAGE_REFINEMENT_PROMPT: str = _get_str(
         "IMAGE_REFINEMENT_PROMPT",
-        """You are creating an image for a professional chemical engineering publication.
+        """You are creating an image for a professional {discipline} publication.
 
 STORY TO ILLUSTRATE:
 - Title: {story_title}
 - Summary: {story_summary}
 
 CRITICAL: YOUR IMAGE MUST DIRECTLY ILLUSTRATE THIS SPECIFIC STORY
-Do NOT create a generic industrial or laboratory scene. Your image must show:
-- The EXACT technology, process, or equipment mentioned in the story title/summary
-- If the story mentions a specific company, reactor type, or process - SHOW THAT
-- If the story is about hydrogen electrolysis - show electrolyzers, not generic pipes
-- If the story is about battery recycling - show battery materials, not a generic lab
-- If the story is about carbon capture - show CO2 absorption equipment, not smokestacks
+Do NOT create a generic scene. Your image must show:
+- The exact subject or activity described (technology, patient, animal, experiment, field site, instrument, product, facility)
+- If the story mentions a specific organization, setting, device, species, or process — SHOW THAT
+- Match the environment to the story (clinic, lab, field site, office, control room, classroom, facility, etc.)
 
 READ THE SOURCE ARTICLE CONTEXT ABOVE (if provided) for additional visual details.
-This ensures your image reflects the REAL story, not a generic industrial scene.
+This ensures your image reflects the real story, not a generic illustration.
 
-STEP 1 - EXTRACT THE KEY TECHNICAL ELEMENTS FROM SOURCE:
-Read the source context carefully and identify:
-- The specific technology, process, or innovation described
-- Visual details from the original article images (if described)
-- The type of equipment or facility involved (reactor, distillation column, lab, refinery, etc.)
-- The industry sector (petrochemical, pharmaceutical, renewable energy, etc.)
-- Any specific materials, chemicals, or products discussed
+STEP 1 - EXTRACT THE KEY VISUAL ELEMENTS FROM SOURCE:
+Identify the specific subjects, people, equipment, animals, patients, locations, materials, or processes mentioned.
 
 STEP 2 - CREATE A SCENE THAT DIRECTLY DEPICTS THE STORY:
-Your image MUST show the actual subject matter from the source. Examples:
-- Story about "new catalyst for hydrogen production" → Show hydrogen production equipment with catalyst handling
-- Story about "CO2 capture technology" → Show carbon capture systems, absorption columns, or flue gas treatment
-- Story about "battery recycling process" → Show battery materials, hydrometallurgical equipment, or sorting facilities
-- Story about "biofuel breakthrough" → Show fermentation vessels, biomass handling, or biorefinery equipment
-- If source describes a specific facility color scheme or equipment type, USE THOSE DETAILS
+- Research breakthrough → show the experiment setup, samples, or instruments in use
+- Clinical/animal care → show practitioner with patient/animal, relevant tools, and setting
+- Field work → show on-site inspection/measurement with the environment visible
+- Operations/manufacturing → show the relevant line, machinery, or workflow step being discussed
+- If the source describes colors, equipment types, or context details, include them
 
-STEP 3 - SUGGEST AUTHENTIC INDUSTRIAL SETTING:
-Create a setting that reflects the sector mentioned in the story:
-- For pharmaceutical stories: sterile lab environments with appropriate equipment
-- For petrochemical stories: refinery or plant control room settings
-- For academic research: university laboratory with research equipment
-- For renewable energy: appropriate generation or storage facilities
-- If the source article describes a specific setting, MATCH IT
-- Avoid explicit company logos or branding to prevent trademark issues
-- Use authentic industrial or laboratory aesthetics that match the story context
+STEP 3 - SUGGEST AUTHENTIC SETTING:
+- Choose a setting appropriate to the field: clinic/hospital, laboratory, field site, office/control room, classroom, industrial or agricultural facility, etc.
+- Avoid explicit logos/branding; keep the look credible for the discipline and story
 
 STEP 4 - ADD A PROMINENT HUMAN ELEMENT (MINIMUM 40% of image):
-- Include a beautiful female chemical engineer as the PROMINENT SUBJECT occupying AT LEAST 40-50% of the frame
-- Position her in CENTER-LEFT or CENTER-RIGHT of the frame - NOT at the edges
-- She should be LARGE in the frame, upper body clearly visible (waist up or closer)
-- Show her ACTIVELY ENGAGED: operating controls, analyzing samples, inspecting equipment, taking readings
-- Her face should be clearly visible with confident, warm expression and attractive features
-- VARY HER APPEARANCE: rotate between blonde, brunette, black hair, and redhead; different face shapes and features
-- Authentic PPE appropriate for the specific work environment (hard hat, safety glasses, lab coat, etc.)
-- The ONLY constant: she must be beautiful and professional-looking
-- The engineer is a CO-STAR with the technology, not a background prop
+- Include a beautiful female {discipline} professional as the PROMINENT SUBJECT occupying 40-50% of the frame
+- Position her CENTER-LEFT or CENTER-RIGHT (not at the far edges)
+- Frame waist-up or closer; show her actively working on the story’s subject (examining, operating, sampling, analyzing, reviewing data)
+- Face clearly visible with confident, warm expression; vary hair color/features across images
+- Authentic PPE or professional attire appropriate to the setting (scrubs, lab coat, safety gear, business attire, field gear, etc.)
 
 TECHNICAL ACCURACY IS CRITICAL:
-- Use details from the source article to name specific equipment
-- Reference the actual process or technology from the story
-- Match the setting to what the source describes
-- Include relevant instrumentation, gauges, control systems
-- If the source mentions specific equipment brands or types (without logos), include those details
+- Use specific details from the story: name the subject/equipment/species/process shown
+- Match the environment to what the story implies
+- Include relevant instruments, tools, or context objects; avoid invented or generic props
 
 COMPOSITION RULE (STRICT - MINIMUM 40% HUMAN):
-- Female engineer: MINIMUM 40-50% of the frame, upper body prominently visible
-- She is positioned CENTER-LEFT or CENTER-RIGHT (not at far edges)
-- Technology/equipment: 50-60% of frame, visible behind/beside her
-- Camera framing: Medium shot or medium close-up of the engineer with technology context
-- The engineer and technology SHARE the spotlight equally
-- Show genuine interaction: hands on controls, eyes on instruments, actively working
-- Industrial/laboratory environment matching the story context
+- Female professional: 40-50% of the frame, positioned center-left or center-right
+- Subject matter shares the frame (equipment/patient/animal/data/setting) and is clearly visible
+- Medium or medium close-up framing; show active interaction with the subject
 
 AVOID:
-- Generic industrial backgrounds that could apply to any story
-- Vague descriptions like "technical equipment" or "machinery"
-- Ignoring specific details from the source article context
-- Engineer as a TINY figure in the background - she MUST be prominent
-- Engineer at the FAR EDGES of the frame - she should be center-left or center-right
-- Full-body distant shots - use medium or medium close-up framing
-- People occupying LESS than 40% of the visual space
-- Only showing the engineer's back or profile - show her face
-- Technology completely dominating without prominent human presence
-- Any technology or setting not mentioned in the story
+- Generic backgrounds that could apply to any story
+- Vague descriptions like "technical equipment" without specifics
+- Putting the person tiny or at the far edge of the frame
+- Full-body distant shots; backs of heads; hidden faces
+- Settings or tools that do not match the story
 - Explicit company logos or trademarks
 
 CRITICAL - NO TEXT IN IMAGE:
 - NEVER include any text, words, labels, signs, or writing in the image
-- Do NOT describe equipment labels, control panel text, safety signs, or any readable text
-- AI-generated text contains spelling errors that undermine professionalism
-- Focus on visual elements only - equipment shapes, lighting, colors, materials
-- If you mention a control panel, describe buttons and gauges, NOT text labels
+- Describe controls/indicators by appearance, not by text labels
 
-BAD IMAGE PROMPT EXAMPLE (too generic):
-"Industrial worker in factory with machinery and equipment in background"
-
-GOOD IMAGE PROMPT EXAMPLE (specific to story):
-"A photo of a beautiful blonde female process engineer in hard hat and safety glasses, framed from waist up in center-right of image, she is actively adjusting valves on a PEM electrolyzer control panel, confident warm expression as she monitors pressure readings, hydrogen electrolysis stacks visible behind her left shoulder, she occupies 45% of the frame, shot with 85mm lens professional DSLR, natural industrial lighting, editorial quality"
-
-NOTE: Vary the woman's hair color (blonde, brunette, black, redhead) and features across different images. The only constant is that she should be beautiful.
+GOOD IMAGE PROMPT EXAMPLE (story-specific):
+"A photo of a beautiful brunette female {discipline} professional, framed from waist up in center-right, gently examining a patient/subject relevant to the story, confident warm expression, field-appropriate tools visible behind her shoulder, she occupies 45% of the frame, shot with 85mm lens, natural workplace lighting, editorial quality"
 
 STYLE: {image_style}
 
 CRITICAL OUTPUT FORMAT:
 - MUST start with "A photo of..." (this triggers photorealistic rendering)
 - Write ONLY the image prompt. Maximum 80 words.
-- NEVER include any text, labels, signs, or writing - AI cannot spell correctly
-- Describe visual elements only (shapes, colors, equipment) - NOT readable text
+- NEVER include any text, labels, signs, or writing
+- Describe visual elements only; no readable text
 - End with photography/camera style keywords like "shot with professional camera, editorial quality"
-- The prompt MUST specifically describe the technology/process from the story/source - not generic industrial imagery.""",
+- The prompt MUST describe the specific subject/process from the story, not a generic scene.""",
     )
 
     # Fallback image prompt template when LLM refinement fails
-    # Placeholders: {story_title}
+    # Placeholders: {story_title}, {appearance}, {discipline}
     IMAGE_FALLBACK_PROMPT: str = _get_str(
         "IMAGE_FALLBACK_PROMPT",
-        "A photo of a beautiful female chemical engineer, framed from waist up in center-right of image, "
-        "actively working with technology related to: {story_title}. "
+        "A photo of {appearance} {discipline} professional, framed from waist up in center-right of image, "
+        "actively working with the subject matter related to: {story_title}. "
         "She occupies 45% of the frame with face clearly visible, confident warm expression. "
-        "Relevant equipment visible behind her shoulder. Authentic industrial or laboratory setting. "
-        "Shot with 85mm lens, natural workplace lighting, editorial quality for engineering publication.",
+        "Relevant tools, subjects, or setting visible behind her shoulder. Authentic workplace setting appropriate to {discipline} (clinic, lab, field, office, facility). "
+        "Shot with 85mm lens, natural workplace lighting, editorial quality for a professional publication.",
     )
 
     # Search instruction prompt - the system prompt for story search
     # Placeholders: {max_stories}, {search_prompt}, {since_date}, {summary_words}, {author_name}
     SEARCH_INSTRUCTION_PROMPT: str = _get_str(
         "SEARCH_INSTRUCTION_PROMPT",
-        """You are writing AS {author_name}, a chemical engineering professional sharing industry insights on LinkedIn. Find {max_stories} recent news stories matching: "{search_prompt}"
+        """You are writing AS {author_name}, a {discipline} professional sharing insights on LinkedIn. Find EXACTLY {max_stories} recent news stories matching: "{search_prompt}"
+
+CRITICAL - STORY COUNT:
+- Return EXACTLY {max_stories} stories - no more, no fewer
+- If you find more candidates, select only the {max_stories} highest quality ones
+- Do NOT return extra stories "just in case"
 
 REQUIREMENTS:
 - Stories must be from after {since_date}
 - Each story needs:
-  * title: An informative, technical headline (avoid clickbait or sensationalism)
-  * sources: Array of REAL source URLs from your search results
-  * summary: {summary_words} words max, written in FIRST PERSON as {author_name}
-  * category: One of: Medicine, Hydrogen, Research, Technology, Business, Science, AI, Other
-  * quality_score: 1-10 rating (see scoring rubric below)
-  * quality_justification: Brief explanation of the score
-  * hashtags: Array of 1-3 relevant hashtags (without # symbol, e.g., ["ChemicalEngineering", "Sustainability"])
-  * story_people: Array of people objects (see format below) - people mentioned in the story AND key leaders from organizations
+    * title: An informative, credible headline (avoid clickbait). Use FULL institution names, NOT abbreviations:
+      - "University of California, Riverside" NOT "UC Riverside" or "UCR"
+      - "University of California, Los Angeles" NOT "UCLA"
+      - "University of Southern California" NOT "USC"
+      - "University of Chicago" NOT "UChicago"
+      - "Massachusetts Institute of Technology" NOT "MIT"
+      - "California Institute of Technology" NOT "Caltech"
+      - Apply this rule to ALL universities and institutions
+    * sources: Array of REAL source URLs from your search results
+    * summary: {summary_words} words max, written in FIRST PERSON as {author_name}
+    * category: One of: Clinical/Practice, Research, Technology, Business, Policy/Regulation, Education, Science, Other
+    * quality_score: 1-10 rating (see scoring rubric below)
+    * quality_justification: Brief explanation of the score
+    * hashtags: Array of 1-3 relevant hashtags (without # symbol)
+    * direct_people: Array of people objects (see format below) - MAX 3 most relevant people per story
 
 QUALITY SCORE RUBRIC:
-- 10: Breakthrough with major industry implications, from top-tier source
-- 8-9: Significant news with clear engineering relevance, reputable source
-- 6-7: Relevant industry news, solid source, moderate significance
+- 10: Breakthrough with major implications for the field, from top-tier source
+- 8-9: Significant development with clear relevance to the discipline, reputable source
+- 6-7: Relevant professional news, solid source, moderate significance
 - 4-5: Tangential relevance or routine announcement
 - 1-3: Weak relevance, questionable source, or outdated
 
 GEOGRAPHIC PRIORITY (add +1 to score for stories from these regions):
 - English-speaking countries: USA, UK, Canada, Australia, New Zealand, Ireland
 - European countries: Germany, France, Netherlands, Switzerland, Sweden, Denmark, Norway, Finland, Belgium, Austria, Italy, Spain
-- Stories from these regions typically have better LinkedIn engagement for English-speaking professional audiences
 - Apply the +1 bonus AFTER calculating the base score (cap at 10)
 
 CRITICAL - INCLUDE NAMES IN SUMMARY:
-- The summary MUST mention specific COMPANY/INSTITUTION names (e.g., "researchers at MIT", "BASF announced")
+- The summary MUST mention specific ORGANIZATION names (e.g., "researchers at MIT", "RSPCA veterinarians", "BASF announced")
 - The summary MUST mention at least ONE key individual by full name with their role
-- Example: "Dr. Paula Hammond and her team at MIT have developed..."
-- Example: "Led by Professor Michael Jewett at Stanford..."
-- If the story is about academic research: name the university AND the lead researcher
-- If the story is about a company: name the company AND any executives mentioned
-- This is REQUIRED for LinkedIn engagement - people want to know WHO is behind the work
+- If the story is academic: name the institution AND lead researcher(s)
+- If the story is about a company/clinic/agency: name the organization AND any executives or practitioners mentioned
 
-STORY PEOPLE - MANDATORY EXTRACTION:
-For EVERY story, identify and include in story_people:
+DIRECT PEOPLE - MANDATORY EXTRACTION:
+For EVERY story, identify and include in direct_people (people explicitly mentioned in the story):
 1. The FIRST AUTHOR of any research paper (usually listed first in author order)
 2. The CORRESPONDING/SENIOR AUTHOR who supervised the research
 3. Other co-authors if prominently mentioned
-4. Executives or spokespersons quoted in the article
+4. Executives, practitioners, or spokespersons quoted in the article
 5. Look for: "first author", "senior author", "lead author", "principal investigator", "corresponding author", "supervised by"
 
 CRITICAL - AUTHOR AFFILIATIONS:
-- Use the author's ACTUAL INSTITUTIONAL AFFILIATION (their university/company), NOT the journal name
-- Example: If a paper in "Chemical Engineering Journal" is by researchers at "National Taiwan University",
-  use company: "National Taiwan University", NOT "Chemical Engineering Journal"
-- Journal names (e.g., Nature, Science, Chemical Engineering Journal) are PUBLISHERS, not affiliations
-- Look for phrases like "researchers at", "from", "affiliated with", "Department of X at Y University"
+- Use the author's ACTUAL INSTITUTIONAL AFFILIATION (their university/company/clinic/agency), NOT the journal name
+- Journal names (e.g., Nature, Science, JAMA, Chemical Engineering Journal) are PUBLISHERS, not affiliations
 
-Note: story_people captures ALL people for LinkedIn @mentions.
+Note: direct_people captures people explicitly mentioned for LinkedIn @mentions. Indirect leadership comes from indirect_people enrichment.
 The summary should still name at least 1-2 key individuals for readability.
 
 CRITICAL - NO PLACEHOLDERS:
 - Extract REAL names from the article - never use "TBA", "Unknown", "N/A", or placeholder text
-- If a person's name is explicitly mentioned in the article, include them
-- If you cannot find real names, leave story_people as an empty array []
-- Academic stories usually mention researchers by name - look carefully
-- Include the researcher's full name, their institution, and their role
+- If you cannot find real names, leave direct_people as an empty array []
 
-STORY_PEOPLE FIELD REQUIREMENTS (for accurate LinkedIn matching):
-- name: FULL name (first AND last name required, e.g., "Jane Smith", "Michael Jewett") - NEVER use first name only like "Karim" or "Jane"
-- company: Organization name (university, company, institution)
-- position: Job title/role exactly as stated (e.g., "Assistant Professor", "VP of Engineering", "PhD Student")
-- department: Department or school name if mentioned (e.g., "Chemical Engineering", "Bioengineering Department")
-- location: City/country if mentioned (e.g., "Cambridge, MA, USA", "London, UK", "Singapore")
-- role_type: One of: "academic", "executive", "researcher", "engineer", "student", "spokesperson", "other"
-- research_area: For academics, their research field if mentioned (e.g., "catalysis", "hydrogen production", "polymer chemistry")
-- linkedin_profile: Leave empty "" - will be filled later
-
-Example: If article mentions "Siddharth Deshpande, assistant professor of biomedical engineering at the University of Rochester"
-  → Include: {{"name": "Siddharth Deshpande", "company": "University of Rochester", "position": "Assistant Professor", "department": "Biomedical Engineering", "location": "Rochester, NY, USA", "role_type": "academic", "research_area": "", "linkedin_profile": ""}}
+DIRECT_PEOPLE FIELD REQUIREMENTS (for accurate LinkedIn matching):
+- name: FULL name (first AND last name required)
+- company: Organization name (university, company, clinic, agency, institution)
+- position: Job title/role exactly as stated
+- department: Department/service/school if mentioned
+- location: City/country if mentioned
+- role_type: One of: "academic", "executive", "researcher", "practitioner", "engineer", "student", "spokesperson", "other"
+- research_area: Research/subject area if mentioned (leave "" if not stated)
+- linkedin_profile: Leave empty ""
 
 WRITING STYLE FOR SUMMARIES:
-- Write in first person (use "I", "what stands out to me", "from an engineering perspective", etc.)
-- Sound like an expert chemical/process engineer sharing professional insights
-- Be concise, technical, and reflective rather than promotional
-- Each summary MUST include at least one engineering or industrial perspective
-  (e.g. scalability, process efficiency, integration, cost, energy use, sustainability, environment, or limitations)
+- Write in first person ("I", "what stands out to me")
+- Sound like an expert {discipline} sharing professional insight
+- Be concise, analytical, and reflective rather than promotional
+- Include at least one field-relevant perspective (e.g., clinical impact, patient/animal welfare, operational feasibility, safety, policy/regulatory nuance, cost, adoption/scale, evidence strength, limitations)
+- When mentioning "applications" or "potential uses", ALWAYS provide at least one SPECIFIC example (e.g., "applications in energy storage, such as next-generation batteries" NOT just "applications in energy storage")
 - Avoid sounding like a news aggregator or influencer
 
-BAD SUMMARY EXAMPLE (too promotional):
-"BASF just launched an AMAZING new catalyst that's going to REVOLUTIONIZE the industry! This is HUGE news!"
+HOOK AND CTA STRUCTURE (CRITICAL FOR LINKEDIN ENGAGEMENT):
+- START with an attention-grabbing HOOK in the first 1-2 sentences:
+  * Ask a provocative question
+  * Share a surprising statistic or finding
+  * Make a bold or counterintuitive statement
+  * Create curiosity that makes readers want to continue
+- END with a call-to-action (CTA) question to invite engagement:
+  * "What's your take on this approach?"
+  * "Have you seen similar results in your practice?"
+  * "Would this work in your organization?"
+  * "What implications do you see for [field]?"
 
-GOOD SUMMARY EXAMPLE (thoughtful, technical):
-"What stands out to me about BASF's new zeolite catalyst is the engineering challenge behind this — particularly how it could scale beyond lab conditions and integrate with existing process infrastructure. The selectivity improvements they're reporting are impressive, but I'll be watching to see how this performs at industrial scale."
+HOOK EXAMPLES:
+- "What if the solution to antibiotic resistance has been hiding in plain sight?"
+- "I never expected a 40% reduction in processing time from such a simple change."
+- "The data on this one stopped me in my tracks."
+- "This challenges everything I thought I knew about [topic]."
+
+BAD SUMMARY EXAMPLE (too promotional, no hook, no CTA):
+"This breakthrough will change everything overnight! Truly revolutionary!"
+
+GOOD SUMMARY EXAMPLE (hook + insight + CTA):
+"What if the solution to crop yield optimization was hiding in our gut microbiome? Researchers at MIT just demonstrated a 30% improvement using this unexpected approach. What stands out to me is how quickly this could translate into practice — the workflow and safety profile look feasible. Have you seen similar cross-disciplinary approaches work in your field?"
 
 HASHTAG GUIDELINES:
 - Use 1-3 relevant, professional hashtags per story
-- CamelCase for multi-word hashtags (e.g., ChemicalEngineering, ProcessOptimization)
-- Focus on industry, technology, or topic-specific tags
-- Common tags: ChemicalEngineering, ProcessSafety, Sustainability, Innovation, Engineering, ClimateChange, Hydrogen
-- Also use the story category as a Tag
+- CamelCase for multi-word hashtags (e.g., VeterinaryMedicine, AnimalHealth, ProcessSafety, ClimatePolicy)
+- Focus on discipline- or topic-specific tags; also include the story category as a tag
 
-CRITICAL: Stories originated from a URL. Only include URLs you found in the search results and used to create the story. Do NOT invent or guess URLs. Every story must have at least 1 URL used to create the story associated with it.
+CRITICAL - SOURCE URLs:
+- Stories originated from a URL. Only include URLs you found in the search results and used to create the story.
+- Do NOT invent or guess URLs. Every story must have at least 1 URL used to create the story associated with it.
+- URLs must be SPECIFIC ARTICLE pages, NOT generic category/index pages like "/news/" or "/articles/"
+- BAD URL examples: "https://example.com/news/", "https://example.com/veterinary/", "https://example.com/"
+- GOOD URL examples: "https://example.com/news/2026/01/laying-hen-welfare-plans", "https://example.com/articles/12345-study-reveals"
 
 RESPOND WITH ONLY THIS JSON FORMAT:
 {{
-  "stories": [
-    {{
-      "title": "Story Title",
-      "sources": ["https://real-url-from-search.com/article"],
-      "summary": "I found this work at MIT fascinating... [first-person summary]",
-      "category": "Technology",
-      "quality_score": 8,
-      "quality_justification": "Highly relevant topic, reputable source, timely",
-      "hashtags": ["ChemicalEngineering", "Innovation"],
-      "organizations": ["MIT", "BASF"],
-      "story_people": [
-        {{"name": "Dr. Jane Smith", "company": "MIT", "position": "Lead Researcher", "department": "Chemical Engineering", "location": "Cambridge, MA, USA", "role_type": "academic", "research_area": "catalysis", "linkedin_profile": ""}},
-        {{"name": "John Doe", "company": "BASF", "position": "CEO", "department": "", "location": "Ludwigshafen, Germany", "role_type": "executive", "research_area": "", "linkedin_profile": ""}}
-      ]
-    }}
-  ]
+    "stories": [
+        {{
+            "title": "Story Title",
+            "sources": ["https://real-url-from-search.com/article"],
+            "summary": "I found this work compelling because... [first-person summary]",
+            "category": "Research",
+            "quality_score": 8,
+            "quality_justification": "Highly relevant topic, reputable source, timely",
+            "hashtags": ["VeterinaryMedicine", "AnimalHealth"],
+            "organizations": ["University of Glasgow", "RSPCA"],
+            "direct_people": [
+                {{"name": "Dr. Jane Smith", "company": "University of Glasgow", "position": "Lead Researcher", "department": "Veterinary Medicine", "location": "Glasgow, UK", "role_type": "academic", "research_area": "zoonotic disease", "linkedin_profile": ""}},
+                {{"name": "John Doe", "company": "RSPCA", "position": "Clinical Director", "department": "", "location": "London, UK", "role_type": "practitioner", "research_area": "", "linkedin_profile": ""}}
+            ]
+        }}
+    ]
 }}
 
 ORGANIZATIONS - ALWAYS EXTRACT:
-- ALWAYS include an "organizations" array listing ALL companies, universities, agencies, and institutions mentioned in the story
-- PRIORITIZE the institutions where authors/researchers WORK (their affiliations)
-- For research papers: extract the universities/institutes where the authors are affiliated, NOT the journal name
-- Example: Paper published in "Nature Chemistry" by researchers at "Stanford University" and "MIT"
-  → organizations: ["Stanford University", "MIT"] (NOT "Nature Chemistry")
+- ALWAYS include an "organizations" array listing ALL companies, universities, clinics, agencies, and institutions mentioned in the story
+- PRIORITIZE the institutions where the named people WORK (their affiliations)
 - Journal names are PUBLISHERS, not organizations to include
-- This is MANDATORY even when no specific people are named
-- Examples: ["Singapore PUB", "NEWater", "MIT", "BASF", "U.S. Department of Energy"]
 - Organizations enable later lookup of leadership profiles on LinkedIn
 
-IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real URLs. Write ALL summaries in first person. ALWAYS populate story_people with people from the story AND key leaders from mentioned organizations. ALWAYS populate organizations with ALL institutions mentioned.""",
+IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real URLs. Write ALL summaries in first person. ALWAYS populate direct_people with people from the story AND key leaders from mentioned organizations. ALWAYS populate organizations with ALL institutions mentioned.""",
     )
 
     # Verification prompt - used to verify story suitability for publication
     # Placeholders: {search_prompt}, {story_title}, {story_summary}, {story_sources}, {people_count}, {linkedin_profiles_found}, {summary_word_limit}, {promotion_message}
     VERIFICATION_PROMPT: str = _get_str(
         "VERIFICATION_PROMPT",
-        """You are a strict editorial review board for a professional engineering-focused LinkedIn publication.
+        """You are a strict editorial review board for a professional, discipline-focused LinkedIn publication.
 
 ORIGINAL SELECTION CRITERIA:
 "{search_prompt}"
@@ -795,10 +804,10 @@ LinkedIn profiles found: {linkedin_profiles_found}
 
 EVALUATION CRITERIA:
 1. RELEVANCE: Does this story clearly and genuinely match the original selection criteria?
-2. PROFESSIONALISM: Is the tone suitable for a professional engineering audience on LinkedIn?
+2. PROFESSIONALISM: Is the tone suitable for a professional audience on LinkedIn?
 3. DECENCY: Is the content appropriate for all professional audiences?
-4. CREDIBILITY: Does the summary appear factual, technically plausible, and supported by reputable sources? (Major publications, academic institutions, established industry sources)
-5. ENGINEERING VALUE: Does the post demonstrate technical insight, judgement, critical thinking or industrial relevance (e.g. scalability, process implications, limitations)?
+4. CREDIBILITY: Does the summary appear factual, plausible, and supported by reputable sources? (Major publications, academic institutions, established industry sources)
+5. FIELD VALUE: Does the post demonstrate discipline-specific insight, judgement, or practical relevance (e.g., clinical or operational implications, safety, policy/regulatory nuance, feasibility, limitations)?
 6. DISTINCTIVENESS: Would this post make the author appear thoughtful rather than automated or generic?
 7. LENGTH: Is the summary appropriately concise (under {summary_word_limit} words)?
 8. HASHTAGS: Are hashtags professional and relevant (no promotional or generic tags like #news)?
@@ -827,18 +836,18 @@ BAD PROMOTION EXAMPLES (should REJECT):
 - "Passionate about sustainability." (vague, no call to action)
 
 GOOD PROMOTION EXAMPLES (should APPROVE):
-- "MEng Chemical Engineer exploring opportunities in carbon capture. I'd welcome a conversation with teams working in this space."
-- "Hydrogen engineering enthusiast actively seeking roles in clean energy. Open to connecting with hiring managers in electrolysis or fuel cell development."
-- "Process engineer looking to contribute to innovative sustainable projects. If your team is building in this area, I'd love to hear from you."
-- "Fascinated by this approach to catalyst design. Currently seeking process engineering roles — feel free to reach out or connect."
+- "DVM exploring opportunities in advanced animal health. I'd welcome a conversation with teams working in this space."
+- "Clinical researcher actively seeking roles in translational medicine. Open to connecting with hiring managers in trial operations or data science."
+- "Data professional looking to contribute to impactful analytics projects. If your team is building in this area, I'd love to hear from you."
+- "Fascinated by this approach. Currently seeking roles in this field — feel free to reach out or connect."
 
 IMAGE EVALUATION (if an image is provided):
-13. IMAGE PROFESSIONALISM: Is the image appropriate for a professional engineering context?
-14. IMAGE RELEVANCE: Does the image relate to the technical subject of the story?
-15. IMAGE CREDIBILITY: Does the image depict realistic industrial or laboratory settings with appropriate equipment?
+13. IMAGE PROFESSIONALISM: Is the image appropriate for a professional context?
+14. IMAGE RELEVANCE: Does the image relate to the subject of the story?
+15. IMAGE CREDIBILITY: Does the image depict realistic settings, tools, or subjects appropriate to the story?
 
 IMPORTANT NOTES ON IMAGES - BE LENIENT:
-- Images are AI-generated and intentionally feature attractive professional engineers
+- Images are AI-generated and intentionally feature attractive professionals
 - An attractive or beautiful person in the image is EXPECTED and ACCEPTABLE - do NOT reject for this reason
 - Professional appearance (well-groomed, confident, attractive) is a positive quality in business imagery
 - DO NOT reject for minor clothing details like necklines, fitted clothing, or fashionable professional attire
@@ -856,12 +865,12 @@ IMPORTANT NOTES:
 BAD CONTENT EXAMPLE (should REJECT):
 Title: "AMAZING Breakthrough Will Change Everything!"
 Summary: "This incredible new technology is absolutely revolutionary and will transform the entire industry overnight! Everyone needs to know about this game-changing innovation!"
-Reason: Promotional tone, lacks technical substance, clickbait headline, no engineering perspective
+Reason: Promotional tone, lacks substance, clickbait headline, no professional perspective
 
 GOOD CONTENT EXAMPLE (should APPROVE):
-Title: "MIT Researchers Demonstrate Improved Selectivity in CO2 Electroreduction"
-Summary: "What interests me about Dr. Chen's work at MIT is the practical engineering angle — achieving 85% Faradaic efficiency at industrially relevant current densities addresses a key scale-up barrier. The question is whether this catalyst stability holds over extended operation."
-Reason: Technical headline, first-person perspective, engineering analysis, specific details, critical thinking
+Title: "Clinical team reports improved outcomes with new protocol"
+Summary: "What interests me is how this protocol could improve routine practice — the early safety signals and workflow fit look promising, but I'd like to see longer-term follow-up before broad adoption."
+Reason: Professional tone, first-person perspective, discipline-relevant analysis, specific details, critical thinking
 
 DECISION RULES:
 - APPROVE only if ALL primary criteria (1-9) AND promotion criteria (10-13) are satisfied
@@ -906,22 +915,29 @@ Return ONLY the 3-5 keywords, space-separated, no explanation.""",
     # Placeholders: {author_name}, {search_prompt}, {search_results}, {max_stories}, {summary_words}
     LOCAL_LLM_SEARCH_PROMPT: str = _get_str(
         "LOCAL_LLM_SEARCH_PROMPT",
-        """You are writing AS {author_name}, a chemical engineering professional sharing industry insights on LinkedIn. I have found the following search results for the query: "{search_prompt}"
+        """You are writing AS {author_name}, a {discipline} professional sharing industry insights on LinkedIn. I have found the following search results for the query: "{search_prompt}"
 
 SEARCH RESULTS:
 {search_results}
 
 TASK:
-1. Select up to {max_stories} of the most relevant and interesting stories.
+1. Select EXACTLY {max_stories} of the most relevant and interesting stories - no more, no fewer.
 2. For each story, provide:
-   - title: An informative, technical headline (avoid clickbait or sensationalism)
+   - title: An informative, technical headline (avoid clickbait or sensationalism). Use FULL institution names, NOT abbreviations:
+     - "University of California, Riverside" NOT "UC Riverside" or "UCR"
+     - "University of California, Los Angeles" NOT "UCLA"
+     - "University of Southern California" NOT "USC"
+     - "University of Chicago" NOT "UChicago"
+     - "Massachusetts Institute of Technology" NOT "MIT"
+     - "California Institute of Technology" NOT "Caltech"
+     - Apply this rule to ALL universities and institutions
    - summary: A {summary_words}-word summary written in FIRST PERSON as {author_name}
    - sources: A list containing the original link
    - category: One of: Medicine, Hydrogen, Research, Technology, Business, Science, AI, Other
    - quality_score: 1-10 rating (see scoring rubric below)
    - quality_justification: Brief explanation of the score
-   - hashtags: Array of 1-3 relevant hashtags (without # symbol)
-   - story_people: Array of people objects (see format below) - people mentioned AND key org leaders
+    - hashtags: Array of 1-3 relevant hashtags (without # symbol)
+    - direct_people: Array of MAX 3 people objects - only the most relevant people mentioned in the story
 
 QUALITY SCORE RUBRIC:
 - 10: Breakthrough with major industry implications, from top-tier source
@@ -938,8 +954,8 @@ CRITICAL - INCLUDE NAMES IN SUMMARY:
 - If company development, name the company AND any executives mentioned
 - Read the source article carefully to extract actual names
 
-STORY PEOPLE - MANDATORY EXTRACTION:
-For EVERY story, identify and include in story_people:
+DIRECT PEOPLE - MANDATORY EXTRACTION:
+For EVERY story, identify and include in direct_people (people explicitly mentioned in the story):
 1. The FIRST AUTHOR of any research paper (usually listed first in author order)
 2. The CORRESPONDING/SENIOR AUTHOR who supervised the research
 3. Other co-authors if prominently mentioned
@@ -956,12 +972,12 @@ CRITICAL - AUTHOR AFFILIATIONS:
 CRITICAL - NO PLACEHOLDERS:
 - Extract REAL names from the article - never use "TBA", "Unknown", "N/A", or placeholder text
 - If a person's name is explicitly mentioned in the article, include them
-- If you cannot find real names, leave story_people as an empty array []
+- If you cannot find real names, leave direct_people as an empty array []
 - Academic stories usually mention researchers by name - look carefully
 
 WRITING STYLE FOR SUMMARIES:
 - Write in first person (use "I", "what stands out to me", "from an engineering perspective", etc.)
-- Sound like an expert chemical/process engineer sharing professional insights
+- Sound like an expert {discipline} professional sharing insights
 - Be concise, technical, and reflective rather than promotional
 - Each summary MUST include at least one engineering or industrial perspective
   (e.g. scalability, process efficiency, integration, cost, energy use, sustainability, environment, or limitations)
@@ -972,6 +988,11 @@ BAD SUMMARY EXAMPLE (too promotional):
 
 GOOD SUMMARY EXAMPLE (thoughtful, technical):
 "What interests me about Dow's new polyethylene process is the claimed 30% energy reduction — if that holds at commercial scale, it could reshape economics for downstream converters. The question I'd want answered is catalyst longevity under continuous operation."
+
+APPLICATIONS - BE SPECIFIC:
+- When mentioning "applications" or "potential uses", ALWAYS provide at least one SPECIFIC example
+- BAD: "applications in energy storage and more"
+- GOOD: "applications in energy storage, such as next-generation lithium-ion batteries and supercapacitors"
 
 HASHTAG GUIDELINES:
 - Use 1-3 relevant, professional hashtags per story
@@ -992,7 +1013,7 @@ Example:
       "quality_score": 8,
       "quality_justification": "Highly relevant, reputable source",
       "hashtags": ["ChemicalEngineering", "Innovation"],
-      "story_people": [
+      "direct_people": [
         {{"name": "Dr. John Doe", "company": "Dow Chemical", "position": "Lead Researcher", "linkedin_profile": ""}},
         {{"name": "Jane Smith", "company": "Dow Chemical", "position": "CEO", "linkedin_profile": ""}}
       ]
@@ -1000,7 +1021,15 @@ Example:
   ]
 }}
 
-Return ONLY the JSON object. Write ALL summaries in first person. ALWAYS populate story_people.""",
+Return ONLY the JSON object. Write ALL summaries in first person. ALWAYS populate direct_people.
+
+CRITICAL - SOURCE URLs:
+- Sources must be the ACTUAL article URLs from the search results that you used to create each story
+- Do NOT invent or guess URLs
+- URLs must be SPECIFIC ARTICLE pages, NOT generic category/index pages like "/news/" or "/articles/"
+- BAD URL examples: "https://example.com/news/", "https://example.com/veterinary/", "https://example.com/"
+- GOOD URL examples: "https://example.com/news/2026/01/laying-hen-welfare-plans", "https://example.com/articles/12345-study-reveals"
+- Every story must have at least 1 specific article URL""",
     )
 
     # LinkedIn mention search prompt - finds LinkedIn profiles for story entities
@@ -1080,26 +1109,35 @@ RULES:
 1. Only include organizations and people EXPLICITLY NAMED in the story
 2. Do NOT guess or infer names
 3. Include affiliation/title where stated
-4. List ALL organizations mentioned, not just the primary one
+4. Extract SPECIALTY/RESEARCH AREA when mentioned or clearly implied by the story context
+5. List ALL organizations mentioned, not just the primary one
+
+SPECIALTY EXTRACTION GUIDANCE:
+- Look for research areas mentioned (e.g., "carbon capture", "catalysis", "polymer science")
+- Infer from department names (e.g., "Department of Electrochemistry" → "electrochemistry")
+- Infer from project focus (e.g., working on "hydrogen electrolyzers" → "hydrogen/electrolysis")
+- Use the story topic if person's specific role relates to it
+- Common specialties: catalysis, process engineering, sustainability, materials science,
+  electrochemistry, polymer chemistry, thermodynamics, separation processes, etc.
 
 BAD EXTRACTION EXAMPLE:
 Story mentions "a major oil company" → Do NOT add "ExxonMobil" or guess which company
 
 GOOD EXTRACTION EXAMPLE:
-Story mentions "researchers at MIT's Department of Chemical Engineering led by Prof. Chen" →
+Story mentions "researchers at MIT's Department of Chemical Engineering led by Prof. Chen, working on carbon capture technologies" →
 Add organization: "MIT", "MIT Department of Chemical Engineering"
-Add person: {{"name": "Prof. Chen", "title": "Professor", "affiliation": "MIT"}}
+Add person: {{"name": "Prof. Chen", "title": "Professor", "affiliation": "MIT", "specialty": "carbon capture"}}
 
 Return a JSON object:
 {{
   "organizations": ["Organization Name 1", "Organization Name 2"],
-  "story_people": [
-    {{"name": "Dr. Jane Smith", "title": "Lead Researcher", "affiliation": "MIT"}},
-    {{"name": "John Doe", "title": "CEO", "affiliation": "BASF"}}
+  "direct_people": [
+    {{"name": "Dr. Jane Smith", "title": "Lead Researcher", "affiliation": "MIT", "specialty": "catalysis"}},
+    {{"name": "John Doe", "title": "CEO", "affiliation": "BASF", "specialty": ""}}
   ]
 }}
 
-If nothing found, return: {{"organizations": [], "story_people": []}}
+If nothing found, return: {{"organizations": [], "direct_people": []}}
 
 Return ONLY valid JSON, no explanation.""",
     )
@@ -1153,10 +1191,10 @@ If no profiles found in search results, return: []
 Return ONLY the JSON array, no explanation.""",
     )
 
-    # Organization leaders prompt - finds key executives for organizations
+    # Indirect people prompt - finds key executives for organizations
     # Placeholders: {organization_name}
-    ORG_LEADERS_PROMPT: str = _get_str(
-        "ORG_LEADERS_PROMPT",
+    INDIRECT_PEOPLE_PROMPT: str = _get_str(
+        "INDIRECT_PEOPLE_PROMPT",
         """Search for CURRENT key contacts at "{organization_name}" relevant to this story context.
 
 STORY CONTEXT (use to prioritize leader types):
@@ -1223,6 +1261,14 @@ SEARCH AND VERIFICATION RULES:
 6. When in doubt, OMIT — a missing leader is better than a wrong one
 7. Maximum 4 leaders per organization
 8. Include role_type for each leader: "executive", "academic", "hr_recruiter", "pr_comms", "researcher"
+9. Extract SPECIALTY if evident from their role or the story context
+
+SPECIALTY EXTRACTION:
+- Infer from their department (e.g., "Head of Catalysis" → specialty: "catalysis")
+- Infer from story topic if their role is directly related
+- Common specialties: process engineering, sustainability, R&D, catalysis, polymers,
+  separations, energy, materials, biotechnology, digitalization, etc.
+- For HR/PR roles, specialty is usually not applicable - leave blank
 
 Return a JSON object with enhanced fields:
 {{
@@ -1233,7 +1279,8 @@ Return a JSON object with enhanced fields:
       "organization": "{organization_name}",
       "role_type": "executive|academic|hr_recruiter|pr_comms|researcher",
       "department": "Department name if applicable",
-      "location": "City, Country if found"
+      "location": "City, Country if found",
+      "specialty": "Area of expertise if known"
     }}
   ]
 }}
@@ -1335,7 +1382,10 @@ Return ONLY valid JSON, no explanation.""",
     # --- Search Settings ---
     SEARCH_PROMPT: str = _get_str(
         "SEARCH_PROMPT",
-        "Find news stories about technology breakthroughs and innovations",
+        (
+            f"I'm a professional {DISCIPLINE}. I'm looking for the latest professional {DISCIPLINE} "
+            "stories I can summarise for publication on my LinkedIn profile"
+        ),
     )
     # Optional template for the full search instruction prompt.
     # Supports placeholders: {criteria}, {since_date}, {summary_words}
@@ -1344,6 +1394,8 @@ Return ONLY valid JSON, no explanation.""",
     USE_LAST_CHECKED_DATE: bool = _get_bool("USE_LAST_CHECKED_DATE", True)
     # Maximum number of stories to find per search (default 5)
     MAX_STORIES_PER_SEARCH: int = _get_int("MAX_STORIES_PER_SEARCH", 5)
+    # Maximum number of people to search for LinkedIn profiles per story (reduces API calls)
+    MAX_PEOPLE_PER_STORY: int = _get_int("MAX_PEOPLE_PER_STORY", 3)
     # Similarity threshold for semantic deduplication (0.0-1.0, higher = stricter)
     DEDUP_SIMILARITY_THRESHOLD: float = float(
         _get_str("DEDUP_SIMILARITY_THRESHOLD", "0.7")
@@ -1456,8 +1508,8 @@ Return ONLY valid JSON, no explanation.""",
     # Days after which stories are too old for image regeneration
     IMAGE_REGEN_CUTOFF_DAYS: int = _get_int("IMAGE_REGEN_CUTOFF_DAYS", 14)
 
-    # --- Signature Block ---
-    SIGNATURE_BLOCK: str = _get_str("SIGNATURE_BLOCK", "\n\n#News #Update")
+    # --- Signature Details ---
+    SIGNATURE_BLOCK_DETAIL: str = _get_str("SIGNATURE_BLOCK_DETAIL", "")
 
     # --- Paths ---
     DB_NAME: str = _get_str("DB_NAME", "content_engine.db")

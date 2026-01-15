@@ -3,8 +3,10 @@
 import logging
 import re
 import requests
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from urllib.parse import quote
 
 from config import Config
@@ -16,6 +18,42 @@ logger = logging.getLogger(__name__)
 
 # Pre-compiled regex for URN validation (must end with numeric ID)
 _URN_PATTERN = re.compile(r"^urn:li:(person|organization):\d+$")
+# Pattern for extracting public ID from LinkedIn URL
+_LINKEDIN_PUBLIC_ID_PATTERN = re.compile(r"linkedin\.com/in/([^/?]+)")
+
+
+@dataclass
+class PublishValidationResult:
+    """Result of pre-publish validation checks."""
+
+    is_valid: bool = True
+    author_verified: bool = False
+    author_name: Optional[str] = None
+    author_urn_from_api: Optional[str] = None
+    mention_validations: list[dict] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    def add_error(self, error: str) -> None:
+        """Add an error and mark validation as failed."""
+        self.errors.append(error)
+        self.is_valid = False
+
+    def add_warning(self, warning: str) -> None:
+        """Add a warning (doesn't fail validation)."""
+        self.warnings.append(warning)
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "is_valid": self.is_valid,
+            "author_verified": self.author_verified,
+            "author_name": self.author_name,
+            "author_urn_from_api": self.author_urn_from_api,
+            "mention_validations": self.mention_validations,
+            "errors": self.errors,
+            "warnings": self.warnings,
+        }
 
 
 class LinkedInPublisher:
@@ -240,18 +278,22 @@ class LinkedInPublisher:
             text_parts.append(hashtag_str)
             text_parts.append("")
 
-        # Add LinkedIn mentions from story_people (directly mentioned in story)
-        story_people_mentions = self._get_mentions_from_people_list(story.story_people)
-        if story_people_mentions:
-            mentions_text = self._format_mentions(story_people_mentions)
+        # Add LinkedIn mentions from direct_people (directly mentioned in story)
+        direct_people_mentions = self._get_mentions_from_people_list(
+            story.direct_people
+        )
+        if direct_people_mentions:
+            mentions_text = self._format_mentions(direct_people_mentions)
             if mentions_text:
                 text_parts.append(mentions_text)
                 text_parts.append("")
 
-        # Add LinkedIn mentions from org_leaders (institution leaders) with paragraph separation
-        org_leader_mentions = self._get_mentions_from_people_list(story.org_leaders)
-        if org_leader_mentions:
-            mentions_text = self._format_mentions(org_leader_mentions)
+        # Add LinkedIn mentions from indirect_people (institution leaders) with paragraph separation
+        indirect_people_mentions = self._get_mentions_from_people_list(
+            story.indirect_people
+        )
+        if indirect_people_mentions:
+            mentions_text = self._format_mentions(indirect_people_mentions)
             if mentions_text:
                 text_parts.append(mentions_text)
                 text_parts.append("")
@@ -313,10 +355,14 @@ class LinkedInPublisher:
 
         # Check for mentions
         mention_count = 0
-        if story.story_people:
-            mention_count += sum(1 for p in story.story_people if p.get("linkedin_urn"))
-        if story.org_leaders:
-            mention_count += sum(1 for p in story.org_leaders if p.get("linkedin_urn"))
+        if story.direct_people:
+            mention_count += sum(
+                1 for p in story.direct_people if p.get("linkedin_urn")
+            )
+        if story.indirect_people:
+            mention_count += sum(
+                1 for p in story.indirect_people if p.get("linkedin_urn")
+            )
 
         # Word count
         word_count = len(text.split())
@@ -336,7 +382,7 @@ class LinkedInPublisher:
         """
         Generate mentions list from a list of people dicts.
 
-        Works with both story_people and org_leaders formats.
+        Works with both direct_people and indirect_people formats.
         """
         mentions = []
         if people_list:
@@ -521,124 +567,6 @@ class LinkedInPublisher:
             logger.error(f"LinkedIn connection test failed: {e}")
             return False
 
-    def send_connection_request(
-        self, person_urn: str, message: str | None = None
-    ) -> tuple[bool, str]:
-        """
-        Send a LinkedIn connection request (invitation) to a person.
-
-        Uses the LinkedIn Invitations API: POST /v2/invitations
-
-        Args:
-            person_urn: The URN of the person to connect with (e.g., 'urn:li:person:ABC123')
-            message: Optional custom message for the invitation (max 300 chars).
-                    If None, LinkedIn's default message is used.
-
-        Returns:
-            Tuple of (success: bool, message: str describing result)
-        """
-        if not Config.LINKEDIN_ACCESS_TOKEN:
-            return (False, "LinkedIn access token not configured")
-
-        if not person_urn or not person_urn.startswith("urn:li:person:"):
-            return (False, f"Invalid person URN: {person_urn}")
-
-        # Build invitation payload
-        payload: dict = {"invitee": person_urn}
-
-        # Add custom message if provided
-        if message:
-            # LinkedIn limits invitation messages to 300 characters
-            truncated_message = message[:300] if len(message) > 300 else message
-            payload["message"] = {
-                "com.linkedin.invitations.InvitationMessage": {
-                    "body": truncated_message
-                }
-            }
-
-        try:
-            response = api_client.linkedin_request(
-                method="POST",
-                url=f"{self.BASE_URL}/invitations",
-                headers=self._get_headers(),
-                json=payload,
-                timeout=30,
-                endpoint="invitation",
-            )
-
-            if response.status_code in (200, 201):
-                invitation_id = response.headers.get("x-linkedin-id", "")
-                logger.info(f"Connection request sent to {person_urn}: {invitation_id}")
-                return (True, f"Invitation sent: {invitation_id}")
-            elif response.status_code == 422:
-                # Usually means already connected or pending invitation
-                return (False, "Already connected or invitation pending")
-            else:
-                error_msg = f"Failed ({response.status_code}): {response.text[:200]}"
-                logger.warning(
-                    f"Connection request failed for {person_urn}: {error_msg}"
-                )
-                return (False, error_msg)
-
-        except requests.exceptions.Timeout:
-            return (False, "Request timed out")
-        except Exception as e:
-            logger.error(f"Connection request exception for {person_urn}: {e}")
-            return (False, f"Exception: {str(e)}")
-
-    def send_bulk_connection_requests(
-        self, people: list[dict], delay_seconds: float = 2.0
-    ) -> tuple[int, int, list[str]]:
-        """
-        Send connection requests to multiple people with rate limiting.
-
-        Args:
-            people: List of dicts with 'name', 'linkedin_urn', and optionally 'company'
-            delay_seconds: Delay between requests to avoid rate limiting
-
-        Returns:
-            Tuple of (success_count, failure_count, list of error messages)
-        """
-        import time
-
-        success_count = 0
-        failure_count = 0
-        errors: list[str] = []
-
-        for i, person in enumerate(people):
-            name = person.get("name", "Unknown")
-            urn = person.get("linkedin_urn", "")
-            company = person.get("company", "")
-
-            if not urn or not urn.startswith("urn:li:person:"):
-                errors.append(f"{name}: Invalid or missing URN")
-                failure_count += 1
-                continue
-
-            # Personalized message mentioning the company context
-            message = None
-            if company:
-                message = (
-                    f"Hi! I noticed your work at {company} and would love to connect. "
-                    f"I'm a chemical engineer interested in process engineering opportunities."
-                )
-
-            success, result_msg = self.send_connection_request(urn, message)
-
-            if success:
-                success_count += 1
-                logger.info(f"[{i + 1}/{len(people)}] Connected: {name}")
-            else:
-                failure_count += 1
-                errors.append(f"{name}: {result_msg}")
-                logger.warning(f"[{i + 1}/{len(people)}] Failed: {name} - {result_msg}")
-
-            # Rate limiting delay between requests
-            if i < len(people) - 1:
-                time.sleep(delay_seconds)
-
-        return (success_count, failure_count, errors)
-
     def get_profile_info(self) -> dict | None:
         """Get the authenticated user's profile info."""
         if not Config.LINKEDIN_ACCESS_TOKEN:
@@ -657,6 +585,176 @@ class LinkedInPublisher:
             return None
         except Exception:
             return None
+
+    def validate_before_publish(self, story: Story) -> PublishValidationResult:
+        """
+        Perform comprehensive validation before publishing to LinkedIn.
+
+        Checks:
+        1. Author verification - ensures access token matches configured author URN
+        2. Mention URN format - validates all @mention URNs have proper format
+        3. Mention person validation - cross-checks URNs against expected person data
+
+        Args:
+            story: The story to validate before publishing
+
+        Returns:
+            PublishValidationResult with validation status and any errors/warnings
+        """
+        result = PublishValidationResult()
+
+        # Check 1: Verify credentials are configured
+        if not Config.LINKEDIN_ACCESS_TOKEN:
+            result.add_error("LINKEDIN_ACCESS_TOKEN is not configured")
+            return result
+
+        if not Config.LINKEDIN_AUTHOR_URN:
+            result.add_error("LINKEDIN_AUTHOR_URN is not configured")
+            return result
+
+        # Check 2: Verify the access token belongs to the configured author
+        try:
+            profile = self.get_profile_info()
+            if profile:
+                # The userinfo endpoint returns 'sub' which is the person URN
+                api_sub = profile.get("sub", "")
+                api_name = profile.get("name", "")
+
+                result.author_name = api_name
+                result.author_urn_from_api = api_sub
+
+                # Verify the configured URN matches the authenticated user
+                # LinkedIn person URNs can be in different formats:
+                # - urn:li:person:12345 (from sub)
+                # - person:12345 (short format)
+                configured_urn = Config.LINKEDIN_AUTHOR_URN
+
+                # Normalize both for comparison
+                configured_id = self._extract_urn_id(configured_urn)
+                api_id = self._extract_urn_id(api_sub)
+
+                if configured_id and api_id:
+                    if configured_id != api_id:
+                        result.add_error(
+                            f"Author URN mismatch! Configured: {configured_urn}, "
+                            f"Authenticated user: {api_sub} ({api_name})"
+                        )
+                    else:
+                        result.author_verified = True
+                        logger.info(f"Author verified: {api_name} ({api_sub})")
+                else:
+                    result.add_warning(
+                        f"Could not verify author URN. Configured: {configured_urn}, "
+                        f"API returned: {api_sub}"
+                    )
+            else:
+                result.add_error(
+                    "Failed to fetch authenticated user profile. "
+                    "Access token may be invalid or expired."
+                )
+        except Exception as e:
+            result.add_error(f"Author verification failed: {e}")
+
+        # Check 3: Validate all @mention URNs
+        all_people = []
+        if story.direct_people:
+            all_people.extend(story.direct_people)
+        if story.indirect_people:
+            all_people.extend(story.indirect_people)
+
+        for person in all_people:
+            name = person.get("name", "Unknown")
+            urn = person.get("linkedin_urn", "")
+            linkedin_url = person.get("linkedin_profile", "")
+            confidence = person.get("match_confidence", "")
+
+            mention_validation = {
+                "name": name,
+                "urn": urn,
+                "linkedin_url": linkedin_url,
+                "confidence": confidence,
+                "urn_valid": False,
+                "urn_format_ok": False,
+                "cross_check_ok": False,
+                "issues": [],
+            }
+
+            if urn:
+                # Check URN format
+                if self._is_valid_urn(urn):
+                    mention_validation["urn_format_ok"] = True
+                    mention_validation["urn_valid"] = True
+                else:
+                    mention_validation["issues"].append(
+                        f"Invalid URN format: {urn} (must be urn:li:person:NUMERIC_ID)"
+                    )
+                    result.add_warning(
+                        f"@mention for '{name}' has invalid URN format: {urn}"
+                    )
+
+                # Cross-check: If we have both URL and URN, verify they're consistent
+                if linkedin_url and "/in/" in linkedin_url:
+                    public_id = self._extract_public_id(linkedin_url)
+                    if public_id:
+                        # Attempt to verify the URN matches the profile
+                        # This is a soft check - we can't always verify without API calls
+                        mention_validation["linkedin_public_id"] = public_id
+
+                        # If confidence is low or org_fallback, warn about potential mismatch
+                        if confidence in ("low", "org_fallback", ""):
+                            mention_validation["issues"].append(
+                                f"Low confidence match - verify {name} is correct"
+                            )
+                            result.add_warning(
+                                f"@mention for '{name}' has low confidence ({confidence})"
+                            )
+                        else:
+                            mention_validation["cross_check_ok"] = True
+
+            elif linkedin_url:
+                # Has URL but no URN
+                if "/in/" in linkedin_url:
+                    mention_validation["issues"].append(
+                        "Has LinkedIn profile URL but no URN for @mention"
+                    )
+                    result.add_warning(
+                        f"'{name}' has profile URL but no URN - cannot @mention"
+                    )
+
+            result.mention_validations.append(mention_validation)
+
+        # Summary logging
+        valid_mentions = sum(
+            1 for m in result.mention_validations if m.get("urn_valid")
+        )
+        total_people = len(result.mention_validations)
+
+        if total_people > 0:
+            logger.info(
+                f"Mention validation: {valid_mentions}/{total_people} "
+                f"people have valid URNs for @mentions"
+            )
+
+        return result
+
+    def _extract_urn_id(self, urn: str) -> Optional[str]:
+        """Extract the numeric ID from a LinkedIn URN."""
+        if not urn:
+            return None
+        # Match patterns like: urn:li:person:12345 or person:12345
+        match = re.search(r"(?:urn:li:)?(?:person|organization):(\d+)", urn)
+        if match:
+            return match.group(1)
+        return None
+
+    def _extract_public_id(self, linkedin_url: str) -> Optional[str]:
+        """Extract the public ID (username) from a LinkedIn profile URL."""
+        if not linkedin_url:
+            return None
+        match = _LINKEDIN_PUBLIC_ID_PATTERN.search(linkedin_url)
+        if match:
+            return match.group(1)
+        return None
 
     def verify_post_exists(self, post_id: str) -> tuple[bool, dict | None]:
         """
@@ -678,8 +776,9 @@ class LinkedInPublisher:
             # Use REST API endpoint with required headers
             rest_url = f"https://api.linkedin.com/rest/posts/{encoded_urn}"
 
-            # Get current month in YYYYMM format for Linkedin-Version header
-            version = datetime.now().strftime("%Y%m")
+            # LinkedIn REST API version header format is YYYYMM01
+            # Use a known valid version (LinkedIn's Marketing APIs)
+            version = "202501"
 
             headers = {
                 "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
@@ -717,12 +816,48 @@ class LinkedInPublisher:
             logger.error(f"Post verification exception: {e}")
             return (False, None)
 
-    def publish_immediately(self, story: Story) -> str | None:
+    def publish_immediately(
+        self, story: Story, skip_validation: bool = False
+    ) -> str | None:
         """
         Publish a story immediately, bypassing scheduling.
         Updates the story status to 'published' if successful.
         Returns the post ID if successful, None otherwise.
+
+        Args:
+            story: The story to publish
+            skip_validation: If True, skip pre-publish validation (not recommended)
+
+        Returns:
+            Post ID if successful, None otherwise
         """
+        # Run pre-publish validation unless explicitly skipped
+        if not skip_validation:
+            validation = self.validate_before_publish(story)
+            if not validation.is_valid:
+                logger.error(
+                    f"Pre-publish validation failed for story {story.id}: "
+                    f"{validation.errors}"
+                )
+                for error in validation.errors:
+                    print(f"  ❌ {error}")
+                return None
+
+            # Log warnings but continue
+            if validation.warnings:
+                logger.warning(
+                    f"Pre-publish warnings for story {story.id}: {validation.warnings}"
+                )
+                for warning in validation.warnings:
+                    print(f"  ⚠️  {warning}")
+
+            # Log successful validation
+            if validation.author_verified:
+                logger.info(
+                    f"Publishing as: {validation.author_name} "
+                    f"({validation.author_urn_from_api})"
+                )
+
         post_id = self._publish_story(story)
         if post_id:
             story.publish_status = "published"
@@ -734,6 +869,7 @@ class LinkedInPublisher:
                 f"Published story {story.id} immediately with post ID: {post_id}"
             )
             logger.info(f"Post URL: {story.linkedin_post_url}")
+        return post_id
         return post_id
 
     # =========================================================================
@@ -810,7 +946,8 @@ class LinkedInPublisher:
                     f"?q=organizationalEntity&organizationalEntity={org_urn_encoded}&{post_param}"
                 )
 
-            version = datetime.now().strftime("%Y%m")
+            # LinkedIn REST API version header
+            version = "202501"
             headers = {
                 "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
                 "X-Restli-Protocol-Version": "2.0.0",

@@ -997,12 +997,12 @@ HTML_TEMPLATE = """
 
                 <div class="edit-group-row" style="display: flex; gap: 10px; align-items: stretch;">
                     <div class="edit-group" style="flex: 1; display: flex; flex-direction: column;">
-                        <label for="editStoryPeople">Story People @mentions</label>
-                        <textarea id="editStoryPeople" readonly disabled placeholder="People mentioned in story" style="flex: 1; min-height: 60px; resize: none;"></textarea>
+                        <label for="editDirectPeople">Direct People @mentions</label>
+                        <textarea id="editDirectPeople" readonly disabled placeholder="People mentioned in story" style="flex: 1; min-height: 60px; resize: none;"></textarea>
                     </div>
                     <div class="edit-group" style="flex: 1; display: flex; flex-direction: column;">
-                        <label for="editOrgLeaders">Org Leaders @mentions</label>
-                        <textarea id="editOrgLeaders" readonly disabled placeholder="Institution leaders" style="flex: 1; min-height: 60px; resize: none;"></textarea>
+                        <label for="editIndirectPeople">Indirect People @mentions</label>
+                        <textarea id="editIndirectPeople" readonly disabled placeholder="Org leadership or key contacts" style="flex: 1; min-height: 60px; resize: none;"></textarea>
                     </div>
                 </div>
 
@@ -1156,14 +1156,14 @@ HTML_TEMPLATE = """
                 </div>
             `;
 
-            // Build mentions string from story_people (directly mentioned) with URNs
-            const storyPeopleMentions = (story.story_people || [])
+            // Build mentions string from direct_people (directly mentioned) with URNs
+            const directPeopleMentions = (story.direct_people || [])
                 .filter(p => p.linkedin_urn || p.linkedin_profile)
                 .map(p => '@' + p.name)
                 .join(' ');
 
-            // Build mentions string from org_leaders (institution leaders) - show all for reference
-            const orgLeaderMentions = (story.org_leaders || [])
+            // Build mentions string from indirect_people (institution leaders) - show all for reference
+            const indirectPeopleMentions = (story.indirect_people || [])
                 .map(p => {
                     const hasLinkedIn = p.linkedin_urn || p.linkedin_profile;
                     return hasLinkedIn ? '@' + p.name : p.name;
@@ -1203,7 +1203,7 @@ HTML_TEMPLATE = """
                     <div class="linkedin-avatar">{{ author_initial }}</div>
                     <div class="linkedin-author-info">
                         <h3>{{ author_name }}</h3>
-                        <p>Chemical Engineer • Just now</p>
+                        <p>{{ discipline_title }} • Just now</p>
                     </div>
                 </div>
 
@@ -1215,11 +1215,11 @@ HTML_TEMPLATE = """
                 ${story.promotion ? `<div class="linkedin-promotion">${escapeHtml(story.promotion)}</div>` : ''}
                 ${sourcesHtml}
 
-                ${(hashtags || storyPeopleMentions || orgLeaderMentions) ? '<div class="linkedin-spacer"></div>' : ''}
+                ${(hashtags || directPeopleMentions || indirectPeopleMentions) ? '<div class="linkedin-spacer"></div>' : ''}
                 ${hashtags ? `<div class="linkedin-hashtags">${escapeHtml(hashtags)}</div>` : ''}
-                ${storyPeopleMentions ? `<div class="linkedin-mentions">${escapeHtml(storyPeopleMentions)}</div>` : ''}
-                ${(storyPeopleMentions && orgLeaderMentions) ? '<div class="linkedin-spacer"></div>' : ''}
-                ${orgLeaderMentions ? `<div class="linkedin-mentions linkedin-org-leaders">${escapeHtml(orgLeaderMentions)}</div>` : ''}
+                ${directPeopleMentions ? `<div class="linkedin-mentions">${escapeHtml(directPeopleMentions)}</div>` : ''}
+                ${(directPeopleMentions && indirectPeopleMentions) ? '<div class="linkedin-spacer"></div>' : ''}
+                ${indirectPeopleMentions ? `<div class="linkedin-mentions linkedin-org-leaders">${escapeHtml(indirectPeopleMentions)}</div>` : ''}
 
                 <div class="linkedin-footer">
                     <span>👍 Like</span>
@@ -1244,18 +1244,18 @@ HTML_TEMPLATE = """
             document.getElementById('editTitle').value = story.title || '';
             document.getElementById('editSummary').value = story.summary || '';
             document.getElementById('editHashtags').value = (story.hashtags || []).join(', ');
-            // Populate story_people mentions (people directly mentioned in story)
-            const storyPeopleMentions = (story.story_people || [])
+            // Populate direct_people mentions (people directly mentioned in story)
+            const directPeopleMentions = (story.direct_people || [])
                 .filter(p => p.linkedin_urn || p.linkedin_profile)
                 .map(p => '@' + p.name);
-            document.getElementById('editStoryPeople').value = storyPeopleMentions.join(', ');
-            // Populate org_leaders mentions (institution leaders) - show all, mark those without LinkedIn
-            const orgLeaderMentions = (story.org_leaders || [])
+            document.getElementById('editDirectPeople').value = directPeopleMentions.join(', ');
+            // Populate indirect_people mentions (institution leaders) - show all, mark those without LinkedIn
+            const indirectPeopleMentions = (story.indirect_people || [])
                 .map(p => {
                     const hasLinkedIn = p.linkedin_urn || p.linkedin_profile;
                     return hasLinkedIn ? '@' + p.name : p.name + ' (no LinkedIn)';
                 });
-            document.getElementById('editOrgLeaders').value = orgLeaderMentions.join(', ');
+            document.getElementById('editIndirectPeople').value = indirectPeopleMentions.join(', ');
             document.getElementById('editPromotion').value = story.promotion || '';
 
             if (story.scheduled_time) {
@@ -1573,16 +1573,79 @@ HTML_TEMPLATE = """
                 return;
             }
 
-            // Confirm publish
-            if (!confirm(`Publish this story to LinkedIn now?\\n\\n"${story.title}"`)) {
-                return;
-            }
-
             const publishBtn = document.getElementById('publishBtn');
             publishBtn.disabled = true;
-            publishBtn.textContent = '⏳ Publishing...';
+            publishBtn.textContent = '⏳ Validating...';
 
             try {
+                // First, run pre-publish validation
+                const validateResponse = await fetch(`/api/stories/${story.id}/validate-publish`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const validation = await validateResponse.json();
+
+                if (!validateResponse.ok) {
+                    showToast(validation.error || 'Validation failed', 'error');
+                    publishBtn.disabled = false;
+                    publishBtn.textContent = '🚀 Publish';
+                    return;
+                }
+
+                // Build validation summary for confirmation
+                let validationSummary = '';
+
+                if (validation.author_verified) {
+                    validationSummary += `✅ Publishing as: ${validation.author_name}\\n`;
+                } else if (validation.author_name) {
+                    validationSummary += `⚠️ Author: ${validation.author_name} (unverified)\\n`;
+                }
+
+                // Count valid mentions
+                const validMentions = (validation.mention_validations || []).filter(m => m.urn_valid).length;
+                const totalMentions = (validation.mention_validations || []).length;
+
+                if (totalMentions > 0) {
+                    validationSummary += `📋 @mentions: ${validMentions}/${totalMentions} have valid URNs\\n`;
+                }
+
+                // Show warnings if any
+                if (validation.warnings && validation.warnings.length > 0) {
+                    validationSummary += '\\n⚠️ Warnings:\\n';
+                    validation.warnings.slice(0, 3).forEach(w => {
+                        validationSummary += `  • ${w}\\n`;
+                    });
+                    if (validation.warnings.length > 3) {
+                        validationSummary += `  ... and ${validation.warnings.length - 3} more\\n`;
+                    }
+                }
+
+                // Check for critical errors
+                if (!validation.is_valid) {
+                    let errorMsg = 'Pre-publish validation failed:\\n\\n';
+                    validation.errors.forEach(e => {
+                        errorMsg += `❌ ${e}\\n`;
+                    });
+                    alert(errorMsg);
+                    publishBtn.disabled = false;
+                    publishBtn.textContent = '🚀 Publish';
+                    return;
+                }
+
+                // Confirm publish with validation summary
+                const confirmMsg = `Publish this story to LinkedIn?\\n\\n` +
+                    `"${story.title}"\\n\\n` +
+                    `Validation Summary:\\n${validationSummary}`;
+
+                if (!confirm(confirmMsg)) {
+                    publishBtn.disabled = false;
+                    publishBtn.textContent = '🚀 Publish';
+                    return;
+                }
+
+                publishBtn.textContent = '⏳ Publishing...';
+
                 const response = await fetch(`/api/stories/${story.id}/publish`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' }
@@ -1706,6 +1769,7 @@ class ValidationServer:
             """Serve the main validation page."""
             html = HTML_TEMPLATE.replace("{{ author_name }}", self.author_name)
             html = html.replace("{{ author_initial }}", self.author_initial)
+            html = html.replace("{{ discipline_title }}", Config.DISCIPLINE.title())
             return render_template_string(html)
 
         @self.app.route("/api/stories")
@@ -1801,6 +1865,28 @@ class ValidationServer:
                 logger.exception(f"Failed to reject story {story_id}")
                 return jsonify({"error": str(e)}), 500
 
+        @self.app.route(
+            "/api/stories/<int:story_id>/validate-publish", methods=["POST"]
+        )
+        def validate_publish(story_id: int):
+            """Validate a story before publishing (pre-flight check)."""
+            try:
+                story = self.db.get_story(story_id)
+                if not story:
+                    return jsonify({"error": "Story not found"}), 404
+
+                # Import and use linkedin_publisher
+                from linkedin_publisher import LinkedInPublisher
+
+                publisher = LinkedInPublisher(self.db)
+                validation = publisher.validate_before_publish(story)
+
+                return jsonify(validation.to_dict())
+
+            except Exception as e:
+                logger.exception(f"Failed to validate story {story_id}")
+                return jsonify({"error": str(e)}), 500
+
         @self.app.route("/api/stories/<int:story_id>/publish", methods=["POST"])
         def publish_story(story_id: int):
             """Publish a story to LinkedIn immediately."""
@@ -1823,7 +1909,20 @@ class ValidationServer:
                 from linkedin_publisher import LinkedInPublisher
 
                 publisher = LinkedInPublisher(self.db)
-                post_id = publisher.publish_immediately(story)
+
+                # Run pre-publish validation first
+                validation = publisher.validate_before_publish(story)
+                if not validation.is_valid:
+                    error_msg = "; ".join(validation.errors)
+                    return jsonify(
+                        {
+                            "error": f"Pre-publish validation failed: {error_msg}",
+                            "validation": validation.to_dict(),
+                        }
+                    ), 400
+
+                # Publish (skip_validation=True since we just validated)
+                post_id = publisher.publish_immediately(story, skip_validation=True)
 
                 if post_id:
                     # Refresh story from database to get updated fields
@@ -1831,12 +1930,14 @@ class ValidationServer:
                     if story:
                         result = story.to_dict()
                         result["success"] = True
+                        result["validation"] = validation.to_dict()
                         return jsonify(result)
                     else:
                         return jsonify(
                             {
                                 "success": True,
                                 "linkedin_post_id": post_id,
+                                "validation": validation.to_dict(),
                             }
                         )
                 else:
@@ -1936,8 +2037,8 @@ class ValidationServer:
             "verification_reason": safe_get(row, "verification_reason"),
             "scheduled_time": safe_get(row, "scheduled_time"),
             "publish_status": safe_get(row, "publish_status", "unpublished"),
-            "story_people": parse_json_field(safe_get(row, "story_people")),
-            "org_leaders": parse_json_field(safe_get(row, "org_leaders")),
+            "direct_people": parse_json_field(safe_get(row, "direct_people")),
+            "indirect_people": parse_json_field(safe_get(row, "indirect_people")),
             "promotion": safe_get(row, "promotion"),
         }
 

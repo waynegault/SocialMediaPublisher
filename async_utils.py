@@ -565,8 +565,8 @@ class BatchEnrichmentProcessor:
         # Validation cache: (person_name, org) -> validation_result
         self._validation_cache: dict[str, dict] = {}
 
-        # Organization leadership cache: org_name -> [leaders]
-        self._org_leadership_cache: dict[str, list[dict]] = {}
+        # Indirect people cache: org_name -> [people]
+        self._indirect_people_cache: dict[str, list[dict]] = {}
 
         # Stats tracking
         self._stats = BatchEnrichmentStats()
@@ -589,18 +589,18 @@ class BatchEnrichmentProcessor:
         key = self._cache_key(name, org)
         self._validation_cache[key] = result
 
-    def get_cached_org_leaders(self, org: str) -> Optional[list[dict]]:
-        """Get cached org leaders if available."""
+    def get_cached_indirect_people(self, org: str) -> Optional[list[dict]]:
+        """Get cached indirect people if available."""
         key = org.lower().strip()
-        if key in self._org_leadership_cache:
+        if key in self._indirect_people_cache:
             self._stats.cache_hits += 1
-            return self._org_leadership_cache[key]
+            return self._indirect_people_cache[key]
         return None
 
-    def cache_org_leaders(self, org: str, leaders: list[dict]) -> None:
-        """Cache organization leaders."""
+    def cache_indirect_people(self, org: str, people: list[dict]) -> None:
+        """Cache indirect people for an org."""
         key = org.lower().strip()
-        self._org_leadership_cache[key] = leaders
+        self._indirect_people_cache[key] = people
 
     async def process_story(
         self,
@@ -713,7 +713,7 @@ class BatchEnrichmentProcessor:
     def clear_cache(self) -> None:
         """Clear all caches."""
         self._validation_cache.clear()
-        self._org_leadership_cache.clear()
+        self._indirect_people_cache.clear()
 
     def log_stats(self) -> None:
         """Log current stats summary."""

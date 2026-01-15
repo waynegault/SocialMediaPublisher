@@ -246,12 +246,12 @@ def calibrate_quality_score(
 
     # People mentioned bonus: stories with named individuals
     if Config.QUALITY_WEIGHT_PEOPLE_MENTIONED > 0:
-        story_people = story_data.get("story_people", [])
-        if isinstance(story_people, list) and len(story_people) > 0:
+        direct_people = story_data.get("direct_people", [])
+        if isinstance(direct_people, list) and len(direct_people) > 0:
             # Count people with actual names (not placeholders)
             named_people = sum(
                 1
-                for p in story_people
+                for p in direct_people
                 if isinstance(p, dict)
                 and p.get("name")
                 and str(p.get("name", "")).lower() not in ("unknown", "tba", "n/a", "")
@@ -505,6 +505,8 @@ class StorySearcher:
         self._cached_search_results: list[dict] = []
         # Cache for resolved redirect URLs to avoid duplicate HTTP requests
         self._redirect_url_cache: dict[str, str] = {}
+        # Cache for search start date (avoid recalculating multiple times)
+        self._cached_start_date: datetime | None = None
 
     def _report_progress(self, message: str) -> None:
         """Report progress via callback if available."""
@@ -516,16 +518,23 @@ class StorySearcher:
         """
         Determine the start date for searching stories.
         Uses last check date if enabled, otherwise uses lookback days.
+        Caches the result to avoid duplicate DB queries and log spam.
         """
+        # Return cached value if available
+        if self._cached_start_date is not None:
+            return self._cached_start_date
+
         if Config.USE_LAST_CHECKED_DATE:
             last_check = self.db.get_last_check_date()
             if last_check:
                 logger.info(f"Using last check date: {last_check}")
+                self._cached_start_date = last_check
                 return last_check
 
         # Fallback to lookback days
         lookback = datetime.now() - timedelta(days=Config.SEARCH_LOOKBACK_DAYS)
         logger.info(f"Using lookback of {Config.SEARCH_LOOKBACK_DAYS} days: {lookback}")
+        self._cached_start_date = lookback
         return lookback
 
     def search_and_process(self) -> int:
@@ -599,9 +608,28 @@ class StorySearcher:
         The LLM outputs vertexaisearch.cloud.google.com redirect URLs.
         These must be resolved to get the actual article URLs.
         Google Search query URLs are filtered out as they are not article sources.
+        Generic category/index pages are also filtered out.
         """
         if not stories_data:
             return stories_data
+
+        # Patterns that indicate a generic category/index page rather than an article
+        generic_url_patterns = [
+            r"/news/?$",  # Ends with /news or /news/
+            r"/articles/?$",  # Ends with /articles
+            r"/blog/?$",  # Ends with /blog
+            r"/category/",  # Category pages
+            r"/tag/",  # Tag pages
+            r"/topics?/",  # Topic pages
+            r"/archive/?$",  # Archive pages
+            r"/index\.html?$",  # Index pages
+            r"^https?://[^/]+/?$",  # Just domain with no path
+        ]
+        import re
+
+        generic_patterns_compiled = [
+            re.compile(p, re.IGNORECASE) for p in generic_url_patterns
+        ]
 
         for story in stories_data:
             sources = story.get("sources") or story.get("source_links") or []
@@ -614,6 +642,16 @@ class StorySearcher:
                 # Skip Google Search query URLs - these are not article sources
                 if "google.com/search?" in url:
                     logger.debug(f"Skipping Google Search URL: {url[:60]}...")
+                    continue
+
+                # Filter out generic category/index pages (LLM hallucinations)
+                is_generic = False
+                for pattern in generic_patterns_compiled:
+                    if pattern.search(url):
+                        logger.debug(f"Skipping generic category URL: {url}")
+                        is_generic = True
+                        break
+                if is_generic:
                     continue
 
                 # Resolve vertexaisearch redirect URLs
@@ -1120,6 +1158,7 @@ class StorySearcher:
             search_results=json.dumps(search_results, indent=2),
             max_stories=max_stories,
             summary_words=summary_words,
+            discipline=Config.DISCIPLINE,
         )
 
         try:
@@ -1200,6 +1239,7 @@ class StorySearcher:
         """Build the prompt for story search."""
         max_stories = Config.MAX_STORIES_PER_SEARCH
         author_name = Config.LINKEDIN_AUTHOR_NAME or "the LinkedIn profile owner"
+        discipline = Config.DISCIPLINE
 
         # Allow overriding the full instruction via legacy .env variable
         if Config.SEARCH_PROMPT_TEMPLATE:
@@ -1210,6 +1250,8 @@ class StorySearcher:
                     summary_words=summary_words,
                     max_stories=max_stories,
                     author_name=author_name,
+                    discipline=discipline,
+                    discipline_title=discipline.title(),
                 )
             except Exception as e:
                 logger.warning(
@@ -1223,6 +1265,8 @@ class StorySearcher:
             since_date=since_date.strftime("%Y-%m-%d"),
             summary_words=summary_words,
             author_name=author_name,
+            discipline=discipline,
+            discipline_title=discipline.title(),
         )
 
     def _parse_response(self, response_text: str) -> list[dict]:
@@ -1491,10 +1535,10 @@ class StorySearcher:
                 else:
                     organizations = []
 
-                # Extract story_people from AI response
+                # Extract direct_people from AI response
                 # These are people directly mentioned in the story
-                story_people_raw = data.get("story_people", [])
-                if isinstance(story_people_raw, list):
+                direct_people_raw = data.get("direct_people", [])
+                if isinstance(direct_people_raw, list):
                     # Validate and normalize each person entry with enhanced fields
                     validated_people = []
                     # Define placeholder/invalid name patterns to filter out
@@ -1508,7 +1552,7 @@ class StorySearcher:
                         "",
                     }
 
-                    for person in story_people_raw:
+                    for person in direct_people_raw:
                         if isinstance(person, dict) and person.get("name"):
                             name = str(person.get("name", "")).strip()
                             # Skip placeholder names and names that are too short
@@ -1543,9 +1587,9 @@ class StorySearcher:
                                     ).strip(),
                                 }
                             )
-                    story_people = validated_people
+                    direct_people = validated_people
                 else:
-                    story_people = []
+                    direct_people = []
 
                 story = Story(
                     title=title,
@@ -1559,8 +1603,7 @@ class StorySearcher:
                     publish_status="unpublished",
                     hashtags=hashtags,
                     organizations=organizations,
-                    story_people=story_people,  # Store in story_people (new primary field)
-                    direct_people=story_people,  # Canonical direct people list
+                    direct_people=direct_people,  # Canonical direct people list
                 )
 
                 self.db.add_story(story)
@@ -1771,6 +1814,7 @@ class StorySearcher:
             search_results=json.dumps(search_results, indent=2),
             max_stories=max_stories,
             summary_words=summary_words,
+            discipline=Config.DISCIPLINE,
         )
 
         try:
@@ -2129,7 +2173,7 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         story_data: dict = {
             "title": "Test",
             "summary": "Summary",
-            "story_people": [
+            "direct_people": [
                 {"name": "Dr. Jane Smith", "company": "MIT", "position": "Researcher"},
                 {"name": "John Doe", "company": "BASF", "position": "CEO"},
                 {"name": "Alice Brown", "company": "Stanford", "position": "Professor"},
@@ -2152,7 +2196,7 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         story_data: dict = {
             "title": "Test",
             "summary": "Summary",
-            "story_people": [
+            "direct_people": [
                 {"name": "Dr. Jane Smith", "company": "MIT", "position": "Researcher"},
                 {"name": "John Doe", "company": "BASF", "position": "CEO"},
                 {"name": "Alice Brown", "company": "Stanford", "position": "Professor"},

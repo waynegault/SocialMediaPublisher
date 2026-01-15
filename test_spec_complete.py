@@ -12,7 +12,7 @@ from company_mention_enricher import (
     EnrichmentAlerts,
     needs_refresh,
     get_stories_needing_refresh,
-    export_story_people,
+    export_direct_people,
     export_all_people,
 )
 
@@ -150,7 +150,7 @@ def test_export_options():
     story = Story()
     story.id = 999
     story.title = "Export Test Story"
-    story.story_people = [
+    story.direct_people = [
         {
             "name": "Dr. Jane Smith",
             "position": "Lead Researcher",
@@ -166,7 +166,7 @@ def test_export_options():
             "match_confidence": "medium",
         },
     ]
-    story.org_leaders = [
+    story.indirect_people = [
         {
             "name": "CEO Person",
             "title": "CEO",
@@ -179,7 +179,7 @@ def test_export_options():
 
     # Test 1: JSON export
     print("\n1. Testing JSON export...")
-    json_output = export_story_people(story, "json")
+    json_output = export_direct_people(story, "json")
     parsed = json.loads(json_output)
     assert "direct_people" in parsed
     assert "indirect_people" in parsed
@@ -191,7 +191,7 @@ def test_export_options():
 
     # Test 2: CSV export
     print("\n2. Testing CSV export...")
-    csv_output = export_story_people(story, "csv")
+    csv_output = export_direct_people(story, "csv")
     lines = csv_output.strip().split("\n")
     assert len(lines) == 4  # Header + 3 people
     assert "category,name,title" in lines[0]
@@ -199,7 +199,7 @@ def test_export_options():
 
     # Test 3: Markdown export
     print("\n3. Testing Markdown export...")
-    md_output = export_story_people(story, "markdown")
+    md_output = export_direct_people(story, "markdown")
     assert "# People in Story:" in md_output
     assert "## Direct People" in md_output
     assert "## Indirect People" in md_output

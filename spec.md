@@ -49,7 +49,7 @@ Add logging to current code to capture these baseline metrics:
 
 | Metric | How to Measure | Target Improvement |
 |--------|----------------|--------------------|
-| LinkedIn match rate | % of story_people with valid linkedin_profile | Current: ~TBD% → Target: 70%+ |
+| LinkedIn match rate | % of direct_people with valid linkedin_profile | Current: ~TBD% → Target: 70%+ |
 | High-confidence match rate | % with match_confidence = "high" | Current: ~TBD% → Target: 50%+ |
 | Zero-match stories | % of stories with no LinkedIn profiles found | Current: ~TBD% → Target: <20% |
 | Paywall block rate | % of source URLs that fail to fetch | Current: ~TBD% → Target: <10% |
@@ -74,9 +74,9 @@ logger = logging.getLogger(__name__)
 
 def log_enrichment_metrics(story: Story, results: dict) -> None:
     """Log metrics for baseline measurement."""
-    total_people = len(story.story_people) + len(story.org_leaders)
+    total_people = len(story.direct_people) + len(story.indirect_people)
     with_linkedin = sum(
-        1 for p in story.story_people + story.org_leaders
+        1 for p in story.direct_people + story.indirect_people
         if p.get("linkedin_profile")
     )
 
@@ -133,8 +133,8 @@ This workflow integrates with the existing architecture:
 
 ```python
 # Current fields in database.py Story class:
-story_people: list[dict]     # Direct people mentioned in story
-org_leaders: list[dict]      # Indirect people (leadership of orgs)
+direct_people: list[dict]    # Direct people mentioned in story
+indirect_people: list[dict]  # Indirect people (leadership of orgs)
 organizations: list[str]     # Organization names
 enrichment_status: str       # pending, enriched, skipped, error
 ```
@@ -145,9 +145,9 @@ enrichment_status: str       # pending, enriched, skipped, error
 # Proposed changes to Story dataclass:
 # NOTE: Database will be reset. Use clean, descriptive field names.
 
-# Rename existing fields for clarity:
-direct_people: list[dict]    # People explicitly named in story (was: story_people)
-indirect_people: list[dict]  # Leadership discovered from orgs (was: org_leaders)
+# Field names:
+direct_people: list[dict]    # People explicitly named in story
+indirect_people: list[dict]  # Leadership discovered from orgs
 
 # New metadata fields:
 enrichment_log: dict         # Processing metrics, errors, and audit trail
@@ -166,7 +166,7 @@ The enrichment logic is currently fragmented across multiple functions in [main.
 
 ```python
 # Current flow in _test_search():
-_run_org_leaders_enrichment_silent(engine)  # Step 2 - Find org leaders
+_run_indirect_people_enrichment_silent(engine)  # Step 2 - Find indirect people (org leadership)
 _run_profile_lookup_silent(engine)          # Step 3 - LinkedIn profiles
 _run_urn_extraction_silent(engine)          # Step 4 - Extract URNs
 _mark_stories_enriched(engine)              # Step 6 - Update status
@@ -196,7 +196,7 @@ class EntityEnrichmentPipeline:
         """
         # Phase 2: Validate and discover (entities already extracted)
         validated_direct = self._validate_people(story.direct_people)
-        indirect_people = self._discover_org_leaders(story.organizations)
+        indirect_people = self._discover_indirect_people(story.organizations)
 
         # Phase 3: LinkedIn matching
         all_people = validated_direct + indirect_people
@@ -241,7 +241,7 @@ USE_NEW_PIPELINE = os.environ.get("USE_NEW_ENRICHMENT", "shadow")
 
 if USE_NEW_PIPELINE == "shadow":
     # Run old pipeline (writes to DB)
-    _run_org_leaders_enrichment_silent(engine)
+    _run_indirect_people_enrichment_silent(engine)
     _run_profile_lookup_silent(engine)
 
     # Run new pipeline (logs only, doesn't write)
@@ -438,10 +438,10 @@ class OrganizationEntity(Entity):
 ### Step 1.4: Identify Indirect People to Discover
 **Goal:** Define which leadership roles to find for each organization
 
-**Implementation:** Enhance `_run_org_leaders_enrichment_silent()` in [main.py](main.py) and use existing role lists from [find_leadership.py](find_leadership.py):
+**Implementation:** Enhance `_run_indirect_people_enrichment_silent()` in [main.py](main.py) and use existing role lists from [find_indirect_people.py](find_indirect_people.py):
 
 ```python
-# Existing role lists in find_leadership.py:
+# Existing role lists in find_indirect_people.py:
 COMPANY_ROLES = [
     "CEO", "President", "Managing Director",
     "Chief Technology Officer", "Chief Engineer", "Chief Scientist",
@@ -468,7 +468,7 @@ UNIVERSITY_ROLES = [
 3. Prioritize roles most relevant to story category (from `story.category`)
 4. Limit to max 5 indirect people per organization
 
-**Output:** Stored in `story.indirect_people` (currently `story.org_leaders`)
+**Output:** Stored in `story.indirect_people`
 
 ---
 
@@ -576,7 +576,7 @@ validation_date: str = ""
 ### Step 2.2: Discover and Validate Indirect People
 **Goal:** Find current leadership for each organization
 
-**Implementation:** Enhance `_run_org_leaders_enrichment_silent()` in [main.py](main.py) and `search_leadership_uc()` in [find_leadership.py](find_leadership.py)
+**Implementation:** Enhance `_run_indirect_people_enrichment_silent()` in [main.py](main.py) and `search_indirect_people_uc()` in [find_indirect_people.py](find_indirect_people.py)
 
 **Discovery Process:**
 
@@ -585,8 +585,8 @@ validation_date: str = ""
 Uses UC Chrome (undetected_chromedriver) to avoid bot detection:
 
 ```python
-# Search query format (from find_leadership.py):
-def search_leadership_uc(org: str, role: str) -> dict | None:
+# Search query format (from find_indirect_people.py):
+def search_indirect_people_uc(org: str, role: str) -> dict | None:
     """Search for organization leadership using UC Chrome."""
     driver = _get_uc_driver()
     search_query = f"{role} {org} LinkedIn"
@@ -611,11 +611,11 @@ def search_leadership_uc(org: str, role: str) -> dict | None:
 - Use existing `is_university()` function to determine org type
 
 **D. Attribute Extraction:**
-Matches existing `org_leaders` structure in `Story` dataclass:
+Matches existing `indirect_people` structure in `Story` dataclass:
 
 ```python
 # Current structure in database.py:
-org_leaders: list[dict] = [
+indirect_people: list[dict] = [
     {
         "name": "Jonathan Levin",
         "title": "President",
@@ -1202,13 +1202,13 @@ This phase stores all validated, LinkedIn-matched people into the Story record.
 ### Step 4.1: Structure for Direct People
 **Goal:** Store people mentioned directly in the story
 
-**Implementation:** Update `Story.story_people` field in [database.py](database.py)
+**Implementation:** Update `Story.direct_people` field in [database.py](database.py)
 
 **Current Schema (from Story dataclass):**
 
 ```python
 # Current structure in database.py:
-story_people: list[dict] = field(default_factory=list)
+direct_people: list[dict] = field(default_factory=list)
 # Each dict contains:
 # {
 #     "name": "Dr. Jane Smith",
@@ -1253,7 +1253,7 @@ direct_people: list[dict] = [
 ```
 
 **Migration Strategy:**
-- Rename `story_people` → `direct_people` (database reset, clean schema)
+- Field name is `direct_people` (database reset, clean schema)
 - Add new fields during schema creation
 
 ---
@@ -1261,13 +1261,13 @@ direct_people: list[dict] = [
 ### Step 4.2: Structure for Indirect People
 **Goal:** Store discovered leadership of mentioned organizations
 
-**Implementation:** Update `Story.org_leaders` field in [database.py](database.py)
+**Implementation:** Update `Story.indirect_people` field in [database.py](database.py)
 
 **Current Schema (from Story dataclass):**
 
 ```python
 # Current structure in database.py:
-org_leaders: list[dict] = field(default_factory=list)
+indirect_people: list[dict] = field(default_factory=list)
 # Each dict contains:
 # {
 #     "name": "John Doe",
@@ -1301,7 +1301,7 @@ indirect_people: list[dict] = [
         "match_score": 7.5,
 
         # Relationship to story
-        "relationship_type": "employer_leadership",  # org_leadership, employer_of_subject
+        "relationship_type": "employer_leadership",  # organization_leadership, employer_of_subject
         "connected_to_org": "Stanford University",
         "discovery_reason": "President of organization where story subject works",
 
@@ -1313,7 +1313,7 @@ indirect_people: list[dict] = [
 ```
 
 **Migration Strategy:**
-- Rename `org_leaders` → `indirect_people` (database reset, clean schema)
+- Field name is `indirect_people` (database reset, clean schema)
 - Add relationship fields during schema creation
 
 ---
@@ -1328,11 +1328,11 @@ indirect_people: list[dict] = [
 ```python
 @dataclass
 class Story:
-    # Existing enrichment fields:
+    # Enrichment fields:
     enrichment_status: str = "pending"  # pending, enriched, skipped, error
     organizations: list[str] = field(default_factory=list)  # ["BASF", "MIT"]
-    story_people: list[dict] = field(default_factory=list)  # RENAME to direct_people
-    org_leaders: list[dict] = field(default_factory=list)   # RENAME to indirect_people
+    direct_people: list[dict] = field(default_factory=list)
+    indirect_people: list[dict] = field(default_factory=list)
 ```
 
 **New Story Schema (clean slate):**
@@ -1345,8 +1345,8 @@ class Story:
     # Enrichment fields (renamed for clarity):
     enrichment_status: str = "pending"
     organizations: list[str] = field(default_factory=list)
-    direct_people: list[dict] = field(default_factory=list)    # was: story_people
-    indirect_people: list[dict] = field(default_factory=list)  # was: org_leaders
+    direct_people: list[dict] = field(default_factory=list)
+    indirect_people: list[dict] = field(default_factory=list)
 
     # New metadata fields:
     enrichment_log: dict = field(default_factory=dict)
@@ -1623,15 +1623,15 @@ def enrich_story_atomic(self, story: Story) -> bool:
             cursor.execute("""
                 UPDATE stories SET
                     organizations = ?,
-                    story_people = ?,
-                    org_leaders = ?,
+                    direct_people = ?,
+                    indirect_people = ?,
                     enrichment_status = ?,
                     enrichment_log = ?
                 WHERE id = ?
             """, (
                 json.dumps(story.organizations),
-                json.dumps(story.story_people),
-                json.dumps(story.org_leaders),
+                json.dumps(story.direct_people),
+                json.dumps(story.indirect_people),
                 "enriched",
                 json.dumps(enrichment_log),
                 story.id
@@ -1757,7 +1757,7 @@ def validate_enrichment_quality(story: Story) -> QACheckResult:
     result = QACheckResult(story_id=str(story.id))
 
     # Check 1: LinkedIn URL validity (must start with linkedin.com)
-    for person in story.story_people + story.org_leaders:
+    for person in story.direct_people + story.indirect_people:
         if linkedin := person.get("linkedin_url"):
             if "linkedin.com/in/" not in linkedin:
                 result.linkedin_url_validity = False
@@ -1766,15 +1766,15 @@ def validate_enrichment_quality(story: Story) -> QACheckResult:
                 result.checks_passed += 1
 
     # Check 2: No duplicates across direct/indirect
-    direct_names = {p.get("name") for p in story.story_people}
-    indirect_names = {p.get("name") for p in story.org_leaders}
+    direct_names = {p.get("name") for p in story.direct_people}
+    indirect_names = {p.get("name") for p in story.indirect_people}
     if duplicates := direct_names & indirect_names:
         result.duplicate_detection = False
         result.warnings.append(f"Duplicate names: {duplicates}")
 
     # Check 3: Confidence distribution reasonable
     confidence_counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
-    for person in story.story_people + story.org_leaders:
+    for person in story.direct_people + story.indirect_people:
         conf = person.get("match_confidence", "LOW")
         confidence_counts[conf] = confidence_counts.get(conf, 0) + 1
 
@@ -2013,7 +2013,7 @@ class BatchEnrichmentProcessor:
 
 - Story source updated (new articles added)
 - Manual correction made (human feedback)
-- Scheduled refresh (quarterly for org_leaders)
+- Scheduled refresh (quarterly for indirect_people)
 - Profile 404 detected (LinkedIn URL broken)
 
 **Incremental Enrichment:**
@@ -2054,9 +2054,9 @@ def incremental_enrich(story: Story) -> Story:
         # Re-extract entities from new content
         story = extract_entities_incremental(story, changes.new_content)
 
-    if changes.org_leaders_stale:
+    if changes.indirect_people_stale:
         # Refresh leadership only
-        story = refresh_org_leaders(story)
+        story = refresh_indirect_people(story)
 
     return story
 ```
@@ -2154,15 +2154,15 @@ async def enrich_from_external_sources(person: dict) -> dict:
 **Export Functionality:**
 
 ```python
-def export_story_people(self, story_id: int, format: str = "json") -> str:
+def export_people(self, story_id: int, format: str = "json") -> str:
     """Export people data in various formats."""
     story = self.get_story(story_id)
     if not story:
         return ""
 
     people = {
-        "direct": story.story_people or [],
-        "indirect": story.org_leaders or [],
+        "direct": story.direct_people or [],
+        "indirect": story.indirect_people or [],
     }
 
     if format == "json":
@@ -2543,7 +2543,7 @@ Before deploying changes, manually verify:
 | P0 | Common name thresholds | profile_matcher.py | ⬜ | "John Smith" problem fixed |
 | P0 | Validation cache | company_mention_enricher.py | ⬜ | API cost reduced 60% |
 | P1 | MVP validation (single query) | company_mention_enricher.py | ⬜ | Validation working |
-| P1 | Indirect people discovery | find_leadership.py | ⬜ | Org leaders found |
+| P1 | Indirect people discovery | find_indirect_people.py | ⬜ | Indirect people found |
 | P2 | Profile verification for medium conf | profile_matcher.py | ⬜ | Borderline cases resolved |
 
 **⛔ GATE 2 CHECKPOINT:** False positive rate <5%. High-confidence matches >50%. Run 2 weeks stable.
@@ -2603,8 +2603,8 @@ Before deploying changes, manually verify:
 | `WEIGHT_WRONG_FIELD` | profile_matcher.py | -5.0 |
 | `HIGH_CONFIDENCE_THRESHOLD` | profile_matcher.py | 4.0 |
 | `MEDIUM_CONFIDENCE_THRESHOLD` | profile_matcher.py | 2.0 |
-| `COMPANY_ROLES` | find_leadership.py | CEO, CTO, CFO, etc. |
-| `UNIVERSITY_ROLES` | find_leadership.py | President, Provost, etc. |
+| `COMPANY_ROLES` | find_indirect_people.py | CEO, CTO, CFO, etc. |
+| `UNIVERSITY_ROLES` | find_indirect_people.py | President, Provost, etc. |
 | `COMMON_FIRST_NAMES` | text_utils.py | Set of common names |
 | `NICKNAME_MAP` | text_utils.py | Nickname mappings |
 
@@ -2616,7 +2616,7 @@ Before deploying changes, manually verify:
 class Story:
     # ... existing fields ...
 
-    # Renamed for clarity (was story_people/org_leaders):
+    # People fields:
     direct_people: list[dict] = field(default_factory=list)    # Explicitly named in story
     indirect_people: list[dict] = field(default_factory=list)  # Discovered leadership
 
@@ -2693,8 +2693,9 @@ cursor.execute("ALTER TABLE stories ADD COLUMN indirect_people TEXT DEFAULT '[]'
 cursor.execute("ALTER TABLE stories ADD COLUMN enrichment_log TEXT DEFAULT '{}'")
 
 # 2. Copy data from old columns
-cursor.execute("UPDATE stories SET direct_people = story_people")
-cursor.execute("UPDATE stories SET indirect_people = org_leaders")
+-- Data migration from old field names (if applicable)
+-- cursor.execute("UPDATE stories SET direct_people = <old_column_name>")
+-- cursor.execute("UPDATE stories SET indirect_people = <old_column_name>")
 
 # 3. In a future release, drop old columns
 ```
@@ -2759,8 +2760,8 @@ Rename fields and add metadata (database reset allows clean schema):
 
 ```python
 # Updated Story dataclass with clean field names:
-direct_people: list[dict] = field(default_factory=list)    # was: story_people
-indirect_people: list[dict] = field(default_factory=list)  # was: org_leaders
+direct_people: list[dict] = field(default_factory=list)
+indirect_people: list[dict] = field(default_factory=list)
 enrichment_log: dict = field(default_factory=dict)
 enrichment_quality: str = ""
 ```
@@ -2775,7 +2776,7 @@ USE_NEW_PIPELINE = os.environ.get("USE_NEW_ENRICHMENT", "false")
 
 if USE_NEW_PIPELINE == "shadow":
     # Run both, compare results
-    _run_org_leaders_enrichment_silent(engine)
+    _run_indirect_people_enrichment_silent(engine)
     _run_profile_lookup_silent(engine)
     new_pipeline = EntityEnrichmentPipeline(engine.db, engine.linkedin_lookup)
     new_pipeline.enrich_pending_stories(dry_run=True)
@@ -2785,7 +2786,7 @@ elif USE_NEW_PIPELINE == "true":
     enriched, skipped = pipeline.enrich_pending_stories()
 else:
     # Old behavior (default)
-    _run_org_leaders_enrichment_silent(engine)
+    _run_indirect_people_enrichment_silent(engine)
     _run_profile_lookup_silent(engine)
     _run_urn_extraction_silent(engine)
     _mark_stories_enriched(engine)

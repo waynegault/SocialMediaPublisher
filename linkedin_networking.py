@@ -187,7 +187,7 @@ class LinkedInNetworking:
         """
         self.db_path = db_path or str(Path(__file__).parent / "content_engine.db")
         self.my_name = my_name or Config.LINKEDIN_AUTHOR_NAME
-        self.my_role = my_role or "Chemical Engineering Professional"
+        self.my_role = my_role or f"{Config.DISCIPLINE.title()} Professional"
 
         # Rate limiter for connection requests
         # Uses conservative settings: ~1 request per hour on average
@@ -297,10 +297,14 @@ class LinkedInNetworking:
             "story_topic": story_topic,
             "my_role": self.my_role,
             "my_focus": "process engineering and sustainability",
-            "industry": "chemical engineering",
+            "industry": Config.DISCIPLINE.replace(" engineer", " engineering").replace(
+                " Engineer", " Engineering"
+            ),
             "my_project": "process optimization initiatives",
             "topic": story_topic or "industry trends",
-            "my_field": "chemical engineering",
+            "my_field": Config.DISCIPLINE.replace(" engineer", " engineering").replace(
+                " Engineer", " Engineering"
+            ),
             "interest_area": target_title or "industry leadership",
             "field": target_title or "engineering",
         }
@@ -546,21 +550,21 @@ class LinkedInNetworking:
         self,
         story_id: int,
         story_title: str,
-        story_people: list[dict],
+        direct_people: list[dict],
     ) -> list[ConnectionRequest]:
         """Create connection requests for people mentioned in a story.
 
         Args:
             story_id: ID of the story
             story_title: Story title for context
-            story_people: List of people dicts with name, title, company, profile
+            direct_people: List of people dicts with name, title, company, profile
 
         Returns:
             List of created connection requests
         """
         requests = []
 
-        for person in story_people:
+        for person in direct_people:
             name = person.get("name", "")
             if not name:
                 continue
@@ -680,7 +684,8 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         try:
             networking = LinkedInNetworking(db_path=db_path)
             assert networking.db_path == db_path
-            assert networking.my_role == "Chemical Engineering Professional"
+            # my_role is derived from Config.DISCIPLINE
+            assert "Professional" in networking.my_role
         except Exception:
             pass  # Allow test to pass with Windows file issues
 

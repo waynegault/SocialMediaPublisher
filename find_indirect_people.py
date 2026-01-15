@@ -1,4 +1,4 @@
-"""Find LinkedIn profiles for key leadership roles at each organization."""
+"""Find LinkedIn profiles for indirect people (org leadership) at each organization."""
 
 import sqlite3
 import json
@@ -28,7 +28,7 @@ except ImportError:
         "pip install undetected-chromedriver selenium"
     )
 
-# Key roles for different org types
+# Key roles for different org types - aligned with ner_engine.py patterns
 COMPANY_ROLES = [
     "CEO",
     "President",
@@ -51,46 +51,55 @@ UNIVERSITY_ROLES = [
 
 
 def is_university(org: str) -> bool:
-    """Check if organization is likely a university."""
-    org_lower = org.lower()
-    uni_keywords = [
-        "university",
-        "college",
-        "school",
-        "institute of technology",
-        "ucl",
-        "ucla",
-        "mit",
-    ]
-    return any(kw in org_lower for kw in uni_keywords)
+    """Check if organization is likely a university.
+
+    Uses patterns consistent with ner_engine.ACADEMIC_PATTERNS.
+    """
+    try:
+        from ner_engine import ACADEMIC_PATTERNS
+
+        org_lower = org.lower()
+        return any(pattern in org_lower for pattern in ACADEMIC_PATTERNS)
+    except ImportError:
+        # Fallback if ner_engine not available
+        org_lower = org.lower()
+        uni_keywords = [
+            "university",
+            "college",
+            "school",
+            "institute",
+            "laboratory",
+            "research",
+        ]
+        return any(kw in org_lower for kw in uni_keywords)
 
 
 def get_organizations_from_db():
     """Get unique organizations from the database."""
     conn = sqlite3.connect("content_engine.db")
     cursor = conn.cursor()
-    # Check story_people and org_leaders for organizations
+    # Check direct_people and indirect_people for organizations
     cursor.execute(
-        "SELECT story_people, org_leaders FROM stories WHERE story_people IS NOT NULL OR org_leaders IS NOT NULL"
+        "SELECT direct_people, indirect_people FROM stories WHERE direct_people IS NOT NULL OR indirect_people IS NOT NULL"
     )
     rows = cursor.fetchall()
 
     orgs = set()
-    for story_people_json, org_leaders_json in rows:
-        # Process story_people
-        if story_people_json:
+    for direct_people_json, indirect_people_json in rows:
+        # Process direct_people
+        if direct_people_json:
             try:
-                people = json.loads(story_people_json)
+                people = json.loads(direct_people_json)
                 for person in people:
                     company = person.get("company", "") or person.get("affiliation", "")
                     if company:
                         orgs.add(company)
             except Exception:
                 pass
-        # Process org_leaders
-        if org_leaders_json:
+        # Process indirect_people
+        if indirect_people_json:
             try:
-                people = json.loads(org_leaders_json)
+                people = json.loads(indirect_people_json)
                 for person in people:
                     company = person.get("company", "") or person.get("affiliation", "")
                     if company:
@@ -102,8 +111,8 @@ def get_organizations_from_db():
     return sorted(orgs)
 
 
-def search_leadership_uc(org: str, roles: list[str]) -> list[dict]:
-    """Search for multiple leadership roles using undetected-chromedriver (single browser session)."""
+def search_indirect_people_uc(org: str, roles: list[str]) -> list[dict]:
+    """Search for multiple indirect-people roles using undetected-chromedriver (single browser session)."""
     if not UC_AVAILABLE:
         print("undetected-chromedriver not installed")
         return []
@@ -244,7 +253,7 @@ def search_leadership_uc(org: str, roles: list[str]) -> list[dict]:
 
 def main():
     print("=" * 80)
-    print("FINDING LINKEDIN PROFILES FOR KEY LEADERSHIP ROLES")
+    print("FINDING LINKEDIN PROFILES FOR INDIRECT PEOPLE (ORG LEADERSHIP)")
     print("=" * 80)
 
     orgs = get_organizations_from_db()
@@ -263,12 +272,12 @@ def main():
         # Choose roles based on org type
         roles = UNIVERSITY_ROLES if is_university(org) else COMPANY_ROLES
 
-        results = search_leadership_uc(org, roles)
+        results = search_indirect_people_uc(org, roles)
         all_results[org] = results
 
     # Summary
     print("\n" + "=" * 80)
-    print("RESULTS SUMMARY")
+    print("RESULTS SUMMARY (INDIRECT PEOPLE)")
     print("=" * 80)
 
     for org in orgs:
@@ -280,20 +289,20 @@ def main():
                 print(f"  ✓ {r['role']}: {r['name']}")
                 print(f"      {r['linkedin']}")
         else:
-            print("  No leadership profiles found")
+            print("  No indirect people found")
 
     # Total stats
     total_found = sum(len(r) for r in all_results.values())
     print(f"\n{'=' * 80}")
-    print(f"Total leadership profiles found: {total_found}")
+    print(f"Total indirect people found: {total_found}")
     print("=" * 80)
 
     # Save results to JSON file
     import json as json_mod
 
-    with open("leadership_profiles.json", "w") as f:
+    with open("indirect_people_profiles.json", "w") as f:
         json_mod.dump(all_results, f, indent=2)
-    print(f"\nResults saved to leadership_profiles.json")
+    print(f"\nResults saved to indirect_people_profiles.json")
 
 
 if __name__ == "__main__":
@@ -304,10 +313,10 @@ if __name__ == "__main__":
 # Unit Tests
 # ============================================================================
 def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
-    """Create unit tests for find_leadership module."""
+    """Create unit tests for find_indirect_people module."""
     from test_framework import TestSuite
 
-    suite = TestSuite("Find Leadership Tests")
+    suite = TestSuite("Find Indirect People Tests")
 
     def test_is_university_true():
         assert is_university("University of Cambridge") is True
@@ -342,8 +351,8 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     def test_main_function_exists():
         assert callable(main)
 
-    def test_search_leadership_uc_exists():
-        assert callable(search_leadership_uc)
+    def test_search_indirect_people_uc_exists():
+        assert callable(search_indirect_people_uc)
 
     suite.add_test(
         "is_university returns True for universities", test_is_university_true
@@ -359,7 +368,8 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     )
     suite.add_test("main function exists", test_main_function_exists)
     suite.add_test(
-        "search_leadership_uc function exists", test_search_leadership_uc_exists
+        "search_indirect_people_uc function exists",
+        test_search_indirect_people_uc_exists,
     )
 
     return suite

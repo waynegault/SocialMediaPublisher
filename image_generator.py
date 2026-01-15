@@ -1146,12 +1146,13 @@ Keep response under 100 words."""
             story_title=story.title,
             story_summary=story.summary,
             image_style=Config.IMAGE_STYLE,
+            discipline=Config.DISCIPLINE,
         )
 
         # Inject the specific appearance to use for this image
         appearance_instruction = f"""
 MANDATORY APPEARANCE FOR THIS IMAGE (use exactly as specified):
-The female engineer in this image must be: {random_appearance}.
+    The female {Config.DISCIPLINE} professional in this image must be: {random_appearance}.
 Do NOT deviate from this appearance description. Include these exact physical traits in your prompt.
 """
         # Combine appearance instruction, source context, and refinement prompt
@@ -1191,12 +1192,15 @@ Do NOT deviate from this appearance description. Include these exact physical tr
             logger.warning(f"Prompt refinement failed: {e}. Using base prompt.")
 
         # Ultimate fallback - use configurable fallback template with random appearance
-        fallback = Config.IMAGE_FALLBACK_PROMPT.format(story_title=story.title[:60])
-        # Inject the random appearance into fallback
-        fallback = fallback.replace(
-            "a beautiful female chemical engineer",
-            f"{random_appearance} as a chemical engineer",
+        fallback_template = Config.IMAGE_FALLBACK_PROMPT
+        fallback = fallback_template.format(
+            story_title=story.title[:60],
+            discipline=Config.DISCIPLINE,
+            appearance=random_appearance,
         )
+        # If the template does not expose {appearance}, replace a generic phrase
+        if "{appearance}" not in fallback_template:
+            fallback = fallback.replace("a beautiful female", random_appearance, 1)
         return fallback
 
     def _clean_image_prompt(self, prompt: str) -> str:

@@ -311,12 +311,12 @@ class ContentVerifier:
 
     def _build_verification_prompt(self, story: Story) -> str:
         """Build the verification prompt for a story."""
-        # Count people from story_people and org_leaders
-        all_people = (story.story_people or []) + (story.org_leaders or [])
+        # Count people from direct_people and indirect_people
+        all_people = (story.direct_people or []) + (story.indirect_people or [])
         people_count = len(all_people)
         linkedin_profiles_found = 0
 
-        # Count LinkedIn profiles in story_people and org_leaders
+        # Count LinkedIn profiles in direct_people and indirect_people
         if all_people:
             linkedin_profiles_found = sum(
                 1
@@ -339,6 +339,7 @@ class ContentVerifier:
             linkedin_profiles_found=linkedin_profiles_found,
             summary_word_limit=Config.SUMMARY_WORD_COUNT,
             promotion_message=promotion_message,
+            discipline=Config.DISCIPLINE,
         )
 
     def _validate_linkedin_profiles(self, story: Story) -> tuple[bool, str]:
@@ -350,7 +351,7 @@ class ContentVerifier:
         - At least 1 relevant person identified
         - At least 1 LinkedIn profile found (50% coverage minimum)
         """
-        all_people = (story.story_people or []) + (story.org_leaders or [])
+        all_people = (story.direct_people or []) + (story.indirect_people or [])
         relevant_count = len(all_people)
         linkedin_count = 0
 
@@ -363,6 +364,10 @@ class ContentVerifier:
             )
 
         # Validation rules for sufficient people and LinkedIn profile coverage
+        # Note: We prioritize having SOME profiles over a strict percentage threshold
+        # Having 3+ LinkedIn profiles is considered sufficient for engagement
+        min_profiles_for_engagement = 3
+
         if relevant_count == 0:
             return (
                 False,
@@ -373,11 +378,11 @@ class ContentVerifier:
                 False,
                 f"{relevant_count} people identified but no LinkedIn profiles found - run enrichment first",
             )
-        elif linkedin_count < (relevant_count * 0.5):
+        elif linkedin_count < min_profiles_for_engagement:
             return (
                 False,
-                f"Insufficient LinkedIn coverage: {linkedin_count}/{relevant_count} profiles "
-                f"({int(linkedin_count / relevant_count * 100)}%) - need at least 50%",
+                f"Insufficient LinkedIn coverage: only {linkedin_count} profiles found "
+                f"(need at least {min_profiles_for_engagement} for meaningful engagement)",
             )
         else:
             return (True, f"{linkedin_count}/{relevant_count} LinkedIn profiles found")

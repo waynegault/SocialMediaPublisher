@@ -41,7 +41,6 @@ class Story:
     5. Verification - Content quality verification
     6. Scheduling/Publishing - Publication workflow
     7. Analytics - Post-publication metrics
-    8. Legacy - Deprecated fields for backward compatibility
     """
 
     # --- 1. IDENTITY ---
@@ -65,14 +64,9 @@ class Story:
     organizations: list[str] = field(default_factory=list)  # ["BASF", "MIT", "IChemE"]
     # People mentioned directly in the story (PRIMARY field for @mentions)
     # [{"name": "Dr. Jane Smith", "title": "Lead Researcher", "affiliation": "MIT", "linkedin_profile": "", "linkedin_urn": ""}]
-    story_people: list[dict] = field(default_factory=list)
+    direct_people: list[dict] = field(default_factory=list)
     # Key leaders from the organizations (CEO, CTO, etc.) - for secondary @mentions
     # [{"name": "John Doe", "title": "CEO", "organization": "BASF", "linkedin_profile": "", "linkedin_urn": ""}]
-    org_leaders: list[dict] = field(
-        default_factory=list
-    )  # [{"name": "John Doe", "title": "CEO", "organization": "BASF"}]
-    # New canonical fields for enrichment pipeline
-    direct_people: list[dict] = field(default_factory=list)
     indirect_people: list[dict] = field(default_factory=list)
 
     # --- 3b. ENRICHMENT METADATA (Phase 1) ---
@@ -110,15 +104,6 @@ class Story:
     )
     linkedin_analytics_fetched_at: Optional[datetime] = None
 
-    # --- 8. LEGACY FIELDS (deprecated, kept for backward compatibility) ---
-    company_mention_enrichment: Optional[str] = None  # DEPRECATED - use organizations
-    individuals: list[str] = field(
-        default_factory=list
-    )  # DEPRECATED - use story_people
-    linkedin_profiles: list[dict] = field(
-        default_factory=list
-    )  # DEPRECATED - use story_people.linkedin_profile
-
     def to_dict(self) -> dict:
         """Convert story to dictionary (organized by workflow sequence)."""
         return {
@@ -138,8 +123,6 @@ class Story:
             # 3. Enrichment
             "enrichment_status": self.enrichment_status,
             "organizations": self.organizations,
-            "story_people": self.story_people,
-            "org_leaders": self.org_leaders,
             "direct_people": self.direct_people,
             "indirect_people": self.indirect_people,
             "enrichment_log": self.enrichment_log,
@@ -171,129 +154,164 @@ class Story:
             "linkedin_analytics_fetched_at": self.linkedin_analytics_fetched_at.isoformat()
             if self.linkedin_analytics_fetched_at
             else None,
-            # 8. Legacy (deprecated)
-            "company_mention_enrichment": self.company_mention_enrichment,
-            "individuals": self.individuals,
-            "linkedin_profiles": self.linkedin_profiles,
         }
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Story":
         """Create a Story from a database row."""
-        source_links = []
-        if row["source_links"]:
+
+        # Parse JSON fields
+        def _parse_json_list(value: str | None) -> list:
+            if not value:
+                return []
             try:
-                source_links = json.loads(row["source_links"])
+                return json.loads(value)
             except json.JSONDecodeError:
-                source_links = [row["source_links"]]
+                return [value] if value else []
 
-        # Handle optional columns that may not exist in older databases
-        keys = row.keys()
-
-        # Parse hashtags (JSON array)
-        hashtags = []
-        if "hashtags" in keys and row["hashtags"]:
+        def _parse_json_dict(value: str | None) -> dict:
+            if not value:
+                return {}
             try:
-                hashtags = json.loads(row["hashtags"])
+                return json.loads(value)
             except json.JSONDecodeError:
-                hashtags = []
-
-        organizations = (
-            json.loads(row["organizations"])
-            if "organizations" in keys and row["organizations"]
-            else []
-        )
-        story_people = (
-            json.loads(row["story_people"])
-            if "story_people" in keys and row["story_people"]
-            else []
-        )
-        org_leaders = (
-            json.loads(row["org_leaders"])
-            if "org_leaders" in keys and row["org_leaders"]
-            else []
-        )
-        direct_people = (
-            json.loads(row["direct_people"])
-            if "direct_people" in keys and row["direct_people"]
-            else []
-        )
-        indirect_people = (
-            json.loads(row["indirect_people"])
-            if "indirect_people" in keys and row["indirect_people"]
-            else []
-        )
+                return {}
 
         return cls(
             id=row["id"],
             title=row["title"],
             summary=row["summary"],
-            source_links=source_links,
+            source_links=_parse_json_list(row["source_links"]),
             acquire_date=_parse_datetime(row["acquire_date"]),
             quality_score=row["quality_score"],
-            category=row["category"] if "category" in keys else "Other",
-            quality_justification=row["quality_justification"]
-            if "quality_justification" in keys
-            else "",
+            category=row["category"],
+            quality_justification=row["quality_justification"] or "",
             image_path=row["image_path"],
-            image_alt_text=row["image_alt_text"] if "image_alt_text" in keys else None,
+            image_alt_text=row["image_alt_text"],
             verification_status=row["verification_status"],
-            verification_reason=row["verification_reason"]
-            if "verification_reason" in keys
-            else None,
+            verification_reason=row["verification_reason"],
             publish_status=row["publish_status"],
             scheduled_time=_parse_datetime(row["scheduled_time"]),
             published_time=_parse_datetime(row["published_time"]),
             linkedin_post_id=row["linkedin_post_id"],
-            linkedin_post_url=row["linkedin_post_url"]
-            if "linkedin_post_url" in keys
-            else None,
-            hashtags=hashtags,
-            linkedin_impressions=row["linkedin_impressions"]
-            if "linkedin_impressions" in keys
-            else 0,
-            linkedin_clicks=row["linkedin_clicks"] if "linkedin_clicks" in keys else 0,
-            linkedin_likes=row["linkedin_likes"] if "linkedin_likes" in keys else 0,
-            linkedin_comments=row["linkedin_comments"]
-            if "linkedin_comments" in keys
-            else 0,
-            linkedin_shares=row["linkedin_shares"] if "linkedin_shares" in keys else 0,
-            linkedin_engagement=row["linkedin_engagement"]
-            if "linkedin_engagement" in keys
-            else 0.0,
+            linkedin_post_url=row["linkedin_post_url"],
+            hashtags=_parse_json_list(row["hashtags"]),
+            linkedin_impressions=row["linkedin_impressions"] or 0,
+            linkedin_clicks=row["linkedin_clicks"] or 0,
+            linkedin_likes=row["linkedin_likes"] or 0,
+            linkedin_comments=row["linkedin_comments"] or 0,
+            linkedin_shares=row["linkedin_shares"] or 0,
+            linkedin_engagement=row["linkedin_engagement"] or 0.0,
             linkedin_analytics_fetched_at=_parse_datetime(
                 row["linkedin_analytics_fetched_at"]
-            )
-            if "linkedin_analytics_fetched_at" in keys
+            ),
+            enrichment_status=row["enrichment_status"] or "pending",
+            organizations=_parse_json_list(row["organizations"]),
+            direct_people=_parse_json_list(row["direct_people"]),
+            indirect_people=_parse_json_list(row["indirect_people"]),
+            enrichment_log=_parse_json_dict(row["enrichment_log"]),
+            enrichment_quality=row["enrichment_quality"] or "",
+            promotion=row["promotion"],
+        )
+
+
+@dataclass
+class Person:
+    """Represents a person associated with a story.
+
+    People are linked to stories via the story_people table.
+    Each person has LinkedIn profile information and connection tracking.
+    """
+
+    # --- Identity ---
+    id: Optional[int] = None
+    name: str = ""
+    title: Optional[str] = None  # Job title (e.g., "Lead Researcher", "CEO")
+    organization: Optional[str] = None  # Company/institution they work at
+
+    # --- Enhanced Matching Fields ---
+    location: Optional[str] = None  # Location (e.g., "Cambridge, UK")
+    specialty: Optional[str] = (
+        None  # Field of expertise (e.g., "catalysis", "process safety")
+    )
+    department: Optional[str] = None  # Department name (e.g., "Chemical Engineering")
+
+    # --- Story Relationship ---
+    story_id: Optional[int] = None  # Which story this person is associated with
+    relationship_type: str = (
+        "direct"  # "direct" (mentioned in story) or "indirect" (org leader)
+    )
+
+    # --- LinkedIn Profile ---
+    linkedin_profile: Optional[str] = (
+        None  # Profile URL (e.g., "https://www.linkedin.com/in/username")
+    )
+    linkedin_urn: Optional[str] = (
+        None  # LinkedIn URN for @mentions (e.g., "urn:li:person:ABC123")
+    )
+
+    # --- Connection Tracking ---
+    connection_status: str = "none"  # none, pending, connected, failed
+    connection_sent_at: Optional[datetime] = None
+    connection_message: Optional[str] = None  # The personalized intro message sent
+
+    # --- Metadata ---
+    created_at: Optional[datetime] = None
+
+    def to_dict(self) -> dict:
+        """Convert person to dictionary."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "title": self.title,
+            "organization": self.organization,
+            "location": self.location,
+            "specialty": self.specialty,
+            "department": self.department,
+            "story_id": self.story_id,
+            "relationship_type": self.relationship_type,
+            "linkedin_profile": self.linkedin_profile,
+            "linkedin_urn": self.linkedin_urn,
+            "connection_status": self.connection_status,
+            "connection_sent_at": self.connection_sent_at.isoformat()
+            if self.connection_sent_at
             else None,
-            enrichment_status=row["enrichment_status"]
-            if "enrichment_status" in keys
-            else "pending",
-            # New fields
-            organizations=organizations,
-            direct_people=direct_people,
-            indirect_people=indirect_people,
-            story_people=story_people,
-            org_leaders=org_leaders,
-            # Phase 1: Enrichment metadata
-            enrichment_log=json.loads(row["enrichment_log"])
-            if "enrichment_log" in keys and row["enrichment_log"]
-            else {},
-            enrichment_quality=row["enrichment_quality"]
-            if "enrichment_quality" in keys
-            else "",
-            # Promotion message
-            promotion=row["promotion"] if "promotion" in keys else None,
-            # Legacy fields
-            company_mention_enrichment=row["company_mention_enrichment"]
-            if "company_mention_enrichment" in keys
+            "connection_message": self.connection_message,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "Person":
+        """Create a Person from a database row."""
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            name=row["name"],
+            title=row["title"] if "title" in keys else None,
+            organization=row["organization"] if "organization" in keys else None,
+            location=row["location"] if "location" in keys else None,
+            specialty=row["specialty"] if "specialty" in keys else None,
+            department=row["department"] if "department" in keys else None,
+            story_id=row["story_id"] if "story_id" in keys else None,
+            relationship_type=row["relationship_type"]
+            if "relationship_type" in keys
+            else "direct",
+            linkedin_profile=row["linkedin_profile"]
+            if "linkedin_profile" in keys
             else None,
-            individuals=json.loads(row["individuals"])
-            if "individuals" in keys and row["individuals"]
-            else [],
-            linkedin_profiles=json.loads(row["linkedin_profiles"])
-            if "linkedin_profiles" in keys and row["linkedin_profiles"]
-            else [],
+            linkedin_urn=row["linkedin_urn"] if "linkedin_urn" in keys else None,
+            connection_status=row["connection_status"]
+            if "connection_status" in keys
+            else "none",
+            connection_sent_at=_parse_datetime(row["connection_sent_at"])
+            if "connection_sent_at" in keys
+            else None,
+            connection_message=row["connection_message"]
+            if "connection_message" in keys
+            else None,
+            created_at=_parse_datetime(row["created_at"])
+            if "created_at" in keys
+            else None,
         )
 
 
@@ -346,8 +364,9 @@ class Database:
         column_name: str,
         column_def: str,
         existing_columns: set[str] | None = None,
+        table_name: str = "stories",
     ) -> None:
-        """Add a column to the stories table if it doesn't exist.
+        """Add a column to a table if it doesn't exist.
 
         Args:
             cursor: Database cursor
@@ -355,6 +374,7 @@ class Database:
             column_def: Column definition (e.g., 'TEXT DEFAULT NULL')
             existing_columns: Optional pre-fetched set of existing column names
                              (avoids repeated PRAGMA calls)
+            table_name: Name of the table to add the column to (default: 'stories')
         """
         # If existing_columns provided, do a quick check first
         if existing_columns is not None:
@@ -362,8 +382,10 @@ class Database:
                 return  # Column already exists, skip
 
         try:
-            cursor.execute(f"ALTER TABLE stories ADD COLUMN {column_name} {column_def}")
-            logger.debug(f"Added column '{column_name}' to stories table")
+            cursor.execute(
+                f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}"
+            )
+            logger.debug(f"Added column '{column_name}' to {table_name} table")
         except sqlite3.OperationalError as e:
             if "duplicate column name" in str(e).lower():
                 pass  # Column already exists
@@ -415,9 +437,6 @@ class Database:
             self._migrate_add_column(
                 cursor, "hashtags", "TEXT DEFAULT '[]'", existing_columns
             )
-            self._migrate_add_column(
-                cursor, "linkedin_mentions", "TEXT DEFAULT '[]'", existing_columns
-            )
             # LinkedIn analytics columns
             self._migrate_add_column(
                 cursor, "linkedin_impressions", "INTEGER DEFAULT 0", existing_columns
@@ -440,29 +459,12 @@ class Database:
             self._migrate_add_column(
                 cursor, "linkedin_analytics_fetched_at", "TIMESTAMP", existing_columns
             )
-            # Company mention enrichment columns
-            self._migrate_add_column(
-                cursor, "company_mention_enrichment", "TEXT", existing_columns
-            )
+            # Enrichment columns
             self._migrate_add_column(
                 cursor, "enrichment_status", "TEXT DEFAULT 'pending'", existing_columns
             )
-            # Individual people and their LinkedIn profiles (legacy)
-            self._migrate_add_column(
-                cursor, "individuals", "TEXT DEFAULT '[]'", existing_columns
-            )
-            self._migrate_add_column(
-                cursor, "linkedin_profiles", "TEXT DEFAULT '[]'", existing_columns
-            )
-            # New enrichment fields (cleaner structure)
             self._migrate_add_column(
                 cursor, "organizations", "TEXT DEFAULT '[]'", existing_columns
-            )
-            self._migrate_add_column(
-                cursor, "story_people", "TEXT DEFAULT '[]'", existing_columns
-            )
-            self._migrate_add_column(
-                cursor, "org_leaders", "TEXT DEFAULT '[]'", existing_columns
             )
             self._migrate_add_column(
                 cursor, "direct_people", "TEXT DEFAULT '[]'", existing_columns
@@ -470,10 +472,6 @@ class Database:
             self._migrate_add_column(
                 cursor, "indirect_people", "TEXT DEFAULT '[]'", existing_columns
             )
-            self._migrate_add_column(
-                cursor, "linkedin_handles", "TEXT DEFAULT '[]'", existing_columns
-            )
-            # Phase 1: Enrichment metadata fields
             self._migrate_add_column(
                 cursor, "enrichment_log", "TEXT DEFAULT '{}'", existing_columns
             )
@@ -493,6 +491,59 @@ class Database:
                 )
             """)
 
+            # People table for tracking individuals mentioned in stories
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS people (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    title TEXT,
+                    organization TEXT,
+                    story_id INTEGER REFERENCES stories(id) ON DELETE CASCADE,
+                    relationship_type TEXT DEFAULT 'direct',
+                    linkedin_profile TEXT,
+                    linkedin_urn TEXT,
+                    connection_status TEXT DEFAULT 'none',
+                    connection_sent_at TIMESTAMP,
+                    connection_message TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(linkedin_profile, story_id)
+                )
+            """)
+
+            # Migrate people table: add new columns if they don't exist
+            existing_people_columns = self._get_existing_columns(cursor, "people")
+            self._migrate_add_column(
+                cursor, "location", "TEXT", existing_people_columns, "people"
+            )
+            self._migrate_add_column(
+                cursor, "specialty", "TEXT", existing_people_columns, "people"
+            )
+            self._migrate_add_column(
+                cursor, "department", "TEXT", existing_people_columns, "people"
+            )
+
+            # Connection queue table for batch connection requests
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS connection_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    person_id INTEGER REFERENCES people(id) ON DELETE CASCADE,
+                    linkedin_profile TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    title TEXT,
+                    organization TEXT,
+                    story_id INTEGER,
+                    story_title TEXT,
+                    story_summary TEXT,
+                    message TEXT,
+                    priority INTEGER DEFAULT 5,
+                    status TEXT DEFAULT 'queued',
+                    queued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    sent_at TIMESTAMP,
+                    error_message TEXT,
+                    UNIQUE(linkedin_profile)
+                )
+            """)
+
             # Indices for common queries
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_stories_status
@@ -505,6 +556,20 @@ class Database:
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_stories_category
                 ON stories(category)
+            """)
+
+            # Indices for people table
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_people_story
+                ON people(story_id)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_people_linkedin_profile
+                ON people(linkedin_profile)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_people_connection_status
+                ON people(connection_status)
             """)
 
             logger.debug("Database initialized successfully")
@@ -520,10 +585,10 @@ class Database:
                 INSERT INTO stories
                 (title, summary, source_links, acquire_date, quality_score,
                  category, quality_justification, image_path, verification_status,
-                 publish_status, hashtags, company_mention_enrichment,
-                 enrichment_status, story_people, direct_people, organizations,
-                 org_leaders, indirect_people, enrichment_log, enrichment_quality)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 publish_status, hashtags, enrichment_status, direct_people,
+                 organizations, indirect_people, enrichment_log, enrichment_quality,
+                 promotion)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     story.title,
@@ -537,15 +602,13 @@ class Database:
                     story.verification_status,
                     story.publish_status,
                     json.dumps(story.hashtags),
-                    story.company_mention_enrichment,
                     story.enrichment_status,
-                    json.dumps(story.story_people),
                     json.dumps(story.direct_people),
                     json.dumps(story.organizations),
-                    json.dumps(story.org_leaders),
                     json.dumps(story.indirect_people),
                     json.dumps(story.enrichment_log),
                     story.enrichment_quality,
+                    story.promotion,
                 ),
             )
             story_id = cursor.lastrowid or 0
@@ -676,15 +739,11 @@ class Database:
                     linkedin_analytics_fetched_at = ?,
                     enrichment_status = ?,
                     organizations = ?,
-                    story_people = ?,
                     direct_people = ?,
-                    org_leaders = ?,
                     indirect_people = ?,
                     enrichment_log = ?,
                     enrichment_quality = ?,
-                    company_mention_enrichment = ?,
-                    individuals = ?,
-                    linkedin_profiles = ?
+                    promotion = ?
                 WHERE id = ?
                 """,
                 (
@@ -713,15 +772,11 @@ class Database:
                     story.linkedin_analytics_fetched_at,
                     story.enrichment_status,
                     json.dumps(story.organizations),
-                    json.dumps(story.story_people),
                     json.dumps(story.direct_people),
-                    json.dumps(story.org_leaders),
                     json.dumps(story.indirect_people),
                     json.dumps(story.enrichment_log),
                     story.enrichment_quality,
-                    story.company_mention_enrichment,
-                    json.dumps(story.individuals),
-                    json.dumps(story.linkedin_profiles),
+                    story.promotion,
                     story.id,
                 ),
             )
@@ -1003,12 +1058,11 @@ class Database:
             )
             stats["enriched_count"] = cursor.fetchone()[0]
 
+            # Count stories with organizations (replaces company_mention_enrichment)
             cursor.execute(
-                "SELECT COUNT(*) FROM stories WHERE enrichment_status = 'enriched' AND company_mention_enrichment IS NOT NULL"
+                "SELECT COUNT(*) FROM stories WHERE enrichment_status = 'enriched' AND organizations != '[]' AND organizations IS NOT NULL"
             )
-            stats["with_mentions"] = cursor.fetchone()[0]
-
-            stats["no_mentions"] = stats["enriched_count"] - stats["with_mentions"]
+            stats["with_organizations"] = cursor.fetchone()[0]
 
             return stats
 
@@ -1033,26 +1087,26 @@ class Database:
 
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Search story_people first
+            # Search direct_people and indirect_people
             cursor.execute(
                 """
-                SELECT story_people, org_leaders FROM stories
-                WHERE story_people LIKE ? OR org_leaders LIKE ?
+                SELECT direct_people, indirect_people FROM stories
+                WHERE direct_people LIKE ? OR indirect_people LIKE ?
             """,
                 (f"%{urn}%", f"%{urn}%"),
             )
 
             for row in cursor.fetchall():
-                # Check story_people
-                if row["story_people"]:
-                    people = json.loads(row["story_people"])
+                # Check direct_people
+                if row["direct_people"]:
+                    people = json.loads(row["direct_people"])
                     for person in people:
                         if person.get("linkedin_urn") == urn:
                             return person
 
-                # Check org_leaders
-                if row["org_leaders"]:
-                    leaders = json.loads(row["org_leaders"])
+                # Check indirect_people
+                if row["indirect_people"]:
+                    leaders = json.loads(row["indirect_people"])
                     for leader in leaders:
                         if leader.get("linkedin_urn") == urn:
                             return leader
@@ -1083,13 +1137,13 @@ class Database:
 
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT story_people, org_leaders FROM stories")
+            cursor.execute("SELECT direct_people, indirect_people FROM stories")
 
             best_match: dict | None = None
             best_score = 0
 
             for row in cursor.fetchall():
-                for field_name in ["story_people", "org_leaders"]:
+                for field_name in ["direct_people", "indirect_people"]:
                     data = row[field_name]
                     if not data:
                         continue
@@ -1158,7 +1212,7 @@ class Database:
             stats: dict = {}
 
             # Total people counts
-            cursor.execute("SELECT story_people, org_leaders FROM stories")
+            cursor.execute("SELECT direct_people, indirect_people FROM stories")
             total_direct = 0
             total_indirect = 0
             with_linkedin = 0
@@ -1166,8 +1220,8 @@ class Database:
             org_fallback = 0
 
             for row in cursor.fetchall():
-                if row["story_people"]:
-                    people = json.loads(row["story_people"])
+                if row["direct_people"]:
+                    people = json.loads(row["direct_people"])
                     total_direct += len(people)
                     for p in people:
                         if p.get("linkedin_profile") or p.get("linkedin_urn"):
@@ -1178,8 +1232,8 @@ class Database:
                         elif conf == "org_fallback":
                             org_fallback += 1
 
-                if row["org_leaders"]:
-                    leaders = json.loads(row["org_leaders"])
+                if row["indirect_people"]:
+                    leaders = json.loads(row["indirect_people"])
                     total_indirect += len(leaders)
                     for l in leaders:
                         if l.get("linkedin_profile") or l.get("linkedin_urn"):
@@ -1364,6 +1418,618 @@ class Database:
             True if backup exists
         """
         return Path(self.db_name + suffix).exists()
+
+    # ==========================================================================
+    # PEOPLE CRUD OPERATIONS
+    # ==========================================================================
+
+    def add_person(self, person: Person) -> int:
+        """Add a new person to the database. Returns the person ID.
+
+        If a person with the same linkedin_profile and story_id already exists,
+        returns the existing person's ID instead of creating a duplicate.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check for existing person with same linkedin_profile and story_id
+            if person.linkedin_profile and person.story_id:
+                cursor.execute(
+                    """
+                    SELECT id FROM people
+                    WHERE linkedin_profile = ? AND story_id = ?
+                    """,
+                    (person.linkedin_profile, person.story_id),
+                )
+                existing = cursor.fetchone()
+                if existing:
+                    return existing["id"]
+
+            cursor.execute(
+                """
+                INSERT INTO people
+                (name, title, organization, location, specialty, department,
+                 story_id, relationship_type,
+                 linkedin_profile, linkedin_urn, connection_status,
+                 connection_sent_at, connection_message, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    person.name,
+                    person.title,
+                    person.organization,
+                    person.location,
+                    person.specialty,
+                    person.department,
+                    person.story_id,
+                    person.relationship_type,
+                    person.linkedin_profile,
+                    person.linkedin_urn,
+                    person.connection_status,
+                    person.connection_sent_at,
+                    person.connection_message,
+                    person.created_at or datetime.now(),
+                ),
+            )
+            return cursor.lastrowid or 0
+
+    def get_person(self, person_id: int) -> Optional[Person]:
+        """Get a person by ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM people WHERE id = ?", (person_id,))
+            row = cursor.fetchone()
+            return Person.from_row(row) if row else None
+
+    def get_person_by_linkedin_profile(self, linkedin_profile: str) -> Optional[Person]:
+        """Get a person by LinkedIn profile URL.
+
+        Returns the first matching person (may have multiple across stories).
+        """
+        if not linkedin_profile:
+            return None
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM people WHERE linkedin_profile = ? LIMIT 1",
+                (linkedin_profile,),
+            )
+            row = cursor.fetchone()
+            return Person.from_row(row) if row else None
+
+    def get_people_for_story(self, story_id: int) -> list[Person]:
+        """Get all people associated with a story."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM people WHERE story_id = ? ORDER BY relationship_type, name",
+                (story_id,),
+            )
+            return [Person.from_row(row) for row in cursor.fetchall()]
+
+    def get_direct_people_for_story(self, story_id: int) -> list[Person]:
+        """Get direct people (mentioned in story) for a story."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM people
+                WHERE story_id = ? AND relationship_type = 'direct'
+                ORDER BY name
+                """,
+                (story_id,),
+            )
+            return [Person.from_row(row) for row in cursor.fetchall()]
+
+    def get_indirect_people_for_story(self, story_id: int) -> list[Person]:
+        """Get indirect people (org leaders) for a story."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM people
+                WHERE story_id = ? AND relationship_type = 'indirect'
+                ORDER BY name
+                """,
+                (story_id,),
+            )
+            return [Person.from_row(row) for row in cursor.fetchall()]
+
+    def update_person(self, person: Person) -> bool:
+        """Update an existing person."""
+        if person.id is None:
+            return False
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE people SET
+                    name = ?,
+                    title = ?,
+                    organization = ?,
+                    story_id = ?,
+                    relationship_type = ?,
+                    linkedin_profile = ?,
+                    linkedin_urn = ?,
+                    connection_status = ?,
+                    connection_sent_at = ?,
+                    connection_message = ?
+                WHERE id = ?
+                """,
+                (
+                    person.name,
+                    person.title,
+                    person.organization,
+                    person.story_id,
+                    person.relationship_type,
+                    person.linkedin_profile,
+                    person.linkedin_urn,
+                    person.connection_status,
+                    person.connection_sent_at,
+                    person.connection_message,
+                    person.id,
+                ),
+            )
+            return cursor.rowcount > 0
+
+    def delete_person(self, person_id: int) -> bool:
+        """Delete a person by ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM people WHERE id = ?", (person_id,))
+            return cursor.rowcount > 0
+
+    def get_people_needing_connection(self) -> list[Person]:
+        """Get all people with LinkedIn profiles who haven't been connected yet."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM people
+                WHERE linkedin_profile IS NOT NULL
+                  AND linkedin_profile != ''
+                  AND connection_status = 'none'
+                ORDER BY created_at DESC
+                """
+            )
+            return [Person.from_row(row) for row in cursor.fetchall()]
+
+    def get_people_with_pending_connections(self) -> list[Person]:
+        """Get all people with pending connection requests."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM people
+                WHERE connection_status = 'pending'
+                ORDER BY connection_sent_at DESC
+                """
+            )
+            return [Person.from_row(row) for row in cursor.fetchall()]
+
+    def get_unique_people_with_profiles(self) -> list[Person]:
+        """Get unique people by LinkedIn profile URL (deduped across stories).
+
+        Returns one Person record per unique linkedin_profile, preferring
+        the most recent record.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT p.* FROM people p
+                INNER JOIN (
+                    SELECT linkedin_profile, MAX(id) as max_id
+                    FROM people
+                    WHERE linkedin_profile IS NOT NULL AND linkedin_profile != ''
+                    GROUP BY linkedin_profile
+                ) latest ON p.id = latest.max_id
+                ORDER BY p.name
+                """
+            )
+            return [Person.from_row(row) for row in cursor.fetchall()]
+
+    def mark_connection_sent(
+        self, person_id: int, message: str, status: str = "pending"
+    ) -> bool:
+        """Mark a connection request as sent for a person.
+
+        Args:
+            person_id: The person ID
+            message: The connection message that was sent
+            status: The connection status (default: "pending")
+
+        Returns:
+            True if update succeeded
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE people SET
+                    connection_status = ?,
+                    connection_sent_at = ?,
+                    connection_message = ?
+                WHERE id = ?
+                """,
+                (status, datetime.now(), message, person_id),
+            )
+            return cursor.rowcount > 0
+
+    def update_connection_status(self, person_id: int, status: str) -> bool:
+        """Update the connection status for a person.
+
+        Args:
+            person_id: The person ID
+            status: New status (none, pending, connected, failed)
+
+        Returns:
+            True if update succeeded
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE people SET connection_status = ? WHERE id = ?",
+                (status, person_id),
+            )
+            return cursor.rowcount > 0
+
+    def get_people_stats(self) -> dict:
+        """Get statistics about people in the database."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            stats = {}
+
+            cursor.execute("SELECT COUNT(*) FROM people")
+            stats["total_people"] = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM people WHERE relationship_type = 'direct'"
+            )
+            stats["direct_people"] = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM people WHERE relationship_type = 'indirect'"
+            )
+            stats["indirect_people"] = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM people WHERE linkedin_profile IS NOT NULL AND linkedin_profile != ''"
+            )
+            stats["with_linkedin"] = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM people WHERE connection_status = 'none' AND linkedin_profile IS NOT NULL"
+            )
+            stats["awaiting_connection"] = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM people WHERE connection_status = 'pending'"
+            )
+            stats["pending_connections"] = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM people WHERE connection_status = 'connected'"
+            )
+            stats["connected"] = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(DISTINCT linkedin_profile) FROM people WHERE linkedin_profile IS NOT NULL"
+            )
+            stats["unique_profiles"] = cursor.fetchone()[0]
+
+            return stats
+
+    # ==========================================================================
+    # CONNECTION QUEUE OPERATIONS
+    # ==========================================================================
+
+    def queue_connection_request(
+        self,
+        person_id: Optional[int],
+        linkedin_profile: str,
+        name: str,
+        title: str = "",
+        organization: str = "",
+        story_id: Optional[int] = None,
+        story_title: str = "",
+        story_summary: str = "",
+        message: str = "",
+        priority: int = 5,
+    ) -> int:
+        """Add a person to the connection request queue.
+
+        Args:
+            person_id: Optional ID from people table
+            linkedin_profile: LinkedIn profile URL (required)
+            name: Person's name (required)
+            title: Job title
+            organization: Company/institution
+            story_id: Related story ID
+            story_title: Story title for message personalization
+            story_summary: Story summary for context
+            message: Pre-generated connection message
+            priority: Queue priority (1=highest, 10=lowest)
+
+        Returns:
+            Queue entry ID, or 0 if already queued
+        """
+        if not linkedin_profile or not name:
+            return 0
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check if already queued
+            cursor.execute(
+                "SELECT id FROM connection_queue WHERE linkedin_profile = ?",
+                (linkedin_profile,),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                return existing["id"]
+
+            cursor.execute(
+                """
+                INSERT INTO connection_queue
+                (person_id, linkedin_profile, name, title, organization,
+                 story_id, story_title, story_summary, message, priority, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued')
+                """,
+                (
+                    person_id,
+                    linkedin_profile,
+                    name,
+                    title,
+                    organization,
+                    story_id,
+                    story_title,
+                    story_summary[:500] if story_summary else "",
+                    message,
+                    priority,
+                ),
+            )
+            queue_id = cursor.lastrowid or 0
+            logger.debug(f"Queued connection request for {name}: ID {queue_id}")
+            return queue_id
+
+    def get_queued_connections(
+        self, limit: int = 20, status: str = "queued"
+    ) -> list[dict]:
+        """Get connection requests from the queue.
+
+        Args:
+            limit: Maximum number to return
+            status: Filter by status ('queued', 'sent', 'failed', 'all')
+
+        Returns:
+            List of queue entry dicts
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            if status == "all":
+                cursor.execute(
+                    """
+                    SELECT * FROM connection_queue
+                    ORDER BY priority ASC, queued_at ASC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT * FROM connection_queue
+                    WHERE status = ?
+                    ORDER BY priority ASC, queued_at ASC
+                    LIMIT ?
+                    """,
+                    (status, limit),
+                )
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    def update_queue_status(
+        self,
+        queue_id: int,
+        status: str,
+        error_message: str = "",
+    ) -> bool:
+        """Update the status of a queued connection request.
+
+        Args:
+            queue_id: Queue entry ID
+            status: New status ('sent', 'failed', 'skipped')
+            error_message: Error message if failed
+
+        Returns:
+            True if updated
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            if status == "sent":
+                cursor.execute(
+                    """
+                    UPDATE connection_queue
+                    SET status = ?, sent_at = ?, error_message = NULL
+                    WHERE id = ?
+                    """,
+                    (status, datetime.now(), queue_id),
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE connection_queue
+                    SET status = ?, error_message = ?
+                    WHERE id = ?
+                    """,
+                    (status, error_message, queue_id),
+                )
+
+            return cursor.rowcount > 0
+
+    def remove_from_queue(self, queue_id: int) -> bool:
+        """Remove an entry from the connection queue.
+
+        Args:
+            queue_id: Queue entry ID
+
+        Returns:
+            True if deleted
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM connection_queue WHERE id = ?", (queue_id,))
+            return cursor.rowcount > 0
+
+    def clear_queue(self, status: Optional[str] = None) -> int:
+        """Clear the connection queue.
+
+        Args:
+            status: If provided, only clear entries with this status.
+                    If None, clear all entries.
+
+        Returns:
+            Number of entries deleted
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if status:
+                cursor.execute(
+                    "DELETE FROM connection_queue WHERE status = ?", (status,)
+                )
+            else:
+                cursor.execute("DELETE FROM connection_queue")
+            return cursor.rowcount
+
+    def get_queue_stats(self) -> dict:
+        """Get connection queue statistics.
+
+        Returns:
+            Dict with queue statistics
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            stats = {}
+
+            cursor.execute("SELECT COUNT(*) FROM connection_queue")
+            stats["total_queued"] = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM connection_queue WHERE status = 'queued'"
+            )
+            stats["pending"] = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM connection_queue WHERE status = 'sent'"
+            )
+            stats["sent"] = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM connection_queue WHERE status = 'failed'"
+            )
+            stats["failed"] = cursor.fetchone()[0]
+
+            # Get priority breakdown
+            cursor.execute("""
+                SELECT priority, COUNT(*) as cnt
+                FROM connection_queue
+                WHERE status = 'queued'
+                GROUP BY priority
+                ORDER BY priority
+            """)
+            stats["by_priority"] = {
+                row["priority"]: row["cnt"] for row in cursor.fetchall()
+            }
+
+            return stats
+
+    def get_connection_history(self, days: int = 30, limit: int = 100) -> list[dict]:
+        """Get connection request history for dashboard.
+
+        Args:
+            days: Number of days to look back
+            limit: Maximum number of records
+
+        Returns:
+            List of connection history records
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT
+                    p.name,
+                    p.title,
+                    p.organization,
+                    p.linkedin_profile,
+                    p.connection_status,
+                    p.connection_sent_at,
+                    p.connection_message,
+                    s.title as story_title
+                FROM people p
+                LEFT JOIN stories s ON p.story_id = s.id
+                WHERE p.connection_status != 'none'
+                  AND p.connection_sent_at >= datetime('now', '-' || ? || ' days')
+                ORDER BY p.connection_sent_at DESC
+                LIMIT ?
+                """,
+                (days, limit),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_connection_acceptance_rate(self, days: int = 30) -> dict:
+        """Calculate connection acceptance rate over a period.
+
+        Args:
+            days: Number of days to analyze
+
+        Returns:
+            Dict with acceptance statistics
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            stats = {
+                "total_sent": 0,
+                "accepted": 0,
+                "pending": 0,
+                "failed": 0,
+                "acceptance_rate": 0.0,
+            }
+
+            cursor.execute(
+                """
+                SELECT connection_status, COUNT(*) as cnt
+                FROM people
+                WHERE connection_status != 'none'
+                  AND connection_sent_at >= datetime('now', '-' || ? || ' days')
+                GROUP BY connection_status
+                """,
+                (days,),
+            )
+
+            for row in cursor.fetchall():
+                status = row["connection_status"]
+                count = row["cnt"]
+                stats["total_sent"] += count
+
+                if status == "connected":
+                    stats["accepted"] = count
+                elif status == "pending":
+                    stats["pending"] = count
+                elif status == "failed":
+                    stats["failed"] = count
+
+            # Calculate rate (excluding pending)
+            responded = stats["accepted"] + stats["failed"]
+            if responded > 0:
+                stats["acceptance_rate"] = stats["accepted"] / responded
+
+            return stats
 
 
 # ============================================================================

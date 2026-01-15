@@ -22,7 +22,7 @@ def analyze_database():
     columns = {row[1] for row in cursor.fetchall()}
 
     # Build query based on available columns
-    base_cols = "id, title, verification_status, enrichment_status, image_path, story_people, org_leaders"
+    base_cols = "id, title, verification_status, enrichment_status, image_path, direct_people, indirect_people"
     optional_cols = []
     if "enrichment_log" in columns:
         optional_cols.append("enrichment_log")
@@ -56,34 +56,36 @@ def analyze_database():
             row["match_confidence"] if "match_confidence" in row.keys() else "n/a"
         )
 
-        # Parse story_people
-        story_people = []
-        if row["story_people"]:
+        # Parse direct_people
+        direct_people = []
+        if row["direct_people"]:
             try:
-                story_people = json.loads(row["story_people"])
+                direct_people = json.loads(row["direct_people"])
             except Exception:
                 pass
 
-        # Parse org_leaders
-        org_leaders = []
-        if row["org_leaders"]:
+        # Parse indirect_people
+        indirect_people = []
+        if row["indirect_people"]:
             try:
-                org_leaders = json.loads(row["org_leaders"])
+                indirect_people = json.loads(row["indirect_people"])
             except Exception:
                 pass
 
-        people_count = len(story_people)
-        leaders_count = len(org_leaders)
+        people_count = len(direct_people)
+        leaders_count = len(indirect_people)
         total_people += people_count + leaders_count
 
         # Count LinkedIn profiles found
         linkedin_in_people = sum(
             1
-            for p in story_people
+            for p in direct_people
             if p.get("linkedin_profile") or p.get("linkedin_url")
         )
         linkedin_in_leaders = sum(
-            1 for p in org_leaders if p.get("linkedin_profile") or p.get("linkedin_url")
+            1
+            for p in indirect_people
+            if p.get("linkedin_profile") or p.get("linkedin_url")
         )
         linkedin_found += linkedin_in_people + linkedin_in_leaders
 
@@ -95,7 +97,9 @@ def analyze_database():
         print(f"\nStory {story_id}: {title}")
         print(f"  Status: verify={v_status}, enrich={e_status}, image={has_image}")
         print(f"  Quality: {quality}, Confidence: {confidence}")
-        print(f"  People: {people_count} story_people, {leaders_count} org_leaders")
+        print(
+            f"  People: {people_count} direct_people, {leaders_count} indirect_people"
+        )
         print(f"  LinkedIn: {linkedin_in_people + linkedin_in_leaders} profiles found")
 
         # Show enrichment log if available

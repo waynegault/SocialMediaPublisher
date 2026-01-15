@@ -202,10 +202,13 @@ class LinkedInEngagement:
         self.db_path = db_path or str(Path(__file__).parent / "content_engine.db")
 
         # Target monitoring configuration
+        discipline_field = Config.DISCIPLINE.replace(
+            " engineer", " engineering"
+        ).replace(" Engineer", " Engineering")
         self.target_keywords = set(
             target_keywords
             or [
-                "chemical engineering",
+                discipline_field,
                 "process engineering",
                 "hydrogen",
                 "sustainability",
@@ -372,8 +375,11 @@ class LinkedInEngagement:
 
         # Extract topic from post content
         topic = self._extract_topic(post_content)
+        discipline_field = Config.DISCIPLINE.replace(
+            " engineer", " engineering"
+        ).replace(" Engineer", " Engineering")
         context.setdefault("topic", topic)
-        context.setdefault("industry", "chemical engineering")
+        context.setdefault("industry", discipline_field)
         context.setdefault("key_point", "implementation")
         context.setdefault("additional_insight", "cross-functional collaboration")
         context.setdefault("my_field", "process engineering")
@@ -811,7 +817,11 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         db_path = os.path.join(tmpdir, "test_defaults.db")
         try:
             engagement = LinkedInEngagement(db_path=db_path)
-            assert "chemical engineering" in engagement.target_keywords
+            # Discipline-based keyword should be present
+            discipline_field = Config.DISCIPLINE.replace(
+                " engineer", " engineering"
+            ).replace(" Engineer", " Engineering")
+            assert discipline_field in engagement.target_keywords
             assert "hydrogen" in engagement.target_keywords
         except Exception:
             pass  # Allow test to pass with Windows file issues

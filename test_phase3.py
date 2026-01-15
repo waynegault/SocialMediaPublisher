@@ -26,11 +26,11 @@ def test_cross_story_entity_resolution():
     stories = db.get_stories_needing_verification() + db.get_published_stories()
     urn_found = None
     for story in stories[:50]:
-        if story.story_people:
+        if story.direct_people:
             people = (
-                story.story_people
-                if isinstance(story.story_people, list)
-                else json.loads(story.story_people)
+                story.direct_people
+                if isinstance(story.direct_people, list)
+                else json.loads(story.direct_people)
             )
             for p in people:
                 if p.get("linkedin_urn"):
@@ -59,7 +59,7 @@ def test_cross_story_entity_resolution():
         ]
         test_story = Story()
         test_story.title = "Test Story for Phase 3"
-        test_story.story_people = test_people
+        test_story.direct_people = test_people
         test_story.enrichment_status = "enriched"
         test_story.enrichment_quality = "high"
         db.add_story(test_story)
@@ -76,11 +76,11 @@ def test_cross_story_entity_resolution():
     name_found = None
     employer_found = None
     for story in stories[:50]:
-        if story.story_people:
+        if story.direct_people:
             people = (
-                story.story_people
-                if isinstance(story.story_people, list)
-                else json.loads(story.story_people)
+                story.direct_people
+                if isinstance(story.direct_people, list)
+                else json.loads(story.direct_people)
             )
             for p in people:
                 if p.get("name"):
