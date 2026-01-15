@@ -26,6 +26,7 @@ import requests
 
 from api_client import api_client
 from models import LinkedInProfile, LinkedInOrganization
+from profile_matcher import score_person_candidate
 
 # Alias for backward compatibility within this module
 LinkedInPerson = LinkedInProfile
@@ -686,79 +687,27 @@ class LinkedInVoyagerClient:
         """
         first_lower = first_name.lower()
         last_lower = last_name.lower()
-        company_lower = company.lower()
-        title_lower = title.lower() if title else ""
-        location_lower = location.lower() if location else ""
-
-        # Extract significant company words (skip generic terms)
-        skip_words = {"inc", "llc", "ltd", "corp", "the", "company", "group"}
-        company_words = [
-            w for w in company_lower.split() if w not in skip_words and len(w) > 2
-        ]
 
         scored_candidates: list[tuple[float, LinkedInPerson]] = []
 
         for candidate in candidates:
-            score = 0.0
-            signals: list[str] = []
+            # Use centralized scoring from profile_matcher
+            result = score_person_candidate(
+                candidate_first_name=candidate.first_name,
+                candidate_last_name=candidate.last_name,
+                candidate_headline=candidate.headline,
+                candidate_location=candidate.location,
+                candidate_public_id=candidate.public_id or "",
+                target_first_name=first_name,
+                target_last_name=last_name,
+                target_company=company,
+                target_title=title,
+                target_location=location,
+            )
 
-            candidate_name = candidate.name.lower()
-            candidate_first = candidate.first_name.lower()
-            candidate_last = candidate.last_name.lower()
-            headline_lower = candidate.headline.lower()
-            candidate_location = candidate.location.lower()
-
-            # Name matching
-            if candidate_first == first_lower and candidate_last == last_lower:
-                score += 4.0
-                signals.append("exact_name")
-            elif candidate_last == last_lower:
-                score += 2.0
-                signals.append("last_name")
-                # Check if first name is variant
-                if first_lower in candidate_name or candidate_first.startswith(
-                    first_lower[:3]
-                ):
-                    score += 1.0
-                    signals.append("first_name_variant")
-            elif first_lower in candidate_name and last_lower in candidate_name:
-                score += 2.5
-                signals.append("name_in_full")
-
-            # Company matching (in headline)
-            company_match = any(word in headline_lower for word in company_words)
-            if company_match:
-                score += 3.0
-                signals.append("company_match")
-
-            # Title matching
-            if title_lower:
-                title_words = [w for w in title_lower.split() if len(w) > 3]
-                title_match = any(word in headline_lower for word in title_words)
-                if title_match:
-                    score += 1.5
-                    signals.append("title_match")
-
-            # Location matching
-            if location_lower and candidate_location:
-                location_parts = [p.strip() for p in location_lower.split(",")]
-                location_match = any(
-                    part in candidate_location
-                    for part in location_parts
-                    if len(part) > 2
-                )
-                if location_match:
-                    score += 1.0
-                    signals.append("location_match")
-
-            # Penalty for OUT_OF_NETWORK
-            if not candidate.public_id or "UNKNOWN" in candidate.public_id.upper():
-                score -= 2.0
-                signals.append("no_public_id")
-
-            candidate.match_score = score
-            candidate.match_signals = signals
-            scored_candidates.append((score, candidate))
+            candidate.match_score = result.score
+            candidate.match_signals = result.signals
+            scored_candidates.append((result.score, candidate))
 
         # Sort by score descending
         scored_candidates.sort(key=lambda x: x[0], reverse=True)
