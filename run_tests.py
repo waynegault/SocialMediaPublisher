@@ -14,6 +14,7 @@ from test_framework import run_all_suites, suppress_logging
 # List of modules that have _create_module_tests() functions
 TEST_MODULES = [
     ("config", "Config"),
+    ("domain_credibility", "Domain Credibility"),
     ("error_handling", "Error Handling"),
     ("rate_limiter", "Rate Limiter"),
     ("database", "Database"),
