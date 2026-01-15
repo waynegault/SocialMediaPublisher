@@ -27,6 +27,14 @@ import requests
 
 from api_client import api_client
 
+# Import unified cache (optional - falls back to dict if not available)
+try:
+    from cache import get_linkedin_cache, LinkedInCache
+
+    _UNIFIED_CACHE_AVAILABLE = True
+except ImportError:
+    _UNIFIED_CACHE_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -175,10 +183,18 @@ class LinkedInVoyagerClient:
         self._request_count: int = 0
         self._max_requests_per_session: int = 100
 
-        # Caching
+        # Caching - use unified LinkedInCache if available, otherwise dict fallback
         self._cache_dir = Path(
             os.path.expandvars(r"%LOCALAPPDATA%\SocialMediaPublisher")
         )
+        self._unified_cache: LinkedInCache | None = None
+        if _UNIFIED_CACHE_AVAILABLE:
+            try:
+                self._unified_cache = get_linkedin_cache()
+            except Exception:
+                pass  # Fall back to dict cache
+
+        # Dict-based fallback caches (used if unified cache not available)
         self._person_cache: dict[str, LinkedInPerson | None] = {}
         self._org_cache: dict[str, LinkedInOrganization | None] = {}
 
@@ -643,8 +659,20 @@ class LinkedInVoyagerClient:
         Returns:
             Best matching LinkedInPerson, or None if no confident match
         """
-        # Check cache
+        # Check unified cache first (persistent across sessions)
         cache_key = f"{name.lower().strip()}@{company.lower().strip()}"
+        if self._unified_cache:
+            cached = self._unified_cache.get_person(name, company)
+            if cached is not None:
+                # Reconstruct LinkedInPerson from cached dict
+                if isinstance(cached, dict):
+                    return LinkedInPerson(**cached)
+                return cached
+            # Check if this was previously a failed lookup
+            if self._unified_cache.is_failed_lookup(name, company):
+                return None
+
+        # Fall back to in-memory dict cache
         if cache_key in self._person_cache:
             return self._person_cache[cache_key]
 
@@ -669,6 +697,9 @@ class LinkedInVoyagerClient:
             )
 
         if not results:
+            # Cache the failure
+            if self._unified_cache:
+                self._unified_cache.mark_failed_lookup(name, company)
             self._person_cache[cache_key] = None
             return None
 
@@ -682,6 +713,9 @@ class LinkedInVoyagerClient:
             location=location,
         )
 
+        # Cache the result
+        if self._unified_cache and best_match:
+            self._unified_cache.set_person(name, company, best_match)
         self._person_cache[cache_key] = best_match
         return best_match
 
@@ -816,8 +850,16 @@ class LinkedInVoyagerClient:
         Returns:
             LinkedInOrganization if found, None otherwise
         """
-        # Check cache
+        # Check unified cache first (persistent across sessions)
         cache_key = name.lower().strip()
+        if self._unified_cache:
+            cached = self._unified_cache.get_org(name)
+            if cached is not None:
+                if isinstance(cached, dict):
+                    return LinkedInOrganization(**cached)
+                return cached
+
+        # Fall back to in-memory dict cache
         if cache_key in self._org_cache:
             return self._org_cache[cache_key]
 
@@ -838,15 +880,22 @@ class LinkedInVoyagerClient:
             # Check for significant overlap
             overlap = name_words & org_words
             if len(overlap) >= len(name_words) * 0.5:
+                # Cache in both unified and dict cache
+                if self._unified_cache:
+                    self._unified_cache.set_org(name, org)
                 self._org_cache[cache_key] = org
                 return org
 
             # Check if org name contains search term or vice versa
             if name_lower in org_name_lower or org_name_lower in name_lower:
+                if self._unified_cache:
+                    self._unified_cache.set_org(name, org)
                 self._org_cache[cache_key] = org
                 return org
 
         # Return first result as fallback
+        if self._unified_cache:
+            self._unified_cache.set_org(name, results[0])
         self._org_cache[cache_key] = results[0]
         return results[0]
 
