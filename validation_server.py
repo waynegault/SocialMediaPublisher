@@ -1064,18 +1064,17 @@ HTML_TEMPLATE = """
             const story = stories[currentIndex];
             const preview = document.getElementById('linkedinPreview');
 
-            // Apply visual feedback class based on HUMAN verification status only
-            // AI approval does NOT equal human approval - show neutral until human decides
+            // Apply visual feedback class based on HUMAN approval status
+            // Use actual human_approved field, not heuristic check
             preview.classList.remove('story-accepted', 'story-rejected');
-            // Check if human has verified (indicated by verification_reason containing "Manually")
-            const humanVerified = story.verification_reason && story.verification_reason.includes('Manually');
-            if (humanVerified && story.verification_status === 'approved') {
+            if (story.human_approved === true) {
                 preview.classList.add('story-accepted');
-            } else if (humanVerified && story.verification_status === 'rejected') {
+            } else if (story.human_approved === false && story.human_approved_at) {
+                // human_approved is false AND human_approved_at is set means explicitly rejected
                 preview.classList.add('story-rejected');
             }
 
-            // Status badge - show "pending human approval" unless human has verified
+            // Status badge - show "pending human approval" unless human has made decision
             let statusClass = 'status-pending';
             let statusText = 'pending human approval';
             if (story.publish_status === 'published') {
@@ -1084,23 +1083,22 @@ HTML_TEMPLATE = """
             } else if (story.publish_status === 'scheduled') {
                 statusClass = 'status-scheduled';
                 statusText = 'scheduled';
-            } else if (humanVerified) {
-                // Only show approved/rejected if human has verified
-                if (story.verification_status === 'approved') {
-                    statusClass = 'status-approved';
-                    statusText = 'human approved';
-                } else if (story.verification_status === 'rejected') {
-                    statusClass = 'status-rejected';
-                    statusText = 'human rejected';
-                }
+            } else if (story.human_approved === true) {
+                statusClass = 'status-approved';
+                statusText = 'human approved';
+            } else if (story.human_approved === false && story.human_approved_at) {
+                statusClass = 'status-rejected';
+                statusText = 'human rejected';
             }
 
             // Build status displays - distinguish between AI and human verification
             const aiVerificationClass = story.verification_status === 'approved' ? 'status-approved' :
                 story.verification_status === 'rejected' ? 'status-rejected' : 'status-pending';
-            const aiVerificationText = humanVerified ?
-                (story.verification_status === 'approved' ? 'approved (pre-human)' :
-                 story.verification_status === 'rejected' ? 'rejected (pre-human)' : 'pending') :
+            // Show AI recommendation with note if human has already reviewed
+            const humanHasReviewed = story.human_approved_at != null;
+            const aiVerificationText = humanHasReviewed ?
+                (story.verification_status === 'approved' ? 'approved (AI rec.)' :
+                 story.verification_status === 'rejected' ? 'rejected (AI rec.)' : 'pending') :
                 (story.verification_status || 'pending');
             const publishBadgeClass = story.publish_status === 'published' ? 'status-published' :
                 story.publish_status === 'scheduled' ? 'status-scheduled' : 'status-pending';
@@ -1561,9 +1559,9 @@ HTML_TEMPLATE = """
 
             const story = stories[currentIndex];
 
-            // Check if story is approved
-            if (story.verification_status !== 'approved') {
-                showToast('Story must be approved before publishing', 'error');
+            // Check if story is human-approved (not just AI-approved)
+            if (!story.human_approved) {
+                showToast('Story must be human-approved before publishing', 'error');
                 return;
             }
 
@@ -1633,9 +1631,15 @@ HTML_TEMPLATE = """
                     return;
                 }
 
+                // Determine if this is immediate or scheduled publish
+                const hasSchedule = story.scheduled_time && new Date(story.scheduled_time) > new Date();
+                const scheduleInfo = hasSchedule ?
+                    `\\n📅 Scheduled for: ${new Date(story.scheduled_time).toLocaleString()}` : '';
+
                 // Confirm publish with validation summary
-                const confirmMsg = `Publish this story to LinkedIn?\\n\\n` +
-                    `"${story.title}"\\n\\n` +
+                const actionWord = hasSchedule ? 'Schedule' : 'Publish';
+                const confirmMsg = `${actionWord} this story to LinkedIn?\\n\\n` +
+                    `"${story.title}"${scheduleInfo}\\n\\n` +
                     `Validation Summary:\\n${validationSummary}`;
 
                 if (!confirm(confirmMsg)) {
@@ -1644,7 +1648,7 @@ HTML_TEMPLATE = """
                     return;
                 }
 
-                publishBtn.textContent = '⏳ Publishing...';
+                publishBtn.textContent = hasSchedule ? '⏳ Scheduling...' : '⏳ Publishing...';
 
                 const response = await fetch(`/api/stories/${story.id}/publish`, {
                     method: 'POST',
@@ -1654,7 +1658,13 @@ HTML_TEMPLATE = """
                 const data = await response.json();
 
                 if (response.ok) {
-                    // Update local story data
+                if (data.scheduled) {
+                    // Story was scheduled, not immediately published
+                    story.publish_status = 'scheduled';
+                    renderStory();
+                    showToast(`Story scheduled for ${new Date(data.scheduled_time).toLocaleString()}!`, 'success');
+                } else {
+                    // Story was published immediately
                     story.publish_status = 'published';
                     story.linkedin_post_url = data.linkedin_post_url;
                     story.linkedin_post_id = data.linkedin_post_id;
@@ -1668,6 +1678,7 @@ HTML_TEMPLATE = """
                             window.open(data.linkedin_post_url, '_blank');
                         }
                     }
+                }
                 } else {
                     showToast(data.error || 'Failed to publish story', 'error');
                 }
@@ -1686,16 +1697,17 @@ HTML_TEMPLATE = """
             if (!publishBtn || stories.length === 0) return;
 
             const story = stories[currentIndex];
-            const canPublish = story.verification_status === 'approved' &&
+            // Use human_approved for publish permission, not AI's verification_status
+            const canPublish = story.human_approved === true &&
                              story.publish_status !== 'published';
 
             publishBtn.disabled = !canPublish;
 
             if (story.publish_status === 'published') {
                 publishBtn.textContent = '✓ Published';
-            } else if (story.verification_status !== 'approved') {
+            } else if (!story.human_approved) {
                 publishBtn.textContent = '🚀 Publish';
-                publishBtn.title = 'Story must be approved before publishing';
+                publishBtn.title = 'Story must be human-approved before publishing';
             } else {
                 publishBtn.textContent = '🚀 Publish';
                 publishBtn.title = 'Publish this approved story to LinkedIn immediately';
@@ -1833,14 +1845,18 @@ class ValidationServer:
 
         @self.app.route("/api/stories/<int:story_id>/accept", methods=["POST"])
         def accept_story(story_id: int):
-            """Accept a story for publication (human approval)."""
+            """Accept a story for publication (human approval).
+
+            This sets human_approved=True but does NOT overwrite the AI's
+            verification_status recommendation. The original AI decision
+            is preserved for analytics and auditing.
+            """
             try:
                 story = self.db.get_story(story_id)
                 if not story:
                     return jsonify({"error": "Story not found"}), 404
 
-                story.verification_status = "approved"
-                story.verification_reason = "Manually approved via human validation"
+                # Only set human approval - don't overwrite AI recommendation
                 story.human_approved = True
                 story.human_approved_at = datetime.now()
                 self.db.update_story(story)
@@ -1852,16 +1868,20 @@ class ValidationServer:
 
         @self.app.route("/api/stories/<int:story_id>/reject", methods=["POST"])
         def reject_story(story_id: int):
-            """Reject a story (human rejection)."""
+            """Reject a story (human rejection).
+
+            This sets human_approved=False but does NOT overwrite the AI's
+            verification_status recommendation. The original AI decision
+            is preserved for analytics and auditing.
+            """
             try:
                 story = self.db.get_story(story_id)
                 if not story:
                     return jsonify({"error": "Story not found"}), 404
 
-                story.verification_status = "rejected"
-                story.verification_reason = "Manually rejected via human validation"
+                # Mark as human rejected - don't overwrite AI recommendation
                 story.human_approved = False
-                story.human_approved_at = None
+                story.human_approved_at = datetime.now()  # Track when rejected too
                 self.db.update_story(story)
 
                 return jsonify(story.to_dict())
@@ -1893,16 +1913,20 @@ class ValidationServer:
 
         @self.app.route("/api/stories/<int:story_id>/publish", methods=["POST"])
         def publish_story(story_id: int):
-            """Publish a story to LinkedIn immediately."""
+            """Publish or schedule a story to LinkedIn.
+
+            If the story has a scheduled_time in the future, it will be scheduled.
+            Otherwise, it will be published immediately.
+            """
             try:
                 story = self.db.get_story(story_id)
                 if not story:
                     return jsonify({"error": "Story not found"}), 404
 
-                # Verify story is approved
-                if story.verification_status != "approved":
+                # Verify story is human-approved (not just AI-approved)
+                if not story.human_approved:
                     return jsonify(
-                        {"error": "Story must be approved before publishing"}
+                        {"error": "Story must be human-approved before publishing"}
                     ), 400
 
                 # Verify story is not already published
@@ -1925,7 +1949,25 @@ class ValidationServer:
                         }
                     ), 400
 
-                # Publish (skip_validation=True since we just validated)
+                # Check if this should be scheduled or published immediately
+                now = datetime.now()
+                if story.scheduled_time and story.scheduled_time > now:
+                    # Schedule for later - just mark as scheduled
+                    story.publish_status = "scheduled"
+                    self.db.update_story(story)
+
+                    # Return scheduled response
+                    result = story.to_dict()
+                    result["success"] = True
+                    result["scheduled"] = True
+                    result["scheduled_time"] = story.scheduled_time.isoformat()
+                    result["validation"] = validation.to_dict()
+                    logger.info(
+                        f"Story {story_id} scheduled for {story.scheduled_time}"
+                    )
+                    return jsonify(result)
+
+                # Publish immediately (skip_validation=True since we just validated)
                 post_id = publisher.publish_immediately(story, skip_validation=True)
 
                 if post_id:
@@ -1934,12 +1976,14 @@ class ValidationServer:
                     if story:
                         result = story.to_dict()
                         result["success"] = True
+                        result["scheduled"] = False
                         result["validation"] = validation.to_dict()
                         return jsonify(result)
                     else:
                         return jsonify(
                             {
                                 "success": True,
+                                "scheduled": False,
                                 "linkedin_post_id": post_id,
                                 "validation": validation.to_dict(),
                             }
