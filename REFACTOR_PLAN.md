@@ -102,27 +102,30 @@ This refactoring plan addresses code duplication, redundant API calls, inconsist
 
 ---
 
-## Phase 5: LinkedIn Data Models Unification (MEDIUM PRIORITY)
+## Phase 5: LinkedIn Data Models Unification ✅ COMPLETED
 **Goal:** Create unified data classes for LinkedIn profile/company data.
 
-### Current Issues:
-- `linkedin_rapidapi_client.py`: `LinkedInProfileResult` dataclass
-- `linkedin_voyager_client.py`: `LinkedInPerson`, `LinkedInOrganization` dataclasses
-- Different field sets and naming conventions
+### Completed Changes:
+- [x] 5.1 Unified models already existed in `models.py`:
+  - `LinkedInProfile` with superset of all fields
+  - `LinkedInOrganization` with superset of all fields
+  - Factory methods: `from_voyager_person()`, `from_rapidapi_result()`, `from_voyager_org()`
+- [x] 5.2 Updated `linkedin_rapidapi_client.py`:
+  - Removed local `LinkedInProfileResult` dataclass (50+ lines)
+  - Import `LinkedInProfile` from `models.py`
+  - Added alias `LinkedInProfileResult = LinkedInProfile` for compatibility
+- [x] 5.3 Updated `linkedin_voyager_client.py`:
+  - Removed local `LinkedInPerson` and `LinkedInOrganization` dataclasses
+  - Import from `models.py`
+  - Added alias `LinkedInPerson = LinkedInProfile` for compatibility
+  - Updated usages to use `full_name` instead of `name`
+  - Added legacy cache key migration for `name` → `full_name`
 
-### Changes:
-- [ ] 5.1 Create `linkedin_models.py` with unified dataclasses
-- [ ] 5.2 Define `LinkedInProfile` with superset of all fields
-- [ ] 5.3 Define `LinkedInCompany` with superset of all fields
-- [ ] 5.4 Add `from_rapidapi()` and `from_voyager()` factory methods
-- [ ] 5.5 Update `linkedin_rapidapi_client.py` to use unified models
-- [ ] 5.6 Update `linkedin_voyager_client.py` to use unified models
-- [ ] 5.7 Update `HybridLinkedInLookup` to return unified models
-
-### Estimated Impact:
-- Single data model for profiles
-- Easier to compare/merge results from different sources
-- Type safety improvements
+### Impact Achieved:
+- Single data model for profiles (`LinkedInProfile` in `models.py`)
+- Single data model for organizations (`LinkedInOrganization` in `models.py`)
+- Backward compatibility via aliases
+- ~100 lines of duplicate code removed
 
 ---
 
