@@ -4549,11 +4549,12 @@ def _test_notifications(engine: ContentEngine) -> None:
 
 
 def _reset_all(engine: ContentEngine) -> None:
-    """Reset everything: delete database and all generated images."""
+    """Reset everything: delete database, all generated images, and all caches."""
     print("\n--- RESET ALL DATA ---")
     print("\n⚠️  WARNING: This will permanently delete:")
     print(f"    • Database: {Config.DB_NAME}")
     print(f"    • All files in: {Config.IMAGE_DIR}/")
+    print("    • All caches (memory + SQLite + LinkedIn)")
     print("\n    This action cannot be undone!")
 
     confirm = input("\nAre you sure you want to reset? Type 'yes' to confirm: ").strip()
@@ -4599,7 +4600,7 @@ def _reset_all(engine: ContentEngine) -> None:
     engine.db = new_db
     print(f"  ✓ Created fresh database: {Config.DB_NAME}")
 
-    # Delete LinkedIn cache
+    # Delete old LinkedIn cache (JSON format - legacy)
     cache_file = Path(
         os.path.expandvars(r"%LOCALAPPDATA%\SocialMediaPublisher\linkedin_cache.json")
     )
@@ -4609,6 +4610,39 @@ def _reset_all(engine: ContentEngine) -> None:
             print(f"  ✓ Deleted LinkedIn cache: {cache_file}")
         except Exception as e:
             print(f"  ✗ Failed to delete LinkedIn cache: {e}")
+
+    # Clear the unified SQLite cache (cache.db)
+    try:
+        from cache import clear_global_cache
+
+        # Clear memory cache
+        clear_global_cache()
+        print("  ✓ Cleared in-memory cache")
+
+        # Delete the SQLite cache file (cache.db in project directory)
+        cache_db_path = Path(__file__).parent / "cache.db"
+        if cache_db_path.exists():
+            try:
+                cache_db_path.unlink()
+                print(f"  ✓ Deleted SQLite cache: {cache_db_path}")
+            except Exception as e:
+                print(f"  ✗ Failed to delete SQLite cache: {e}")
+    except ImportError:
+        pass  # Cache module not available
+
+    # Clear LinkedIn profile lookup in-memory caches
+    try:
+        from linkedin_profile_lookup import LinkedInCompanyLookup
+
+        # Clear class-level shared caches
+        LinkedInCompanyLookup._shared_person_cache.clear()
+        LinkedInCompanyLookup._shared_found_profiles_by_name.clear()
+        LinkedInCompanyLookup._shared_company_url_to_name.clear()
+        LinkedInCompanyLookup._shared_failed_lookups.clear()
+        LinkedInCompanyLookup._shared_company_cache.clear()
+        print("  ✓ Cleared LinkedIn lookup in-memory caches")
+    except (ImportError, AttributeError):
+        pass  # Module not available or caches don't exist
 
     print("\n✓ Reset complete!")
 

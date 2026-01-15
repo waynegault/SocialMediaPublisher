@@ -3568,8 +3568,7 @@ NOT_FOUND"""
 
                 encoded_query = urllib.parse.quote(search_query)
 
-                # Build search engine list based on config preference
-                # Use configured engine first, then fall back to others
+                # Use configured search engine (UC Chrome handles CAPTCHA with wait-retry)
                 preferred_engine = Config.SEARCH_ENGINE.lower()
                 all_engines = {
                     "google": (
@@ -3583,22 +3582,27 @@ NOT_FOUND"""
                     ),
                 }
 
-                # Start with preferred engine, then add others as fallbacks
-                search_engines = []
-                if preferred_engine in all_engines:
-                    search_engines.append(all_engines[preferred_engine])
-                for engine_key, engine_tuple in all_engines.items():
-                    if engine_key != preferred_engine:
-                        search_engines.append(engine_tuple)
+                # Use only the configured engine - UC Chrome's anti-detection should handle CAPTCHA
+                if preferred_engine not in all_engines:
+                    logger.warning(
+                        f"Invalid SEARCH_ENGINE '{preferred_engine}', defaulting to bing"
+                    )
+                    preferred_engine = "bing"
+
+                engine_name, url = all_engines[preferred_engine]
+                logger.debug(
+                    f"Using configured search engine: {engine_name} (SEARCH_ENGINE={preferred_engine})"
+                )
 
                 page_source = None
-                captcha_count = 0
-                for engine_name, url in search_engines:
+                max_captcha_retries = 3
+                captcha_retry_count = 0
+
+                while captcha_retry_count < max_captcha_retries:
                     driver.get(url)
                     # Random delay to appear more human (4-8 seconds)
                     time.sleep(4 + random.random() * 4)
 
-                    # Human-like behavior: scroll down a bit to simulate reading
                     # Human-like behavior: scroll down randomly and move mouse
                     try:
                         # Scroll down to simulate reading
@@ -3640,28 +3644,39 @@ NOT_FOUND"""
                     ]
 
                     if any(captcha_indicators):
-                        captcha_count += 1
-                        logger.warning(
-                            f"{engine_name} CAPTCHA detected, trying next search engine..."
-                        )
-                        continue
+                        captcha_retry_count += 1
+                        if captcha_retry_count < max_captcha_retries:
+                            # Wait and retry with UC Chrome - it should auto-solve or bypass
+                            wait_time = 15 + random.random() * 15  # 15-30 seconds
+                            logger.warning(
+                                f"{engine_name} CAPTCHA detected (attempt {captcha_retry_count}/{max_captcha_retries}), "
+                                f"waiting {wait_time:.0f}s for UC Chrome to handle it..."
+                            )
+                            time.sleep(wait_time)
+                            # Try clicking away from CAPTCHA area to trigger UC Chrome's bypass
+                            try:
+                                driver.execute_script("document.body.click();")
+                                time.sleep(2)
+                            except Exception:
+                                pass
+                            continue
+                        else:
+                            # All retries exhausted - enter cooldown
+                            cooldown_seconds = 60
+                            self._captcha_cooldown_until = (
+                                time.time() + cooldown_seconds
+                            )
+                            logger.error(
+                                f"{engine_name} CAPTCHA persisted after {max_captcha_retries} retries - "
+                                f"entering {cooldown_seconds}s cooldown"
+                            )
+                            return None
 
                     # Success - got search results, reset consecutive counter
                     self._consecutive_searches = 0
                     used_engine = engine_name
                     logger.debug(f"Using {engine_name} search results")
                     break
-                else:
-                    # All search engines blocked - enter cooldown
-                    # Keep cooldown bounded so we fail fast instead of blocking the pipeline
-                    cooldown_seconds = min(
-                        60, 30 * captcha_count
-                    )  # Increased cooldown (was 30)
-                    self._captcha_cooldown_until = time.time() + cooldown_seconds
-                    logger.error(
-                        f"All search engines returned CAPTCHA - entering {cooldown_seconds}s cooldown"
-                    )
-                    return None
 
                 # Variable to track which engine succeeded
                 used_engine = locals().get("used_engine", "Unknown")
@@ -3750,84 +3765,6 @@ NOT_FOUND"""
                 logger.debug(
                     f"{used_engine}: Pattern 3 (Bing base64) found additional URLs, total now {len(linkedin_urls)}"
                 )
-
-                # If no LinkedIn URLs found with this engine, try other engines before giving up
-                if not linkedin_urls and len(search_engines) > 1:
-                    logger.debug(
-                        f"{used_engine}: No LinkedIn URLs found, trying other search engines for same query..."
-                    )
-                    for alt_engine_name, alt_url in search_engines:
-                        if alt_engine_name == used_engine:
-                            continue  # Skip the engine we already tried
-
-                        logger.debug(f"Trying alternate engine: {alt_engine_name}")
-                        driver.get(alt_url)
-                        time.sleep(4 + random.random() * 4)
-
-                        # Check for CAPTCHA
-                        alt_page_source = driver.page_source.lower()
-                        alt_current_url = driver.current_url.lower()
-                        alt_captcha_indicators = [
-                            "captcha" in alt_page_source,
-                            "i'm not a robot" in alt_page_source,
-                            "unusual traffic" in alt_page_source,
-                            "/sorry/" in alt_current_url,
-                        ]
-                        if any(alt_captcha_indicators):
-                            logger.warning(
-                                f"{alt_engine_name} CAPTCHA detected, skipping..."
-                            )
-                            continue
-
-                        # Re-fetch page source for URL extraction
-                        page_source = driver.page_source
-                        used_engine = alt_engine_name
-
-                        # Re-run URL extraction patterns
-                        direct_urls = re.findall(
-                            r"https://(?:www\.)?linkedin\.com/in/[\w\-]+/?", page_source
-                        )
-                        linkedin_urls.extend(direct_urls)
-
-                        encoded_urls = re.findall(
-                            r'href="[^"]*linkedin\.com(?:%2F|/)in(?:%2F|/)([\w\-]+)',
-                            page_source,
-                        )
-                        for slug in encoded_urls:
-                            url = f"https://www.linkedin.com/in/{slug}"
-                            if url not in linkedin_urls:
-                                linkedin_urls.append(url)
-
-                        # Bing base64 decoding
-                        bing_redirect_urls = re.findall(
-                            r"a1aHR0c[A-Za-z0-9+/=]+", page_source
-                        )
-                        for b64 in bing_redirect_urls:
-                            try:
-                                import base64
-
-                                decoded = base64.b64decode(b64 + "==").decode(
-                                    "utf-8", errors="ignore"
-                                )
-                                if "linkedin.com/in/" in decoded:
-                                    match = re.search(
-                                        r"https://(?:www\.)?linkedin\.com/in/[\w\-]+",
-                                        decoded,
-                                    )
-                                    if match and match.group(0) not in linkedin_urls:
-                                        linkedin_urls.append(match.group(0))
-                            except Exception:
-                                pass
-
-                        if linkedin_urls:
-                            logger.debug(
-                                f"{alt_engine_name}: Found {len(linkedin_urls)} LinkedIn URLs"
-                            )
-                            break
-                        else:
-                            logger.debug(
-                                f"{alt_engine_name}: Still no LinkedIn URLs found"
-                            )
 
                 # Debug: log how many URLs found
                 if not linkedin_urls:
