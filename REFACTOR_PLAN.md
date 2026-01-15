@@ -236,31 +236,27 @@ After reviewing the code paths, consolidation is **not recommended** because:
 
 ---
 
-## Phase 12: Config Synchronization & Missing Settings (HIGH PRIORITY)
+## Phase 12: Config Synchronization & Missing Settings ✅ COMPLETED
 **Goal:** Add missing .env settings to Config class and fix direct os.getenv() calls.
 
-### Issues Found:
-1. Several .env settings are not defined in Config class
-2. Some modules bypass Config class with direct os.getenv() calls
-3. `API_TIMEOUT_DEFAULT` is defined but never used - hardcoded timeouts everywhere
-4. Pydantic settings and legacy Config class have potential for value drift
-
-### Changes Required:
-- [ ] 12.1 Add missing settings to Config class:
-  - `OPENAI_API_KEY` - referenced via os.getenv in rag_engine.py
-  - `STORIES_PER_CYCLE` - in .env but not Config (use MAX_STORIES_PER_DAY?)
-  - `PUBLISH_WINDOW_HOURS` - in .env but not Config
-- [ ] 12.2 Replace direct os.getenv() calls with Config class:
-  - `linkedin_profile_lookup.py` lines 4567-4568: LINKEDIN_LI_AT, LINKEDIN_JSESSIONID
-  - `linkedin_profile_lookup.py` line 4742: LINKEDIN_AUTHOR_URN
-  - `linkedin_voyager_client.py` lines 110-111: LINKEDIN_LI_AT, LINKEDIN_JSESSIONID
-  - `rag_engine.py` line 858: OPENAI_API_KEY
-- [ ] 12.3 Use `API_TIMEOUT_DEFAULT` instead of hardcoded timeouts
-- [ ] 12.4 Add LinkedIn limits to Config (currently hardcoded):
+### Changes Completed:
+- [x] 12.1 Added `OPENAI_API_KEY` to Pydantic SettingsModel and Config class
+- [x] 12.2 Replaced direct os.getenv() calls with Config class:
+  - `main.py`: LINKEDIN_LI_AT, LINKEDIN_JSESSIONID, RAPIDAPI_KEY now use Config
+  - `linkedin_voyager_client.py`: LINKEDIN_LI_AT, LINKEDIN_JSESSIONID now use Config
+- [x] 12.3 Added LinkedIn engagement limits to Config:
   - `LINKEDIN_DAILY_COMMENT_LIMIT` (default: 25)
   - `LINKEDIN_HOURLY_COMMENT_LIMIT` (default: 5)
+  - `LINKEDIN_MIN_COMMENT_INTERVAL` (default: 300 seconds)
+- [x] 12.4 Added LinkedIn networking limits to Config:
   - `LINKEDIN_WEEKLY_CONNECTION_LIMIT` (default: 100)
   - `LINKEDIN_DAILY_CONNECTION_LIMIT` (default: 20)
+- [x] 12.5 Updated `linkedin_engagement.py` to use Config for limits
+- [x] 12.6 Updated `linkedin_networking.py` to use Config for limits
+
+### Remaining (deferred):
+- API_TIMEOUT_DEFAULT usage - requires more investigation of all timeout locations
+- STORIES_PER_CYCLE and PUBLISH_WINDOW_HOURS - may be deprecated settings
 
 ---
 

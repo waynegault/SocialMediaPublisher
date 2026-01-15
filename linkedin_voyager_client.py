@@ -28,9 +28,6 @@ from api_client import api_client
 from models import LinkedInProfile, LinkedInOrganization
 from profile_matcher import score_person_candidate
 
-# Alias for backward compatibility within this module
-LinkedInPerson = LinkedInProfile
-
 # Import unified cache (optional - falls back to dict if not available)
 try:
     from cache import get_linkedin_cache, LinkedInCache
@@ -131,7 +128,7 @@ class LinkedInVoyagerClient:
                 pass  # Fall back to dict cache
 
         # Dict-based fallback caches (used if unified cache not available)
-        self._person_cache: dict[str, LinkedInPerson | None] = {}
+        self._person_cache: dict[str, LinkedInProfile | None] = {}
         self._org_cache: dict[str, LinkedInOrganization | None] = {}
 
         # Session setup
@@ -307,7 +304,7 @@ class LinkedInVoyagerClient:
         current_company: list[str] | None = None,
         regions: list[str] | None = None,
         limit: int = 10,
-    ) -> list[LinkedInPerson]:
+    ) -> list[LinkedInProfile]:
         """
         Search for people on LinkedIn.
 
@@ -322,7 +319,7 @@ class LinkedInVoyagerClient:
             limit: Maximum results to return
 
         Returns:
-            List of LinkedInPerson objects
+            List of LinkedInProfile objects
         """
         # Build keyword query
         keyword_parts = []
@@ -388,9 +385,9 @@ class LinkedInVoyagerClient:
 
         return []
 
-    def _parse_people_results(self, data: dict) -> list[LinkedInPerson]:
+    def _parse_people_results(self, data: dict) -> list[LinkedInProfile]:
         """Parse people search results from Voyager API response."""
-        people: list[LinkedInPerson] = []
+        people: list[LinkedInProfile] = []
 
         try:
             # Navigate the GraphQL response structure
@@ -433,7 +430,7 @@ class LinkedInVoyagerClient:
 
                     if public_id or full_name:
                         people.append(
-                            LinkedInPerson(
+                            LinkedInProfile(
                                 urn_id=urn_id,
                                 public_id=public_id,
                                 full_name=full_name,
@@ -532,7 +529,7 @@ class LinkedInVoyagerClient:
 
         return companies
 
-    def get_profile_by_public_id(self, public_id: str) -> LinkedInPerson | None:
+    def get_profile_by_public_id(self, public_id: str) -> LinkedInProfile | None:
         """
         Get detailed profile information by public ID (vanity URL).
 
@@ -540,7 +537,7 @@ class LinkedInVoyagerClient:
             public_id: The vanity URL slug (e.g., "johndoe" from linkedin.com/in/johndoe)
 
         Returns:
-            LinkedInPerson with full details, or None if not found
+            LinkedInProfile with full details, or None if not found
         """
         endpoint = f"/identity/profiles/{public_id}"
 
@@ -555,7 +552,7 @@ class LinkedInVoyagerClient:
                 result.get("elements", [{}])[0] if "elements" in result else result
             )
 
-            return LinkedInPerson(
+            return LinkedInProfile(
                 urn_id=profile.get("urn", "").split(":")[-1],
                 public_id=public_id,
                 full_name=f"{profile.get('firstName', '')} {profile.get('lastName', '')}".strip(),
@@ -577,7 +574,7 @@ class LinkedInVoyagerClient:
         company: str,
         title: str | None = None,
         location: str | None = None,
-    ) -> LinkedInPerson | None:
+    ) -> LinkedInProfile | None:
         """
         Find a specific person on LinkedIn with validation.
 
@@ -593,19 +590,19 @@ class LinkedInVoyagerClient:
             location: Optional location for disambiguation
 
         Returns:
-            Best matching LinkedInPerson, or None if no confident match
+            Best matching LinkedInProfile, or None if no confident match
         """
         # Check unified cache first (persistent across sessions)
         cache_key = f"{name.lower().strip()}@{company.lower().strip()}"
         if self._unified_cache:
             cached = self._unified_cache.get_person(name, company)
             if cached is not None:
-                # Reconstruct LinkedInPerson from cached dict using from_dict
+                # Reconstruct LinkedInProfile from cached dict using from_dict
                 if isinstance(cached, dict):
                     # Handle legacy cache entries that used 'name' instead of 'full_name'
                     if "name" in cached and "full_name" not in cached:
                         cached["full_name"] = cached.pop("name")
-                    return LinkedInPerson.from_dict(cached)
+                    return LinkedInProfile.from_dict(cached)
                 return cached
             # Check if this was previously a failed lookup
             if self._unified_cache.is_failed_lookup(name, company):
@@ -660,13 +657,13 @@ class LinkedInVoyagerClient:
 
     def _find_best_person_match(
         self,
-        candidates: list[LinkedInPerson],
+        candidates: list[LinkedInProfile],
         first_name: str,
         last_name: str,
         company: str,
         title: str | None = None,
         location: str | None = None,
-    ) -> LinkedInPerson | None:
+    ) -> LinkedInProfile | None:
         """
         Score and rank candidates to find the best match.
 
@@ -679,7 +676,7 @@ class LinkedInVoyagerClient:
         first_lower = first_name.lower()
         last_lower = last_name.lower()
 
-        scored_candidates: list[tuple[float, LinkedInPerson]] = []
+        scored_candidates: list[tuple[float, LinkedInProfile]] = []
 
         for candidate in candidates:
             # Use centralized scoring from profile_matcher

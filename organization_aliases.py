@@ -190,16 +190,8 @@ def is_known_organization(org_name: str) -> bool:
     return normalized in set(ORG_ALIASES.values())
 
 
-# =============================================================================
-# Backward Compatibility
-# =============================================================================
-
-# Alias for compatibility with linkedin_profile_lookup.py
-_ORG_ALIASES = ORG_ALIASES
-
 __all__ = [
     "ORG_ALIASES",
-    "_ORG_ALIASES",
     "get_canonical_name",
     "get_aliases",
     "is_known_organization",

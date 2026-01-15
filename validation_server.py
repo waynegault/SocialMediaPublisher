@@ -355,16 +355,16 @@ HTML_TEMPLATE = """
             width: 100%;
             border-radius: 6px;
             margin-bottom: 10px;
-            object-fit: cover;
+            object-fit: contain;
             object-position: center top;
             flex: 0 1 auto;
             min-height: 80px;
-            max-height: 180px;
+            max-height: 25vh;
         }
 
         /* Show full image height in edit mode */
         .preview-section.edit-mode .linkedin-image {
-            max-height: 400px;
+            max-height: 50vh;
         }
 
         .linkedin-mentions {
@@ -854,7 +854,7 @@ HTML_TEMPLATE = """
             }
 
             .linkedin-image {
-                max-height: 150px;
+                max-height: 20vh;
             }
 
             .toast {
@@ -1134,7 +1134,7 @@ HTML_TEMPLATE = """
                                 <span class="detail-value"><span class="status-badge ${aiVerificationClass}">${aiVerificationText}</span></span>
                             </div>
                             <div class="detail-item flex-grow">
-                                ${story.verification_reason && !humanVerified ? `
+                                ${story.verification_reason && !humanHasReviewed ? `
                                 <span class="detail-label">AI Reason</span>
                                 <span class="detail-value reason">${escapeHtml(story.verification_reason)}</span>
                                 ` : ''}

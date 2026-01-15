@@ -844,70 +844,15 @@ class StorySearcher:
         else:
             timelimit = None  # No limit for older searches
 
-        # 1. Search DuckDuckGo
-        search_results = []
-        max_results = Config.DUCKDUCKGO_MAX_RESULTS
-        try:
-            logger.info(f"Querying DuckDuckGo (timelimit={timelimit}): {search_query}")
-            with DDGS() as ddgs:
-                # Try News search first as it's more relevant for "stories"
-                logger.info("Attempting DuckDuckGo News search...")
-                results = list(
-                    ddgs.news(
-                        search_query,
-                        timelimit=timelimit,
-                        max_results=max_results,
-                    )
-                )
-
-                # If no news, try regular text search
-                if not results:
-                    logger.info("No news results, trying regular text search...")
-                    results = list(
-                        ddgs.text(
-                            search_query,
-                            timelimit=timelimit,
-                            max_results=max_results,
-                        )
-                    )
-
-                # If still no results, try without timelimit as a last resort
-                if not results and timelimit:
-                    logger.info("No results with timelimit, trying without...")
-                    results = list(
-                        ddgs.text(
-                            search_query,
-                            timelimit=None,
-                            max_results=max_results,
-                        )
-                    )
-
-                for i, r in enumerate(results):
-                    # Handle different key names between news and text search
-                    title = r.get("title") or r.get("title", "No Title")
-                    link = r.get("href") or r.get("link") or r.get("url", "")
-                    snippet = (
-                        r.get("body") or r.get("snippet") or r.get("description", "")
-                    )
-
-                    logger.info(f"Found result {i + 1}: {title}")
-                    search_results.append(
-                        {"title": title, "link": link, "snippet": snippet}
-                    )
-
-            logger.info(
-                f"DuckDuckGo search complete. Found {len(search_results)} results."
-            )
-        except Exception as e:
-            if "no results" in str(e).lower():
-                logger.warning(f"DuckDuckGo search returned no results: {e}")
-            else:
-                logger.error(f"DuckDuckGo search failed: {e}")
-            return 0
+        # 1. Search DuckDuckGo using consolidated method with retry logic
+        logger.info(f"Querying DuckDuckGo (timelimit={timelimit}): {search_query}")
+        search_results = self._fetch_duckduckgo_results(search_query, timelimit)
 
         if not search_results:
             logger.warning("No search results from DuckDuckGo")
             return 0
+
+        logger.info(f"DuckDuckGo search complete. Found {len(search_results)} results.")
 
         # 2. Process results with Local LLM
         if not self.local_client:
