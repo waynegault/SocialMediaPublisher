@@ -109,6 +109,7 @@ def create_chrome_driver(
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
+    options.add_argument("--log-level=3")  # Suppress Chrome warnings
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-popup-blocking")
 

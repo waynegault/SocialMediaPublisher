@@ -289,14 +289,3 @@ class LinkedInOrganization:
             location=getattr(org, "location", ""),
             employee_count=getattr(org, "employee_count", ""),
         )
-
-
-# =============================================================================
-# Type aliases for backward compatibility
-# =============================================================================
-
-# These aliases allow gradual migration from old class names
-LinkedInPerson = LinkedInProfile  # Alias for linkedin_voyager_client.py compatibility
-LinkedInProfileResult = (
-    LinkedInProfile  # Alias for linkedin_rapidapi_client.py compatibility
-)

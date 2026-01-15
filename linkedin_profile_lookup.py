@@ -343,6 +343,24 @@ class NodriverElement:
 
         self._run_async(_send_keys())
 
+    def clear(self) -> None:
+        """Clear the element's text content."""
+
+        async def _clear():
+            try:
+                # Select all text and delete it
+                await self._element.clear_input()
+            except AttributeError:
+                # Fallback: use JavaScript to clear
+                try:
+                    await self._element.apply("el => { el.value = ''; }")
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.debug(f"Clear failed: {e}")
+
+        self._run_async(_clear())
+
     def is_displayed(self) -> bool:
         """Check if element is displayed."""
         # nodriver doesn't have a direct is_displayed, assume visible if exists
@@ -1723,6 +1741,7 @@ class LinkedInCompanyLookup:
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
+            options.add_argument("--log-level=3")  # Suppress Chrome warnings
             options.add_argument("--disable-software-rasterizer")
             options.add_argument("--no-first-run")
             options.add_argument("--no-default-browser-check")
@@ -2027,14 +2046,14 @@ class LinkedInCompanyLookup:
     def _auto_login(self, driver) -> bool:
         """Attempt automatic login using credentials from config.
 
+        Works with both Selenium WebDriver and NodriverWrapper.
+
         Returns:
             True if login successful, False otherwise
         """
         try:
-            from selenium.webdriver.common.by import By
-            from selenium.webdriver.support.ui import WebDriverWait
-            from selenium.webdriver.support import expected_conditions as EC
-            from selenium.webdriver.common.keys import Keys
+            # Detect if using NodriverWrapper
+            is_nodriver = isinstance(driver, NodriverWrapper)
 
             # Clear cookies first to ensure clean login state
             try:
@@ -2045,6 +2064,131 @@ class LinkedInCompanyLookup:
             # Navigate to login page with a fresh start
             driver.get("https://www.linkedin.com/login")
             time.sleep(3)  # Give page more time to fully load
+
+            if is_nodriver:
+                # Use nodriver's native async approach via wrapper
+                return self._auto_login_nodriver(driver)
+            else:
+                # Use Selenium's WebDriverWait
+                return self._auto_login_selenium(driver)
+
+        except Exception as e:
+            logger.error(f"Auto-login failed: {e}")
+            return False
+
+    def _auto_login_nodriver(self, driver: "NodriverWrapper") -> bool:
+        """Perform auto-login using nodriver browser.
+
+        Args:
+            driver: NodriverWrapper instance
+
+        Returns:
+            True if login successful, False otherwise
+        """
+        try:
+            # Wait for page to be ready
+            for _ in range(15):
+                ready_state = driver.execute_script("return document.readyState")
+                if ready_state == "complete":
+                    break
+                time.sleep(1)
+
+            # Use JavaScript to fill the form - more reliable for nodriver
+            username = Config.LINKEDIN_USERNAME
+            password = Config.LINKEDIN_PASSWORD
+
+            # Wait for username field to exist
+            for _ in range(15):
+                username_exists = driver.execute_script(
+                    "return document.getElementById('username') !== null"
+                )
+                if username_exists:
+                    break
+                time.sleep(1)
+            else:
+                logger.error("Username field not found after 15 seconds")
+                return False
+
+            # Focus and fill username field using JavaScript
+            driver.execute_script(
+                f"""
+                var usernameField = document.getElementById('username');
+                if (usernameField) {{
+                    usernameField.focus();
+                    usernameField.value = '';
+                }}
+                """
+            )
+            time.sleep(0.5)
+
+            # Type username character by character using keyboard simulation
+            username_field = driver.find_element("id", "username")
+            if username_field:
+                # Send full username at once - nodriver handles this better
+                username_field.send_keys(username)
+            else:
+                # Fallback to JavaScript
+                driver.execute_script(
+                    f"document.getElementById('username').value = {repr(username)};"
+                )
+
+            time.sleep(0.5)
+
+            # Focus and fill password field
+            driver.execute_script(
+                """
+                var passwordField = document.getElementById('password');
+                if (passwordField) {
+                    passwordField.focus();
+                    passwordField.value = '';
+                }
+                """
+            )
+            time.sleep(0.5)
+
+            password_field = driver.find_element("id", "password")
+            if password_field:
+                password_field.send_keys(password)
+            else:
+                # Fallback to JavaScript - escape password properly
+                escaped_password = password.replace("\\", "\\\\").replace("'", "\\'")
+                driver.execute_script(
+                    f"document.getElementById('password').value = '{escaped_password}';"
+                )
+
+            time.sleep(1)  # Brief pause before clicking
+
+            # Find and click sign in button
+            sign_in_button = driver.find_element(
+                "css selector", "button[type='submit']"
+            )
+            if sign_in_button:
+                sign_in_button.click()
+            else:
+                # Fallback: click via JavaScript
+                driver.execute_script(
+                    "document.querySelector('button[type=\"submit\"]').click();"
+                )
+
+            return self._wait_for_login_result(driver)
+
+        except Exception as e:
+            logger.error(f"Nodriver auto-login failed: {e}")
+            return False
+
+    def _auto_login_selenium(self, driver) -> bool:
+        """Perform auto-login using Selenium WebDriver.
+
+        Args:
+            driver: Selenium WebDriver instance
+
+        Returns:
+            True if login successful, False otherwise
+        """
+        try:
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
 
             # Wait for page to be ready
             WebDriverWait(driver, 15).until(
@@ -2085,31 +2229,42 @@ class LinkedInCompanyLookup:
             )
             sign_in_button.click()
 
-            # Wait for redirect (successful login redirects away from /login)
-            time.sleep(5)
-
-            current_url = driver.current_url
-
-            # Check for security checkpoint (2FA, CAPTCHA, etc.)
-            if "/checkpoint" in current_url:
-                print("\n" + "=" * 60)
-                print("LinkedIn Security Checkpoint Detected")
-                print("=" * 60)
-                print("Please complete the security verification in the browser.")
-                print("\nPress Enter after completing verification...")
-                input()
-                time.sleep(2)
-                current_url = driver.current_url
-
-            # Success if we're no longer on login/authwall page
-            if "/login" not in current_url and "/authwall" not in current_url:
-                return True
-
-            return False
+            return self._wait_for_login_result(driver)
 
         except Exception as e:
-            logger.error(f"Auto-login failed: {e}")
+            logger.error(f"Selenium auto-login failed: {e}")
             return False
+
+    def _wait_for_login_result(self, driver) -> bool:
+        """Wait for login to complete and check result.
+
+        Args:
+            driver: Browser driver (NodriverWrapper or Selenium)
+
+        Returns:
+            True if login successful, False otherwise
+        """
+        # Wait for redirect (successful login redirects away from /login)
+        time.sleep(5)
+
+        current_url = driver.current_url
+
+        # Check for security checkpoint (2FA, CAPTCHA, etc.)
+        if "/checkpoint" in current_url:
+            print("\n" + "=" * 60)
+            print("LinkedIn Security Checkpoint Detected")
+            print("=" * 60)
+            print("Please complete the security verification in the browser.")
+            print("\nPress Enter after completing verification...")
+            input()
+            time.sleep(2)
+            current_url = driver.current_url
+
+        # Success if we're no longer on login/authwall page
+        if "/login" not in current_url and "/authwall" not in current_url:
+            return True
+
+        return False
 
     def close_browser(self) -> None:
         """Close the shared browser session.

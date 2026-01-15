@@ -33,9 +33,6 @@ from api_client import api_client
 from config import Config
 from models import LinkedInProfile
 
-# Alias for backward compatibility within this module
-LinkedInProfileResult = LinkedInProfile
-
 logger = logging.getLogger(__name__)
 
 
@@ -101,9 +98,7 @@ class FreshLinkedInAPIClient:
             logger.debug(f"RapidAPI rate limiter: waited {wait_time:.1f}s")
         self._request_count += 1
 
-    def _check_from_cache(
-        self, name: str, company: str
-    ) -> Optional[LinkedInProfileResult]:
+    def _check_from_cache(self, name: str, company: str) -> Optional[LinkedInProfile]:
         """Check if result exists in cache."""
         if not self.cache:
             return None
@@ -114,7 +109,7 @@ class FreshLinkedInAPIClient:
         if cached:
             self._cache_hits += 1
             logger.debug(f"Cache hit for {name} at {company}")
-            return LinkedInProfileResult.from_dict(cached)
+            return LinkedInProfile.from_dict(cached)
 
         return None
 
@@ -122,7 +117,7 @@ class FreshLinkedInAPIClient:
         self,
         name: str,
         company: str,
-        result: LinkedInProfileResult,
+        result: LinkedInProfile,
         ttl: int = 86400 * 30,
     ):
         """Save result to cache (default 30 days TTL)."""
@@ -191,7 +186,7 @@ class FreshLinkedInAPIClient:
         company: str,
         use_cache: bool = True,
         min_match_score: float = 0.5,
-    ) -> Optional[LinkedInProfileResult]:
+    ) -> Optional[LinkedInProfile]:
         """
         Search for a person by name and company.
 
@@ -202,7 +197,7 @@ class FreshLinkedInAPIClient:
             min_match_score: Minimum match score to accept a result (0.0-1.0)
 
         Returns:
-            LinkedInProfileResult if found, None otherwise
+            LinkedInProfile if found, None otherwise
         """
         if not self.api_key:
             logger.error("No RapidAPI key configured. Cannot search.")
@@ -348,7 +343,7 @@ class FreshLinkedInAPIClient:
                     headline.split(" at ")[0].split(" @ ")[0].split(" - ")[0].strip()
                 )
 
-            result = LinkedInProfileResult(
+            result = LinkedInProfile(
                 linkedin_url=linkedin_url,
                 public_id=public_id,
                 first_name=best_result.get("first_name", ""),
@@ -393,7 +388,7 @@ class FreshLinkedInAPIClient:
         use_cache: bool = True,
         min_match_score: float = 0.5,
         delay_between_requests: float = 0.5,
-    ) -> Dict[str, Optional[LinkedInProfileResult]]:
+    ) -> Dict[str, Optional[LinkedInProfile]]:
         """
         Search for multiple people in batch.
 
@@ -404,7 +399,7 @@ class FreshLinkedInAPIClient:
             delay_between_requests: Additional delay between API calls
 
         Returns:
-            Dict mapping "name|company" to LinkedInProfileResult or None
+            Dict mapping "name|company" to LinkedInProfile or None
         """
         results = {}
 
@@ -435,7 +430,7 @@ class FreshLinkedInAPIClient:
 
         return results
 
-    def get_profile_by_url(self, linkedin_url: str) -> Optional[LinkedInProfileResult]:
+    def get_profile_by_url(self, linkedin_url: str) -> Optional[LinkedInProfile]:
         """
         Get detailed profile information by LinkedIn URL.
 
@@ -443,7 +438,7 @@ class FreshLinkedInAPIClient:
             linkedin_url: Full LinkedIn profile URL
 
         Returns:
-            LinkedInProfileResult if found, None otherwise
+            LinkedInProfile if found, None otherwise
         """
         if not self.api_key:
             logger.error("No RapidAPI key configured. Cannot get profile.")
@@ -486,7 +481,7 @@ class FreshLinkedInAPIClient:
             if linkedin_url and "/in/" in linkedin_url:
                 public_id = linkedin_url.split("/in/")[-1].rstrip("/")
 
-            return LinkedInProfileResult(
+            return LinkedInProfile(
                 linkedin_url=linkedin_url,
                 public_id=public_id,
                 first_name=item.get("firstName", ""),
