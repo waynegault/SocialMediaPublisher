@@ -158,7 +158,7 @@ def test_validate_enrichment_quality():
     story = Story()
     story.id = 999
     story.title = "Test Story"
-    story.story_people = [
+    story.direct_people = [
         {
             "name": "Dr. Jane Smith",
             "linkedin_profile": "https://linkedin.com/in/janesmith",
@@ -170,7 +170,7 @@ def test_validate_enrichment_quality():
             "match_confidence": "high",
         },
     ]
-    story.org_leaders = [
+    story.indirect_people = [
         {
             "name": "CEO Person",
             "linkedin_profile": "https://linkedin.com/in/ceoperson",
@@ -192,8 +192,12 @@ def test_validate_enrichment_quality():
     story_with_dupe = Story()
     story_with_dupe.id = 998
     story_with_dupe.title = "Test Story with Duplicate"
-    story_with_dupe.story_people = [{"name": "Same Person", "match_confidence": "high"}]
-    story_with_dupe.org_leaders = [{"name": "Same Person", "match_confidence": "high"}]
+    story_with_dupe.direct_people = [
+        {"name": "Same Person", "match_confidence": "high"}
+    ]
+    story_with_dupe.indirect_people = [
+        {"name": "Same Person", "match_confidence": "high"}
+    ]
     result = validate_enrichment_quality(story_with_dupe)
     assert result.duplicate_detection is False
     assert any("duplicate" in w.lower() for w in result.warnings)
@@ -204,7 +208,7 @@ def test_validate_enrichment_quality():
     story_low_conf = Story()
     story_low_conf.id = 997
     story_low_conf.title = "Test Low Confidence"
-    story_low_conf.story_people = [
+    story_low_conf.direct_people = [
         {
             "name": "P1",
             "linkedin_profile": "https://linkedin.com/in/p1",
@@ -241,7 +245,7 @@ def test_atomic_enrichment():
     print("\n1. Creating test story...")
     test_story = Story()
     test_story.title = "Phase 4 Atomic Enrichment Test"
-    test_story.story_people = [
+    test_story.direct_people = [
         {
             "name": "Test Researcher",
             "company": "Test University",
@@ -249,7 +253,7 @@ def test_atomic_enrichment():
             "match_confidence": "high",
         }
     ]
-    test_story.org_leaders = [
+    test_story.indirect_people = [
         {
             "name": "Test CEO",
             "organization": "Test Corp",

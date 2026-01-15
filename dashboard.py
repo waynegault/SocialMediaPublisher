@@ -14,9 +14,13 @@ Features:
 
 import json
 import logging
+import socket
+import subprocess
 import threading
+import webbrowser
 from dataclasses import dataclass, asdict
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 from flask import Flask, render_template_string, jsonify, request
@@ -636,14 +640,14 @@ class DashboardServer:
         @self.app.route("/api/dashboard/export/<int:story_id>")
         def export_story(story_id: int) -> Any:
             """Step 6.5: Export people data for a single story."""
-            from company_mention_enricher import export_story_people
+            from company_mention_enricher import export_direct_people
 
             format = request.args.get("format", "json")
             story = self.db.get_story(story_id)
             if not story:
                 return jsonify({"error": "Story not found"}), 404
 
-            data = export_story_people(story, format)
+            data = export_direct_people(story, format)
 
             if format == "csv":
                 return data, 200, {"Content-Type": "text/csv"}
@@ -827,21 +831,86 @@ class DashboardServer:
             if next_run is not None:
                 self._pipeline_status.next_run = next_run
 
-    def run(self, debug: bool = False, threaded: bool = True) -> None:
+    def _find_available_port(self) -> bool:
+        """Find an available port, trying up to 5 ports starting from self.port.
+
+        Returns:
+            True if an available port was found, False otherwise.
+        """
+        original_port = self.port
+        for attempt in range(5):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.bind(("localhost", self.port))
+                sock.close()
+                if self.port != original_port:
+                    logger.info(f"Using port {self.port} instead of {original_port}")
+                return True
+            except OSError:
+                if attempt == 0:
+                    logger.info(f"Port {self.port} is in use, trying another...")
+                self.port += 1
+        return False
+
+    def _open_browser(self) -> None:
+        """Open the dashboard in a browser window."""
+        url = f"http://localhost:{self.port}"
+        try:
+            # Try to open Edge in app mode (creates a standalone window)
+            edge_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+            if not Path(edge_path).exists():
+                edge_path = r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+            if Path(edge_path).exists():
+                subprocess.Popen(
+                    [edge_path, f"--app={url}", "--start-maximized"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                webbrowser.open(url)
+        except Exception as e:
+            logger.warning(f"Could not open Edge in app mode: {e}")
+            webbrowser.open(url)
+
+    def run(
+        self, debug: bool = False, threaded: bool = True, open_browser: bool = True
+    ) -> None:
         """Run the dashboard server.
 
         Args:
             debug: Enable Flask debug mode
             threaded: Enable threaded mode for concurrent requests
+            open_browser: Whether to open a browser window automatically
         """
-        logger.info(f"Starting dashboard server on http://localhost:{self.port}")
-        self.app.run(
-            host="0.0.0.0",
-            port=self.port,
-            debug=debug,
-            threaded=threaded,
-            use_reloader=False,
+        import werkzeug.serving
+
+        # Find an available port
+        if not self._find_available_port():
+            print("   Could not find an available port. Try again later.")
+            return
+
+        print(f"\n🌐 Starting dashboard at http://localhost:{self.port}")
+        if open_browser:
+            print("   Opening browser...")
+        print("   Press Ctrl+C to stop the dashboard and return to menu.\n")
+
+        # Open browser if requested
+        if open_browser:
+            self._open_browser()
+
+        # Use werkzeug's make_server for cleaner shutdown handling
+        server = werkzeug.serving.make_server(
+            "localhost", self.port, self.app, threaded=threaded
         )
+        server.timeout = 1  # Check for interrupt every second
+
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server.server_close()
+            print("   Dashboard stopped.\n")
 
     def run_in_thread(self) -> threading.Thread:
         """Run the dashboard server in a background thread.
@@ -849,7 +918,9 @@ class DashboardServer:
         Returns:
             The thread running the server
         """
-        thread = threading.Thread(target=self.run, daemon=True)
+        thread = threading.Thread(
+            target=lambda: self.run(open_browser=False), daemon=True
+        )
         thread.start()
         logger.info(f"Dashboard server started in background on port {self.port}")
         return thread

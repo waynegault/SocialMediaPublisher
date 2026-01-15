@@ -26,7 +26,7 @@ TEST_MODULES = [
     ("company_mention_enricher", "Company Mention Enricher"),
     ("opportunity_messages", "Opportunity Messages"),
     ("validation_server", "Validation Server"),
-    ("find_leadership", "Find Leadership"),
+    ("find_indirect_people", "Indirect People"),
     ("originality_checker", "Originality Checker"),
     ("source_verifier", "Source Verifier"),
     ("linkedin_optimizer", "LinkedIn Optimizer"),

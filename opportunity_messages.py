@@ -2,28 +2,40 @@
 Professional job opportunity postscript messages for LinkedIn posts.
 
 These messages convey openness to new opportunities in a non-begging,
-professional, and engaging manner suitable for a chemical engineering professional.
+professional, and engaging manner suitable for any professional discipline.
 """
 
 import random
+from config import Config
+
+
+def _get_discipline_field() -> str:
+    """Get the discipline as a field (e.g., 'chemical engineering' from 'chemical engineer')."""
+    discipline = Config.DISCIPLINE
+    # Convert 'engineer' to 'engineering' for field context
+    return discipline.replace(" engineer", " engineering").replace(
+        " Engineer", " Engineering"
+    )
+
 
 # 50 professional postscript messages about job opportunities
-OPPORTUNITY_MESSAGES = [
+# Messages use {discipline} and {discipline_field} placeholders
+OPPORTUNITY_MESSAGE_TEMPLATES = [
     # Direct but professional
-    "P.S. I'm currently exploring new opportunities in chemical engineering. Let's connect!",
-    "P.S. Open to discussing exciting chemical engineering roles. Feel free to reach out!",
-    "P.S. I'm actively seeking my next challenge in the chemical engineering space.",
-    "P.S. Looking for my next opportunity to make an impact in chemical engineering.",
-    "P.S. Currently exploring new chapters in my chemical engineering career.",
+    "P.S. I'm currently exploring new opportunities in {discipline_field}. Let's connect!",
+    "P.S. Open to discussing exciting {discipline_field} roles. Feel free to reach out!",
+    "P.S. I'm actively seeking my next challenge in the {discipline_field} space.",
+    "P.S. Looking for my next opportunity to make an impact in {discipline_field}.",
+    "P.S. Currently exploring new chapters in my {discipline_field} career.",
     # Expertise-focused
     "P.S. I bring process optimization expertise to every role. Open to new opportunities!",
-    "P.S. Seeking roles where I can apply my chemical engineering skills to real-world challenges.",
+    "P.S. Seeking roles where I can apply my {discipline_field} skills to real-world challenges.",
     "P.S. Looking to bring my technical expertise to an innovative team. Let's talk!",
     "P.S. Ready to contribute my engineering experience to a forward-thinking organization.",
-    "P.S. Eager to apply my process engineering background to new challenges.",
+    "P.S. Eager to apply my {discipline_field} background to new challenges.",
     # Value proposition
     "P.S. If your team needs someone who can bridge technical and business needs, I'd love to chat.",
-    "P.S. I help organizations optimize their chemical processes. Currently available for new roles.",
+    "P.S. I help organizations optimize their processes. Currently available for new roles.",
     "P.S. Looking to join a team where I can drive efficiency and innovation.",
     "P.S. Seeking opportunities to leverage my expertise in process improvement.",
     "P.S. Open to roles where I can make a measurable difference.",
@@ -34,9 +46,9 @@ OPPORTUNITY_MESSAGES = [
     "P.S. Your network might hold my next opportunity. Happy to connect!",
     "P.S. Expanding my professional network while seeking new challenges.",
     # Industry-specific
-    "P.S. Passionate about sustainable chemical processes. Open to green chemistry opportunities!",
-    "P.S. Seeking roles in process safety, optimization, or plant operations.",
-    "P.S. Looking for opportunities in petrochemical, pharmaceutical, or specialty chemicals.",
+    "P.S. Passionate about sustainable processes. Open to opportunities in this space!",
+    "P.S. Seeking roles in process safety, optimization, or operations.",
+    "P.S. Looking for opportunities in industry sectors where I can add value.",
     "P.S. Open to roles in R&D, process development, or manufacturing excellence.",
     "P.S. Interested in opportunities at the intersection of engineering and innovation.",
     # Soft approach
@@ -48,8 +60,8 @@ OPPORTUNITY_MESSAGES = [
     # Conversation starters
     "P.S. I'd love to hear about interesting challenges you're facing. Also open to new roles!",
     "P.S. What's the most exciting problem you're solving? I'm looking to tackle new ones myself.",
-    "P.S. Always up for a conversation about chemical engineering. And yes, I'm job hunting!",
-    "P.S. Let's discuss the future of chemical engineering. I'm also exploring new opportunities.",
+    "P.S. Always up for a conversation about {discipline_field}. And yes, I'm job hunting!",
+    "P.S. Let's discuss the future of {discipline_field}. I'm also exploring new opportunities.",
     "P.S. Coffee chat? I'm always learning and currently looking for my next role.",
     # Confidence-building
     "P.S. My track record speaks for itself. Ready for new challenges!",
@@ -64,32 +76,41 @@ OPPORTUNITY_MESSAGES = [
     "P.S. Looking for a team that tackles complex challenges together.",
     "P.S. Seeking a collaborative environment for my next career chapter.",
     # Forward-looking
-    "P.S. Excited about where chemical engineering is heading. Looking to be part of it!",
+    "P.S. Excited about where {discipline_field} is heading. Looking to be part of it!",
     "P.S. The industry is evolving rapidly. I want to help shape its future.",
-    "P.S. Seeking roles at the cutting edge of chemical engineering.",
+    "P.S. Seeking roles at the cutting edge of {discipline_field}.",
     "P.S. Ready to contribute to the next generation of process innovation.",
     "P.S. Looking for opportunities to work on tomorrow's engineering challenges.",
 ]
 
 
+def _format_message(template: str) -> str:
+    """Format a message template with the current discipline."""
+    return template.format(
+        discipline=Config.DISCIPLINE, discipline_field=_get_discipline_field()
+    )
+
+
 def get_random_opportunity_message() -> str:
     """Get a randomly selected opportunity message."""
-    return random.choice(OPPORTUNITY_MESSAGES)
+    template = random.choice(OPPORTUNITY_MESSAGE_TEMPLATES)
+    return _format_message(template)
 
 
 def get_opportunity_message_by_index(index: int) -> str:
     """Get a specific opportunity message by index (0-49)."""
-    return OPPORTUNITY_MESSAGES[index % len(OPPORTUNITY_MESSAGES)]
+    template = OPPORTUNITY_MESSAGE_TEMPLATES[index % len(OPPORTUNITY_MESSAGE_TEMPLATES)]
+    return _format_message(template)
 
 
 def get_all_messages() -> list[str]:
     """Get all opportunity messages."""
-    return OPPORTUNITY_MESSAGES.copy()
+    return [_format_message(t) for t in OPPORTUNITY_MESSAGE_TEMPLATES]
 
 
 def get_message_count() -> int:
     """Get the total number of available messages."""
-    return len(OPPORTUNITY_MESSAGES)
+    return len(OPPORTUNITY_MESSAGE_TEMPLATES)
 
 
 # Optional: Allow customization via config
@@ -97,14 +118,15 @@ _custom_messages: list[str] = []
 
 
 def add_custom_message(message: str) -> None:
-    """Add a custom opportunity message."""
+    """Add a custom opportunity message (can use {discipline} and {discipline_field} placeholders)."""
     _custom_messages.append(message)
 
 
 def get_random_message_with_custom() -> str:
     """Get a random message including any custom messages."""
-    all_msgs = OPPORTUNITY_MESSAGES + _custom_messages
-    return random.choice(all_msgs)
+    all_templates = OPPORTUNITY_MESSAGE_TEMPLATES + _custom_messages
+    template = random.choice(all_templates)
+    return _format_message(template)
 
 
 def clear_custom_messages() -> None:
@@ -127,26 +149,32 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert msg is not None
         assert isinstance(msg, str)
         assert len(msg) > 0
-        assert msg in OPPORTUNITY_MESSAGES
+        # Message should be a formatted version of a template
+        all_msgs = get_all_messages()
+        assert msg in all_msgs
 
     def test_get_opportunity_message_by_index_valid():
         msg = get_opportunity_message_by_index(0)
-        assert msg == OPPORTUNITY_MESSAGES[0]
+        expected = _format_message(OPPORTUNITY_MESSAGE_TEMPLATES[0])
+        assert msg == expected
         msg = get_opportunity_message_by_index(49)
-        assert msg == OPPORTUNITY_MESSAGES[49]
+        expected = _format_message(OPPORTUNITY_MESSAGE_TEMPLATES[49])
+        assert msg == expected
 
     def test_get_opportunity_message_by_index_wraps():
         # Index wraps around via modulo
         msg = get_opportunity_message_by_index(50)
-        assert msg == OPPORTUNITY_MESSAGES[0]
+        expected = _format_message(OPPORTUNITY_MESSAGE_TEMPLATES[0])
+        assert msg == expected
         msg = get_opportunity_message_by_index(51)
-        assert msg == OPPORTUNITY_MESSAGES[1]
+        expected = _format_message(OPPORTUNITY_MESSAGE_TEMPLATES[1])
+        assert msg == expected
 
     def test_get_all_messages():
         msgs = get_all_messages()
         assert isinstance(msgs, list)
         assert len(msgs) == 50
-        # Verify it's a copy
+        # Verify it's a new list each time
         msgs.append("test")
         assert len(get_all_messages()) == 50
 
@@ -158,7 +186,7 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         clear_custom_messages()  # Reset first
         add_custom_message("Custom test message")
         # Custom message should appear in random with custom
-        all_with_custom = OPPORTUNITY_MESSAGES + _custom_messages
+        all_with_custom = OPPORTUNITY_MESSAGE_TEMPLATES + _custom_messages
         assert "Custom test message" in all_with_custom
         clear_custom_messages()  # Cleanup
 
@@ -166,17 +194,18 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         clear_custom_messages()  # Reset first
         add_custom_message("Unique custom message XYZ123")
         # Verify custom message is in the combined list
-        all_msgs = OPPORTUNITY_MESSAGES + _custom_messages
-        assert "Unique custom message XYZ123" in all_msgs, (
+        all_templates = OPPORTUNITY_MESSAGE_TEMPLATES + _custom_messages
+        assert "Unique custom message XYZ123" in all_templates, (
             f"Custom message not in list. _custom_messages={_custom_messages}"
         )
         # Verify get_random_message_with_custom returns from combined list
         msg = get_random_message_with_custom()
-        assert msg in all_msgs, "Returned message should be from combined list"
+        all_formatted = [_format_message(t) for t in all_templates]
+        assert msg in all_formatted, "Returned message should be from combined list"
         clear_custom_messages()  # Cleanup
 
     def test_all_messages_have_ps_prefix():
-        for msg in OPPORTUNITY_MESSAGES:
+        for msg in get_all_messages():
             assert msg.startswith("P.S."), (
                 f"Message should start with 'P.S.': {msg[:30]}"
             )

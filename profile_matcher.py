@@ -1211,7 +1211,7 @@ def create_person_context(
     story_category: str = "",
 ) -> PersonContext:
     """
-    Create a PersonContext from a dictionary (e.g., from story_people or org_leaders).
+    Create a PersonContext from a dictionary (e.g., from direct_people or indirect_people).
 
     Args:
         person_dict: Dictionary with person fields

@@ -325,6 +325,7 @@ class LinkedInVoyagerClient:
             "/me",
             "/identity/dash/profiles",
             "/voyagerIdentityDashProfiles",
+            "/voyagerRelationshipsDashMemberRelationships",  # New endpoint
         ]
 
         for endpoint in test_endpoints:
@@ -335,8 +336,9 @@ class LinkedInVoyagerClient:
                     logger.info(f"Authentication verified via {endpoint}")
                     return True
                 elif response.status_code in (401, 403):
-                    logger.warning(f"Auth failed on {endpoint}: {response.status_code}")
-                    return False
+                    # 403 on some endpoints doesn't mean not authenticated
+                    logger.debug(f"Endpoint {endpoint}: {response.status_code}")
+                    continue
                 # 410 means endpoint deprecated, try next
             except Exception:
                 continue

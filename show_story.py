@@ -30,10 +30,10 @@ print(f"\nSUMMARY:\n{s.summary}")
 print(f"\nPROMOTION:\n{s.promotion}")
 print(f"\nORGANIZATIONS: {s.organizations}")
 print("\n" + "-" * 70)
-print("DIRECT PEOPLE (story_people):")
+print("DIRECT PEOPLE (direct_people):")
 print("-" * 70)
-if s.story_people:
-    for i, p in enumerate(s.story_people, 1):
+if s.direct_people:
+    for i, p in enumerate(s.direct_people, 1):
         name = p.get("name", "Unknown")
         title = p.get("position", p.get("title", "N/A"))
         company = p.get("company", p.get("affiliation", "N/A"))
@@ -46,10 +46,10 @@ if s.story_people:
 else:
     print("  None")
 print("-" * 70)
-print("INDIRECT PEOPLE (org_leaders):")
+print("INDIRECT PEOPLE (indirect_people):")
 print("-" * 70)
-if s.org_leaders:
-    for i, p in enumerate(s.org_leaders, 1):
+if s.indirect_people:
+    for i, p in enumerate(s.indirect_people, 1):
         name = p.get("name", "Unknown")
         title = p.get("title", "N/A")
         org = p.get("organization", "N/A")

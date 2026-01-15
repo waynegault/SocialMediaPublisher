@@ -6,7 +6,7 @@ import json
 conn = sqlite3.connect("content_engine.db")
 cursor = conn.cursor()
 cursor.execute(
-    "SELECT id, title, summary, story_people, org_leaders, verification_status FROM stories"
+    "SELECT id, title, summary, direct_people, indirect_people, verification_status FROM stories"
 )
 
 
@@ -24,43 +24,43 @@ for row in cursor.fetchall():
     print(f"Status: {row[5]}")
     print(f"\nSummary:\n{row[2][:500]}")
 
-    story_people = json.loads(row[3]) if row[3] else []
-    org_leaders = json.loads(row[4]) if row[4] else []
+    direct_people = json.loads(row[3]) if row[3] else []
+    indirect_people = json.loads(row[4]) if row[4] else []
 
-    print(f"\n--- Story People ({len(story_people)}) ---")
-    for p in story_people[:8]:
+    print(f"\n--- Direct People ({len(direct_people)}) ---")
+    for p in direct_people[:8]:
         name = p.get("name", "Unknown")
         url = p.get("linkedin_profile") or p.get("linkedin_url") or "NO URL"
         print(f"  {name}: {url}")
 
-    print(f"\n--- Org Leaders ({len(org_leaders)}) ---")
-    for p in org_leaders[:8]:
+    print(f"\n--- Indirect People ({len(indirect_people)}) ---")
+    for p in indirect_people[:8]:
         name = p.get("name", "Unknown")
         url = p.get("linkedin_profile") or p.get("linkedin_url") or "NO URL"
         print(f"  {name}: {url}")
 
     # Check for exact duplicates
-    story_names = [p.get("name", "").lower() for p in story_people]
-    leader_names = [p.get("name", "").lower() for p in org_leaders]
-    exact_dups = set(story_names) & set(leader_names)
+    direct_names = [p.get("name", "").lower() for p in direct_people]
+    indirect_names = [p.get("name", "").lower() for p in indirect_people]
+    exact_dups = set(direct_names) & set(indirect_names)
     if exact_dups:
         print(f"\n⚠️ EXACT DUPLICATES: {exact_dups}")
 
     # Check for near-duplicates (first+last name match)
-    story_keys = {get_name_key(p.get("name", "")) for p in story_people}
+    direct_keys = {get_name_key(p.get("name", "")) for p in direct_people}
     near_dups = []
-    for p in org_leaders:
+    for p in indirect_people:
         key = get_name_key(p.get("name", ""))
-        if key in story_keys:
+        if key in direct_keys:
             near_dups.append(p.get("name"))
 
     if near_dups:
-        print(f"\n⚠️ NEAR-DUPLICATES in org_leaders: {near_dups}")
+        print(f"\n⚠️ NEAR-DUPLICATES in indirect_people: {near_dups}")
     else:
-        print("\n✅ No duplicates between story_people and org_leaders")
+        print("\n✅ No duplicates between direct_people and indirect_people")
 
     # Check LinkedIn URLs
-    all_people = story_people + org_leaders
+    all_people = direct_people + indirect_people
     with_urls = [
         p for p in all_people if p.get("linkedin_profile") or p.get("linkedin_url")
     ]

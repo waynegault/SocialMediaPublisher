@@ -38,7 +38,7 @@ For detailed architecture and component documentation, see the [Overview wiki](h
 - **Smart Hashtags**: AI-generated relevant hashtags (up to 3 per post)
 - **Relevant People Extraction**: Automatically identifies people mentioned in stories
   AND key leaders from mentioned organizations (CEOs, Directors, Principal Investigators, etc.)
-- **Story Enrichment**: Extracts organizations, story people, and org leaders
+- **Story Enrichment**: Extracts organizations, direct people, and indirect people (org leadership)
 - **LinkedIn Profile Search**: Finds real LinkedIn profiles using Google Search grounding
 - **LinkedIn @ Mentions**: Automatic @ mentions using verified LinkedIn usernames
 - **Promotion Messages**: AI-generated personalized job-seeking messages aligned to each story
@@ -86,7 +86,7 @@ For detailed architecture and component documentation, see the [Overview wiki](h
 ## How It Works
 
 1. **Search Cycle**: Discovers new stories based on your prompt and date range,
-   extracting hashtags and relevant people (including key org leaders) during generation
+   extracting hashtags and relevant people (including indirect people from mentioned orgs) during generation
 2. **Enrichment**: Finds LinkedIn profiles for relevant people identified during search
 3. **Image Generation**: Creates images for stories that meet quality threshold,
    featuring an attractive engineer (minimum 40% of image) with technology (60%)
@@ -382,8 +382,8 @@ Stories are stored in SQLite with the following fields:
 - `linkedin_post_id`: LinkedIn's post identifier
 - `enrichment_status`: pending/enriched/skipped
 - `organizations`: JSON array of organization names mentioned in story
-- `story_people`: JSON array of people mentioned directly in story (name, title, affiliation)
-- `org_leaders`: JSON array of key executives from organizations (name, title, org)
+- `direct_people`: JSON array of people mentioned directly in story (name, title, affiliation)
+- `indirect_people`: JSON array of key executives from organizations (name, title, org)
 - `linkedin_handles`: JSON array of verified LinkedIn profiles with @ handles
 - `promotion`: Personalized job-seeking message aligned to story content
 
@@ -774,9 +774,9 @@ From the interactive menu:
 ### Version 2.9 (January 9, 2026)
 
 - **Complete enrichment system redesign**:
-  - New structured data: `organizations`, `story_people`, `org_leaders`, `linkedin_handles`
+  - New structured data: `organizations`, `direct_people`, `indirect_people`, `linkedin_handles`
   - Replaced messy sentence-based enrichment with clean JSON structures
-  - 3-step enrichment workflow: orgs+people → org leaders → LinkedIn handles
+  - 3-step enrichment workflow: orgs+people → indirect people (org leadership) → LinkedIn handles
 - **LinkedIn profile search with Google Search grounding**:
   - Uses Gemini with Google Search to find real LinkedIn profile URLs
   - Extracts actual LinkedIn usernames for @ mentions (e.g., @emma-walmsley-097b47149)

@@ -208,6 +208,8 @@ ACADEMIC_PATTERNS = {
     "faculty",
     "department",
     "research",
+    "mit",  # Massachusetts Institute of Technology
+    "caltech",  # California Institute of Technology
 }
 
 # Professional titles that indicate a person
@@ -298,6 +300,146 @@ KNOWN_UNIVERSITIES = {
     "georgia tech": "Georgia Institute of Technology",
     "purdue": "Purdue University",
     "texas a&m": "Texas A&M University",
+}
+
+# =============================================================================
+# Invalid Entity Names (shared across modules)
+# =============================================================================
+# These are terms that appear as "affiliations" or "names" but aren't real entities.
+# Used by linkedin_profile_lookup.py and company_mention_enricher.py
+
+INVALID_ORG_NAMES: set[str] = {
+    # Generic terms / research topics (not organizations)
+    "molecular",
+    "chemistry",
+    "physics",
+    "biology",
+    "research",
+    "science",
+    "engineering",
+    "technology",
+    "materials",
+    "nanotechnology",
+    "computational",
+    "theoretical",
+    "applied",
+    "advanced",
+    "fundamental",
+    # Materials and topics (not organizations)
+    "mxenes",
+    "graphene",
+    "nanoparticles",
+    "nanomaterials",
+    "quantum",
+    "polymers",
+    "catalysis",
+    "electrochemistry",
+    "spectroscopy",
+    "synthesis",
+    # Government entities (too generic)
+    "government",
+    "the government",
+    "uk government",
+    "us government",
+    "federal government",
+    "state government",
+    "local government",
+    "ministry",
+    "department",
+    "agency",
+    # Retail (often false positives from articles)
+    "aldi",
+    "asda",
+    "tesco",
+    "sainsburys",
+    "morrisons",
+    "lidl",
+    "waitrose",
+    "co-op",
+    "walmart",
+    "target",
+    "costco",
+    "supermarket",
+    "retail",
+    "store",
+    "shop",
+    # Common Asian surnames (false positives from parsing)
+    "jiang",
+    "wang",
+    "zhang",
+    "chen",
+    "liu",
+    "li",
+    "yang",
+    "huang",
+    "zhou",
+    "wu",
+    # Other invalid patterns
+    "n/a",
+    "none",
+    "unknown",
+    "various",
+    "multiple",
+    "other",
+    "others",
+    "tba",
+    "independent",
+    "freelance",
+    "self-employed",
+    "retired",
+}
+
+# Patterns that indicate a headline/description rather than an org name
+INVALID_ORG_PATTERNS: list[str] = [
+    r"^new\s+",  # Headlines often start with "New ..."
+    r"smash",  # "Smashes", "Smashing" - headline verbs
+    r"breakthrough",
+    r"discover",
+    r"announc",  # "Announces", "Announced"
+    r"reveal",
+    r"launch",
+    r"unveil",
+    r"develop",
+    r"creat",  # "Creates", "Created"
+    r"powered",  # "Gold-Powered" etc.
+    r"benchmark",
+    r"record",
+    r"-old\b",  # "decade-old", "year-old"
+]
+
+# Generic placeholders that aren't actual person names
+INVALID_PERSON_NAMES: set[str] = {
+    "individual researcher",
+    "researcher",
+    "professor",
+    "scientist",
+    "engineer",
+    "author",
+    "contributor",
+    "correspondent",
+    "editor",
+    "staff",
+    "staff writer",
+    "team",
+    "anonymous",
+    "unknown",
+}
+
+# Single-word org abbreviations that ARE valid (exceptions)
+VALID_SINGLE_WORD_ORGS: set[str] = {
+    "mit",
+    "nasa",
+    "ibm",
+    "gsk",
+    "rspca",
+    "bva",
+    "basf",
+    "dow",
+    "shell",
+    "bp",
+    "sabic",
+    "ineos",
+    "linde",
 }
 
 
