@@ -3644,7 +3644,9 @@ NOT_FOUND"""
                     return None
 
                 # Use centralized browser rate limiter for basic timing
-                wait_time = api_client.browser_wait(endpoint=Config.SEARCH_ENGINE.lower())
+                wait_time = api_client.browser_wait(
+                    endpoint=Config.SEARCH_ENGINE.lower()
+                )
                 if wait_time > 0.5:
                     logger.debug(f"Browser rate limiter: waited {wait_time:.1f}s")
 

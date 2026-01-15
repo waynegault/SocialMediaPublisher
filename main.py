@@ -691,7 +691,9 @@ def _test_search(engine: ContentEngine) -> None:
             # Get the most recent stories, sorted by quality score
             recent_stories = engine.db.get_recent_stories(limit=new_count)
             # Sort by quality score descending (highest first)
-            for story_id, title, quality_score in sorted(recent_stories, key=lambda r: r[2], reverse=True):
+            for story_id, title, quality_score in sorted(
+                recent_stories, key=lambda r: r[2], reverse=True
+            ):
                 print(f"  - [{story_id}] {title[:60]}... (Score: {quality_score})")
 
         # Step 2: Full enrichment (direct+indirect people, LinkedIn profiles, URNs)
@@ -813,7 +815,9 @@ def _run_indirect_people_enrichment_silent(engine: ContentEngine) -> int:
         print("  → All stories already have indirect people")
         return 0
 
-    print(f"  → Finding indirect people for {len(stories)} stories with organizations...")
+    print(
+        f"  → Finding indirect people for {len(stories)} stories with organizations..."
+    )
 
     enriched = 0
     for story in stories:

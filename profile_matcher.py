@@ -371,9 +371,7 @@ def score_person_candidate(
 
     # Extract significant company words
     company_words = [
-        w
-        for w in company_lower.split()
-        if w not in COMPANY_SKIP_WORDS and len(w) > 2
+        w for w in company_lower.split() if w not in COMPANY_SKIP_WORDS and len(w) > 2
     ]
 
     # === Name matching ===
