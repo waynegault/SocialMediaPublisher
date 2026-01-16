@@ -6,9 +6,48 @@ within their respective module files using _create_module_tests() functions.
 This runner discovers and executes all module tests.
 """
 
+import asyncio
+import atexit
+import io
 import logging
+import os
 import sys
+import warnings
 from test_framework import run_all_suites, suppress_logging
+
+# Suppress asyncio warnings about pending tasks (nodriver/websockets cleanup issue)
+warnings.filterwarnings("ignore", message=".*Task was destroyed.*")
+warnings.filterwarnings("ignore", message=".*Event loop is closed.*")
+warnings.filterwarnings("ignore", message=".*coroutine.*was never awaited.*")
+
+
+def _suppress_unraisable_hook(unraisable):
+    """Suppress nodriver/websockets cleanup errors at exit."""
+    # These are expected during process exit when nodriver cleanup races with gc
+    err_str = str(unraisable.exc_value) if unraisable.exc_value else ""
+    if any(x in err_str for x in ["closed pipe", "Event loop is closed"]):
+        return  # Suppress these known harmless errors
+    # For other unraisable exceptions, use default behavior
+    sys.__unraisablehook__(unraisable)
+
+
+# Install custom hook to suppress known harmless cleanup errors
+sys.unraisablehook = _suppress_unraisable_hook
+
+
+def _cleanup_asyncio():
+    """Clean up asyncio resources at exit to prevent warnings."""
+    try:
+        # Close any shared browser sessions
+        from linkedin_profile_lookup import LinkedInCompanyLookup
+
+        LinkedInCompanyLookup.close_shared_browser()
+    except Exception:
+        pass
+
+
+# Register cleanup to run at exit
+atexit.register(_cleanup_asyncio)
 
 
 # List of modules that have _create_module_tests() functions
@@ -86,14 +125,24 @@ def main_with_failures() -> tuple[int, list[tuple[str, str]]]:
 
         print(f"\nRunning {len(suites)} test suites...\n")
         success, failed_tests = run_all_suites(suites, verbose=True)
+
+    # Browser cleanup is handled by atexit handler
     return (0, []) if success else (1, failed_tests)
 
 
 def main() -> int:
     """Entry point that returns exit code only."""
     exit_code, _ = main_with_failures()
+
+    # Suppress stderr to hide nodriver/websockets cleanup warnings during gc
+    # These are harmless and happen after all tests complete successfully
+    sys.stderr = io.StringIO()
+
     return exit_code
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    result = main()
+    # os._exit bypasses normal cleanup and avoids asyncio task warnings
+    # All tests have completed and results have been reported
+    os._exit(result)

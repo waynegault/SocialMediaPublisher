@@ -386,12 +386,12 @@ RECOMMENDATION: [one sentence]"""
 
         try:
             if self.local_client:
-                response = self.local_client.chat.completions.create(
-                    model=Config.LM_STUDIO_MODEL,
+                content = api_client.local_llm_generate(
+                    client=self.local_client,
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=300,
+                    endpoint="originality_check",
                 )
-                content = response.choices[0].message.content or ""
             elif self.client:
                 response = api_client.gemini_generate(
                     client=self.client,

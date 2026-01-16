@@ -740,8 +740,8 @@ class StorySearcher:
         logger.info("Distilling conversational prompt into search keywords...")
 
         try:
-            response = self.local_client.chat.completions.create(
-                model=Config.LM_STUDIO_MODEL,
+            content = api_client.local_llm_generate(
+                client=self.local_client,
                 messages=[
                     {
                         "role": "system",
@@ -755,8 +755,8 @@ class StorySearcher:
                 max_tokens=50,
                 temperature=0.1,
                 timeout=30,
+                endpoint="search_distill",
             )
-            content = response.choices[0].message.content
             if not content:
                 logger.warning("Local LLM returned empty content for distillation")
                 return self._manual_distill(search_prompt)
@@ -874,13 +874,11 @@ class StorySearcher:
         )
 
         try:
-            response = self.local_client.chat.completions.create(
-                model=Config.LM_STUDIO_MODEL,
+            content = api_client.local_llm_generate(
+                client=self.local_client,
                 messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"}
-                if "json" in Config.LM_STUDIO_MODEL.lower()
-                else {"type": "text"},
                 timeout=Config.LLM_LOCAL_TIMEOUT,
+                endpoint="search_process",
             )
         except Exception as e:
             error_msg = str(e)
@@ -896,7 +894,6 @@ class StorySearcher:
             logger.error(f"Local LLM processing failed: {e}")
             return 0
 
-        content = response.choices[0].message.content
         if not content:
             logger.warning("Empty response from Local LLM")
             return 0
@@ -1575,12 +1572,12 @@ class StorySearcher:
         )
 
         try:
-            response = self.local_client.chat.completions.create(
-                model=Config.LM_STUDIO_MODEL,
+            content = api_client.local_llm_generate(
+                client=self.local_client,
                 messages=[{"role": "user", "content": prompt}],
                 timeout=Config.LLM_LOCAL_TIMEOUT,
+                endpoint="local_search_process",
             )
-            content = response.choices[0].message.content
             if content:
                 stories_data = self._parse_response(content)
                 # Validate and fix URLs - LLM may hallucinate or mismatch URLs
@@ -1656,12 +1653,12 @@ class StorySearcher:
 
         try:
             if self.local_client:
-                response = self.local_client.chat.completions.create(
-                    model=Config.LM_STUDIO_MODEL,
+                return api_client.local_llm_generate(
+                    client=self.local_client,
                     messages=[{"role": "user", "content": repair_prompt}],
                     timeout=Config.LLM_LOCAL_TIMEOUT,
+                    endpoint="json_repair",
                 )
-                return response.choices[0].message.content
             else:
                 response = api_client.gemini_generate(
                     client=self.client,

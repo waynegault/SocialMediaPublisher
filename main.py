@@ -1539,20 +1539,15 @@ def _lookup_linkedin_profiles_for_people(
 
     # Cache statistics (shows cross-story caching efficiency)
     cache_stats = lookup.get_cache_stats()
-    total_cached = (
-        cache_stats["person"]["total"]
-        + cache_stats["company"]["total"]
-        + cache_stats["department"]["total"]
-    )
-    if total_cached > 0:
+    unified = cache_stats.get("unified_cache", {})
+    total_entries = unified.get("total_entries", 0)
+    if total_entries > 0:
         print("\n📊 Cache Statistics (cross-story efficiency):")
-        for cache_type in ("person", "company", "department"):
-            stats = cache_stats[cache_type]  # type: ignore[literal-required]
-            if stats["total"] > 0:
-                print(
-                    f"  • {cache_type.capitalize()}: {stats['total']} entries "
-                    f"({stats['found']} found, {stats['not_found']} not found)"
-                )
+        print(
+            f"  • Total: {total_entries} entries "
+            f"(hits: {unified.get('hits', 0)}, misses: {unified.get('misses', 0)}, "
+            f"hit rate: {unified.get('hit_rate', '0%')})"
+        )
 
     # Timing statistics
     timing_stats = lookup.get_timing_stats()
@@ -4527,19 +4522,17 @@ def _reset_all(engine: ContentEngine) -> None:
     except ImportError:
         pass  # Cache module not available
 
-    # Clear LinkedIn profile lookup in-memory caches
+    # Clear LinkedIn profile lookup caches (now uses LinkedInCache via SQLite)
     try:
-        from linkedin_profile_lookup import LinkedInCompanyLookup
+        from cache import get_linkedin_cache
 
-        # Clear class-level shared caches
-        LinkedInCompanyLookup._shared_person_cache.clear()
-        LinkedInCompanyLookup._shared_found_profiles_by_name.clear()
-        LinkedInCompanyLookup._shared_company_url_to_name.clear()
-        LinkedInCompanyLookup._shared_failed_lookups.clear()
-        LinkedInCompanyLookup._shared_company_cache.clear()
-        print("  ✓ Cleared LinkedIn lookup in-memory caches")
+        # LinkedInCache uses SQLite backend which persists across sessions
+        # The clear_person_cache() method clears person-related entries
+        linkedin_cache = get_linkedin_cache()
+        linkedin_cache.clear_person_cache()
+        print("  ✓ Cleared LinkedIn profile cache")
     except (ImportError, AttributeError):
-        pass  # Module not available or caches don't exist
+        pass  # Module not available or method doesn't exist
 
     print("\n✓ Reset complete!")
 

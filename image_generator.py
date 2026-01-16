@@ -1192,11 +1192,11 @@ Do NOT include: close-up portraits, waist-up shots of individuals, or any person
                     logger.info(
                         "Using local LLM to refine image prompt (no central human)"
                     )
-                response = self.local_client.chat.completions.create(
-                    model=Config.LM_STUDIO_MODEL,
+                refined = api_client.local_llm_generate(
+                    client=self.local_client,
                     messages=[{"role": "user", "content": refinement_prompt}],
+                    endpoint="prompt_refinement",
                 )
-                refined = response.choices[0].message.content
             else:
                 # Fallback to Gemini for refinement
                 if Config.HUMAN_IN_IMAGE:
@@ -1297,11 +1297,11 @@ Return ONLY the alt text, nothing else."""
             alt_text = None
             if self.local_client:
                 logger.debug("Using local LLM to generate alt text")
-                response = self.local_client.chat.completions.create(
-                    model=Config.LM_STUDIO_MODEL,
+                alt_text = api_client.local_llm_generate(
+                    client=self.local_client,
                     messages=[{"role": "user", "content": alt_text_prompt}],
+                    endpoint="alt_text",
                 )
-                alt_text = response.choices[0].message.content
             else:
                 logger.debug("Using Gemini to generate alt text")
                 response = api_client.gemini_generate(

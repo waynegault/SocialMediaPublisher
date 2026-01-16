@@ -3120,11 +3120,11 @@ Return ONLY valid JSON, no explanation."""
         """Get response from AI (local LLM or Gemini)."""
         if self.local_client:
             try:
-                response = self.local_client.chat.completions.create(
-                    model=Config.LM_STUDIO_MODEL,
+                content = api_client.local_llm_generate(
+                    client=self.local_client,
                     messages=[{"role": "user", "content": prompt}],
+                    endpoint="ai_response",
                 )
-                content = response.choices[0].message.content
                 if content:
                     return content.strip()
             except Exception as e:
@@ -3174,11 +3174,11 @@ Return ONLY valid JSON, no explanation."""
         if self.local_client:
             try:
                 logger.info("Using local LLM for company mention enrichment...")
-                response = self.local_client.chat.completions.create(
-                    model=Config.LM_STUDIO_MODEL,
+                content = api_client.local_llm_generate(
+                    client=self.local_client,
                     messages=[{"role": "user", "content": prompt}],
+                    endpoint="company_mention",
                 )
-                content = response.choices[0].message.content
                 if content:
                     return content.strip()
             except Exception as e:
