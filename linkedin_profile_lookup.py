@@ -154,7 +154,8 @@ class NodriverWrapper:
 
             LinkedInCompanyLookup._shared_nodriver_tab = await self._browser.get(url)
             # Wait for page to be somewhat loaded
-            await LinkedInCompanyLookup._shared_nodriver_tab.sleep(1)
+            if LinkedInCompanyLookup._shared_nodriver_tab is not None:
+                await LinkedInCompanyLookup._shared_nodriver_tab.sleep(1)
 
         self._run_async(_navigate())
 
@@ -839,11 +840,11 @@ class LinkedInCompanyLookup:
         """Get a cached department lookup result from LinkedInCache."""
         return self._linkedin_cache.get_department(department, company)
 
-    def get_cache_stats(self) -> AllCacheStats:
+    def get_cache_stats(self) -> dict[str, CacheCountStats | dict[str, Any]]:
         """Get statistics about all search caches.
 
         Returns:
-            Dict with stats for 'person', 'company', 'department' caches
+            Dict with stats for 'person', 'company', and 'unified_cache' keys
         """
         # Get stats from LinkedInCache
         unified_stats = self._linkedin_cache.get_stats()
@@ -1292,7 +1293,9 @@ class LinkedInCompanyLookup:
         Returns:
             Dict with 'total', 'found' (with URLs), 'not_found' (None values)
         """
-        return self.get_cache_stats()["person"]
+        stats = self.get_cache_stats()["person"]
+        # Cast to CacheCountStats since we know "person" key has this structure
+        return cast(CacheCountStats, stats)
 
     def clear_all_caches(self) -> dict[str, int]:
         """Clear all search caches.
@@ -1428,9 +1431,10 @@ class LinkedInCompanyLookup:
             )
 
             # Get the initial tab
-            LinkedInCompanyLookup._shared_nodriver_tab = (
-                await LinkedInCompanyLookup._shared_nodriver_browser.get("about:blank")
-            )
+            if LinkedInCompanyLookup._shared_nodriver_browser is not None:
+                LinkedInCompanyLookup._shared_nodriver_tab = (
+                    await LinkedInCompanyLookup._shared_nodriver_browser.get("about:blank")
+                )
             LinkedInCompanyLookup._shared_browser_backend = "nodriver"
 
             logger.info("Created nodriver browser with anti-detection settings")
@@ -1965,7 +1969,7 @@ class LinkedInCompanyLookup:
             for i in range(15):
                 ready_state = driver.execute_script("return document.readyState")
                 if ready_state == "complete":
-                    logger.debug(f"Page ready after {i+1} seconds")
+                    logger.debug(f"Page ready after {i + 1} seconds")
                     break
                 time.sleep(1)
 
@@ -1978,7 +1982,7 @@ class LinkedInCompanyLookup:
                     "return document.getElementById('username') !== null"
                 )
                 if username_exists:
-                    logger.debug(f"Username field found after {i+1} seconds")
+                    logger.debug(f"Username field found after {i + 1} seconds")
                     break
                 time.sleep(1)
             else:
