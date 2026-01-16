@@ -20,11 +20,13 @@ import os
 import random
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 import requests
 
 from api_client import api_client
+from config import Config
 from models import LinkedInProfile, LinkedInOrganization
 from profile_matcher import score_person_candidate
 
@@ -35,6 +37,8 @@ try:
     _UNIFIED_CACHE_AVAILABLE = True
 except ImportError:
     _UNIFIED_CACHE_AVAILABLE = False
+    get_linkedin_cache = None
+    LinkedInCache = None
 
 logger = logging.getLogger(__name__)
 
@@ -105,8 +109,6 @@ class LinkedInVoyagerClient:
         """
         # Try to get credentials from multiple sources
         # First check passed parameters, then Config class
-        from config import Config
-
         self.li_at = li_at or Config.LINKEDIN_LI_AT
         self.jsessionid = jsessionid or Config.LINKEDIN_JSESSIONID
 
@@ -120,8 +122,8 @@ class LinkedInVoyagerClient:
         self._cache_dir = Path(
             os.path.expandvars(r"%LOCALAPPDATA%\SocialMediaPublisher")
         )
-        self._unified_cache: LinkedInCache | None = None
-        if _UNIFIED_CACHE_AVAILABLE:
+        self._unified_cache: Any = None
+        if _UNIFIED_CACHE_AVAILABLE and get_linkedin_cache is not None:
             try:
                 self._unified_cache = get_linkedin_cache()
             except Exception:
@@ -828,7 +830,6 @@ class HybridLinkedInLookup:
         if HybridLinkedInLookup._rapidapi_client is None:
             try:
                 from linkedin_rapidapi_client import FreshLinkedInAPIClient
-                from config import Config
 
                 if getattr(Config, "RAPIDAPI_KEY", ""):
                     HybridLinkedInLookup._rapidapi_client = FreshLinkedInAPIClient()

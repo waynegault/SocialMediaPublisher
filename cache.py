@@ -916,12 +916,33 @@ class LinkedInCache:
 
     def get_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
-        stats = self._cache.get_stats()
+        cache_stats = self._cache.get_stats()
+        # TwoLevelCache returns dict with l1_memory and l2_disk keys
+        # Aggregate the stats from both levels
+        l1_stats = cache_stats.get("l1_memory")
+        l2_stats = cache_stats.get("l2_disk")
+
+        total_hits = 0
+        total_misses = 0
+        total_entries = 0
+
+        if l1_stats:
+            total_hits += l1_stats.hits
+            total_misses += l1_stats.misses
+            total_entries += l1_stats.total_entries
+        if l2_stats:
+            total_hits += l2_stats.hits
+            total_misses += l2_stats.misses
+            total_entries += l2_stats.total_entries
+
+        total = total_hits + total_misses
+        hit_rate = (total_hits / total * 100) if total > 0 else 0.0
+
         return {
-            "hits": stats.hits,
-            "misses": stats.misses,
-            "total_entries": stats.total_entries,
-            "hit_rate": f"{stats.hit_rate:.1f}%",
+            "hits": total_hits,
+            "misses": total_misses,
+            "total_entries": total_entries,
+            "hit_rate": f"{hit_rate:.1f}%",
         }
 
 

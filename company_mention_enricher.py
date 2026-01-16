@@ -10,7 +10,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from google import genai  # type: ignore
 from openai import OpenAI
@@ -1715,15 +1715,28 @@ EXTRACTION RULES:
 
         return self._dedupe_people(indirect_candidates)
 
-    def _attach_linkedin_profiles(self, people: list[dict], story: Story) -> list[dict]:
-        """Match people to LinkedIn profiles with validation + fallbacks."""
+    def _attach_linkedin_profiles(
+        self,
+        people: list[dict],
+        story: Story,
+        lookup: Optional["LinkedInCompanyLookup"] = None,
+    ) -> list[dict]:
+        """Match people to LinkedIn profiles with validation + fallbacks.
+
+        Args:
+            people: List of person dictionaries to match
+            story: Story context for matching
+            lookup: Optional shared LinkedInCompanyLookup instance. If not provided,
+                    a new one will be created (and closed after use).
+        """
 
         if not people:
             return people
 
-        def _match_people_to_linkedin(people_to_match: list[dict]) -> list[dict]:
+        def _match_people_to_linkedin(
+            people_to_match: list[dict], linkedin_lookup: "LinkedInCompanyLookup"
+        ) -> list[dict]:
             try:
-                from linkedin_profile_lookup import LinkedInCompanyLookup
                 from profile_matcher import (
                     MatchConfidence,
                     ProfileMatcher,
@@ -1736,105 +1749,112 @@ EXTRACTION RULES:
             matched: list[dict] = []
             org_cache: dict[str, str] = {}
 
-            with LinkedInCompanyLookup(genai_client=self.client) as lookup:
-                matcher = ProfileMatcher(linkedin_lookup=lookup)
+            matcher = ProfileMatcher(linkedin_lookup=linkedin_lookup)
 
-                for person in people_to_match:
-                    updated = dict(person)
-                    org_name = (
-                        person.get("employer")
-                        or person.get("company")
-                        or person.get("organization")
-                        or ""
-                    )
+            for person in people_to_match:
+                updated = dict(person)
+                org_name = (
+                    person.get("employer")
+                    or person.get("company")
+                    or person.get("organization")
+                    or ""
+                )
 
-                    fallback_url = None
-                    if org_name:
-                        if org_name in org_cache:
-                            fallback_url = org_cache[org_name]
-                        else:
-                            url, _ = lookup.search_company(org_name)
-                            if url:
-                                org_cache[org_name] = url
-                                fallback_url = url
+                fallback_url = None
+                if org_name:
+                    if org_name in org_cache:
+                        fallback_url = org_cache[org_name]
+                    else:
+                        url, _ = linkedin_lookup.search_company(org_name)
+                        if url:
+                            org_cache[org_name] = url
+                            fallback_url = url
 
-                    person_dict = {
-                        "name": person.get("name", ""),
-                        "company": org_name,
-                        "organization": org_name,
-                        "position": person.get("job_title")
-                        or person.get("position", ""),
-                        "department": person.get("specialty", ""),
-                        "location": person.get("location", ""),
-                        "role_type": person.get("role_type", ""),
-                        "research_area": person.get("specialty", ""),
-                    }
+                person_dict = {
+                    "name": person.get("name", ""),
+                    "company": org_name,
+                    "organization": org_name,
+                    "position": person.get("job_title") or person.get("position", ""),
+                    "department": person.get("specialty", ""),
+                    "location": person.get("location", ""),
+                    "role_type": person.get("role_type", ""),
+                    "research_area": person.get("specialty", ""),
+                }
 
-                    ctx = create_person_context(
-                        person_dict,
-                        story_title=story.title,
-                        story_category=story.category,
-                    )
+                ctx = create_person_context(
+                    person_dict,
+                    story_title=story.title,
+                    story_category=story.category,
+                )
 
-                    result = matcher.match_person(ctx, org_fallback_url=fallback_url)
-                    linkedin_url = result.get_best_url() or ""
+                result = matcher.match_person(ctx, org_fallback_url=fallback_url)
+                linkedin_url = result.get_best_url() or ""
 
-                    updated["linkedin_profile"] = linkedin_url
-                    updated["linkedin_profile_type"] = (
-                        "personal"
-                        if result.is_person_profile()
-                        else "organization"
-                        if result.confidence == MatchConfidence.ORG_FALLBACK
-                        else ""
-                    )
-                    updated["match_confidence"] = result.confidence.value
-                    updated["match_reason"] = result.match_reason
+                updated["linkedin_profile"] = linkedin_url
+                updated["linkedin_profile_type"] = (
+                    "personal"
+                    if result.is_person_profile()
+                    else "organization"
+                    if result.confidence == MatchConfidence.ORG_FALLBACK
+                    else ""
+                )
+                updated["match_confidence"] = result.confidence.value
+                updated["match_reason"] = result.match_reason
 
-                    # Immediately extract URN if we found a personal profile
-                    # This uses the same browser session, saving time
-                    if linkedin_url and "/in/" in linkedin_url:
-                        try:
-                            urn = lookup.lookup_person_urn(linkedin_url)
-                            if urn:
-                                updated["linkedin_urn"] = urn
-                                logger.debug(
-                                    f"  Extracted URN for {person.get('name')}: {urn}"
-                                )
-                        except Exception as e:
+                # Immediately extract URN if we found a personal profile
+                # This uses the same browser session, saving time
+                if linkedin_url and "/in/" in linkedin_url:
+                    try:
+                        urn = linkedin_lookup.lookup_person_urn(linkedin_url)
+                        if urn:
+                            updated["linkedin_urn"] = urn
                             logger.debug(
-                                f"  URN extraction failed for {person.get('name')}: {e}"
+                                f"  Extracted URN for {person.get('name')}: {urn}"
                             )
+                    except Exception as e:
+                        logger.debug(
+                            f"  URN extraction failed for {person.get('name')}: {e}"
+                        )
 
-                    if (
-                        linkedin_url
-                        and result.confidence != MatchConfidence.ORG_FALLBACK
-                    ):
-                        self._metrics.record_match(result.confidence.value)
+                if linkedin_url and result.confidence != MatchConfidence.ORG_FALLBACK:
+                    self._metrics.record_match(result.confidence.value)
 
-                    matched.append(updated)
+                matched.append(updated)
 
             return matched
 
-        # First attempt: high-precision matcher
-        matched_people = _match_people_to_linkedin(people)
-        if not matched_people:
-            matched_people = [dict(p) for p in people]
-        missing_profiles = [p for p in matched_people if not p.get("linkedin_profile")]
+        # Import here to avoid circular imports
+        from linkedin_profile_lookup import LinkedInCompanyLookup
 
-        # Fallback: browser search for any still missing
-        if missing_profiles:
-            fallback_people = [
-                {
-                    "name": p.get("name", ""),
-                    "title": p.get("job_title", ""),
-                    "affiliation": p.get("employer", ""),
-                    "role_type": p.get("role_type", ""),
-                    "department": p.get("specialty", ""),
-                    "location": p.get("location", ""),
-                }
-                for p in missing_profiles
-                if p.get("name")
+        # Use provided lookup or create a new one
+        owns_lookup = lookup is None
+        if owns_lookup:
+            lookup = LinkedInCompanyLookup(genai_client=self.client)
+
+        try:
+            # First attempt: high-precision matcher
+            matched_people = _match_people_to_linkedin(people, lookup)
+            if not matched_people:
+                matched_people = [dict(p) for p in people]
+            missing_profiles = [
+                p for p in matched_people if not p.get("linkedin_profile")
             ]
+
+            # Fallback: browser search for any still missing
+            fallback_people: list[dict] = []
+            if missing_profiles:
+                fallback_people = [
+                    {
+                        "name": p.get("name", ""),
+                        "title": p.get("job_title", ""),
+                        "affiliation": p.get("employer", ""),
+                        "role_type": p.get("role_type", ""),
+                        "department": p.get("specialty", ""),
+                        "location": p.get("location", ""),
+                    }
+                    for p in missing_profiles
+                    if p.get("name")
+                ]
 
             if fallback_people:
                 fallback_profiles = self._find_linkedin_profiles_batch(
@@ -1865,7 +1885,11 @@ EXTRACTION RULES:
                                 person.get("match_confidence", "medium")
                             )
 
-        return matched_people
+            return matched_people
+        finally:
+            # Only close the lookup if we created it ourselves
+            if owns_lookup and lookup is not None:
+                lookup.close()
 
     def enrich_pending_stories(self) -> tuple[int, int]:
         """
@@ -1879,6 +1903,8 @@ EXTRACTION RULES:
 
         Returns (enriched_count, skipped_count).
         """
+        from linkedin_profile_lookup import LinkedInCompanyLookup
+
         stories = self.db.get_stories_needing_enrichment()
 
         if not stories:
@@ -1891,139 +1917,154 @@ EXTRACTION RULES:
         enriched = 0
         skipped = 0
 
-        for i, story in enumerate(stories, 1):
-            try:
-                logger.info(f"[{i}/{total}] Enriching: {story.title}")
-                orgs: set[str] = set(story.organizations or [])
+        # Create a single shared browser instance for all stories
+        # This avoids re-login between stories and is much faster
+        with LinkedInCompanyLookup(genai_client=self.client) as shared_lookup:
+            for i, story in enumerate(stories, 1):
+                try:
+                    logger.info(f"[{i}/{total}] Enriching: {story.title}")
+                    orgs: set[str] = set(story.organizations or [])
 
-                # Seed with NER-based extraction (fast, no API cost)
-                ner_people, ner_orgs = self._extract_direct_people_via_ner(story)
-                orgs.update(ner_orgs)
+                    # Seed with NER-based extraction (fast, no API cost)
+                    ner_people, ner_orgs = self._extract_direct_people_via_ner(story)
+                    orgs.update(ner_orgs)
 
-                # 1) Direct people: normalize existing or extract fresh
-                direct_people = self._normalize_people_records(
-                    story.direct_people, source="direct"
-                )
-
-                if ner_people:
-                    direct_people.extend(ner_people)
-
-                needs_richer_context = not direct_people or any(
-                    not (p.get("employer") and p.get("job_title"))
-                    for p in direct_people
-                )
-
-                if needs_richer_context:
-                    logger.info(
-                        "  Extracting direct people from story text for enrichment..."
+                    # 1) Direct people: normalize existing or extract fresh
+                    direct_people = self._normalize_people_records(
+                        story.direct_people, source="direct"
                     )
-                    self._metrics.gemini_calls += 1
-                    llm_people, extracted_orgs = self._extract_direct_people_from_story(
-                        story
-                    )
-                    orgs.update(extracted_orgs)
-                    direct_people.extend(llm_people)
 
-                if not direct_people:
-                    # Legacy fallback using existing extraction prompt
-                    self._metrics.gemini_calls += 1
-                    result = self._extract_orgs_and_people(story)
-                    if result:
-                        orgs.update(result.get("organizations", []))
-                        direct_people.extend(
-                            self._normalize_people_records(
-                                result.get("direct_people"), source="direct"
-                            )
+                    if ner_people:
+                        direct_people.extend(ner_people)
+
+                    needs_richer_context = not direct_people or any(
+                        not (p.get("employer") and p.get("job_title"))
+                        for p in direct_people
+                    )
+
+                    if needs_richer_context:
+                        logger.info(
+                            "  Extracting direct people from story text for enrichment..."
                         )
+                        self._metrics.gemini_calls += 1
+                        llm_people, extracted_orgs = (
+                            self._extract_direct_people_from_story(story)
+                        )
+                        orgs.update(extracted_orgs)
+                        direct_people.extend(llm_people)
 
-                # Enrich org list with employers from direct people
-                for person in direct_people:
-                    employer = person.get("employer", "")
-                    if employer:
-                        orgs.add(employer)
+                    if not direct_people:
+                        # Legacy fallback using existing extraction prompt
+                        self._metrics.gemini_calls += 1
+                        result = self._extract_orgs_and_people(story)
+                        if result:
+                            orgs.update(result.get("organizations", []))
+                            direct_people.extend(
+                                self._normalize_people_records(
+                                    result.get("direct_people"), source="direct"
+                                )
+                            )
 
-                direct_people = self._dedupe_people(direct_people)
+                    # Enrich org list with employers from direct people
+                    for person in direct_people:
+                        employer = person.get("employer", "")
+                        if employer:
+                            orgs.add(employer)
 
-                # Filter out invalid person names (org names, duplicates, etc.)
-                direct_people = self._filter_valid_people(direct_people)
+                    direct_people = self._dedupe_people(direct_people)
 
-                # 2) Indirect people from organizations/leaders
-                indirect_people = self._build_indirect_people(
-                    orgs, story, direct_people
-                )
+                    # Filter out invalid person names (org names, duplicates, etc.)
+                    direct_people = self._filter_valid_people(direct_people)
 
-                # 3) Limit people count before LinkedIn matching to reduce API calls
-                max_people = Config.MAX_PEOPLE_PER_STORY
-                if len(direct_people) > max_people:
-                    logger.info(
-                        f"  Limiting direct_people: {len(direct_people)} -> {max_people}"
+                    # 2) Indirect people from organizations/leaders
+                    indirect_people = self._build_indirect_people(
+                        orgs, story, direct_people
                     )
-                    direct_people = direct_people[:max_people]
-                if len(indirect_people) > max_people:
-                    logger.info(
-                        f"  Limiting indirect_people: {len(indirect_people)} -> {max_people}"
+
+                    # 3) Limit people count before LinkedIn matching to reduce API calls
+                    max_people = Config.MAX_PEOPLE_PER_STORY
+                    if len(direct_people) > max_people:
+                        logger.info(
+                            f"  Limiting direct_people: {len(direct_people)} -> {max_people}"
+                        )
+                        direct_people = direct_people[:max_people]
+                    if len(indirect_people) > max_people:
+                        logger.info(
+                            f"  Limiting indirect_people: {len(indirect_people)} -> {max_people}"
+                        )
+                        indirect_people = indirect_people[:max_people]
+
+                    # 4) LinkedIn matching - use the shared lookup to avoid re-login
+                    direct_people = self._attach_linkedin_profiles(
+                        direct_people, story, lookup=shared_lookup
                     )
-                    indirect_people = indirect_people[:max_people]
+                    indirect_people = self._attach_linkedin_profiles(
+                        indirect_people, story, lookup=shared_lookup
+                    )
 
-                # 4) LinkedIn matching
-                direct_people = self._attach_linkedin_profiles(direct_people, story)
-                indirect_people = self._attach_linkedin_profiles(indirect_people, story)
+                    # 5) Final deduplication after all enrichment (catch duplicates from different org name variations)
+                    all_people = direct_people + indirect_people
+                    all_people = self._dedupe_people(all_people)
+                    # Split back into direct and indirect
+                    direct_people = [
+                        p for p in all_people if p.get("source") == "direct"
+                    ]
+                    indirect_people = [
+                        p for p in all_people if p.get("source") != "direct"
+                    ]
 
-                # 5) Final deduplication after all enrichment (catch duplicates from different org name variations)
-                all_people = direct_people + indirect_people
-                all_people = self._dedupe_people(all_people)
-                # Split back into direct and indirect
-                direct_people = [p for p in all_people if p.get("source") == "direct"]
-                indirect_people = [p for p in all_people if p.get("source") != "direct"]
+                    # 6) Persist + validate
+                    story.organizations = sorted(org for org in orgs if org)
+                    story.direct_people = direct_people
+                    story.indirect_people = indirect_people
 
-                # 6) Persist + validate
-                story.organizations = sorted(org for org in orgs if org)
-                story.direct_people = direct_people
-                story.indirect_people = indirect_people
+                    if not direct_people and not indirect_people:
+                        logger.info(
+                            "  ⏭ No people discovered; marking as low-confidence"
+                        )
+                        story.enrichment_status = "enriched"
+                        story.enrichment_quality = "low"
+                        log = (
+                            story.enrichment_log
+                            if isinstance(story.enrichment_log, dict)
+                            else {}
+                        )
+                        log["note"] = "No direct or indirect people extracted"
+                        log["completed_at"] = datetime.now().isoformat()
+                        story.enrichment_log = log
+                        self.db.update_story(story)
+                        skipped += 1
+                        continue
 
-                if not direct_people and not indirect_people:
-                    logger.info("  ⏭ No people discovered; marking as low-confidence")
-                    story.enrichment_status = "enriched"
-                    story.enrichment_quality = "low"
+                    success, qa_result = self.enrich_story_atomic(story, validate=True)
+                    if success:
+                        enriched += 1
+                        if qa_result and qa_result.warnings:
+                            logger.info(f"  ⚠ Warnings: {len(qa_result.warnings)}")
+                    else:
+                        skipped += 1
+
+                except KeyboardInterrupt:
+                    logger.warning(
+                        f"\nEnrichment interrupted by user at story {i}/{total}"
+                    )
+                    break
+                except Exception as e:
+                    logger.error(f"  ! Error: {e}")
+                    story.enrichment_status = "error"
+                    # Phase 4: Track error in enrichment log
                     log = (
                         story.enrichment_log
                         if isinstance(story.enrichment_log, dict)
                         else {}
                     )
-                    log["note"] = "No direct or indirect people extracted"
-                    log["completed_at"] = datetime.now().isoformat()
+                    log["error"] = str(e)
+                    log["error_at"] = datetime.now().isoformat()
                     story.enrichment_log = log
                     self.db.update_story(story)
+                    self._metrics.validation_errors += 1
                     skipped += 1
                     continue
-
-                success, qa_result = self.enrich_story_atomic(story, validate=True)
-                if success:
-                    enriched += 1
-                    if qa_result and qa_result.warnings:
-                        logger.info(f"  ⚠ Warnings: {len(qa_result.warnings)}")
-                else:
-                    skipped += 1
-
-            except KeyboardInterrupt:
-                logger.warning(f"\nEnrichment interrupted by user at story {i}/{total}")
-                break
-            except Exception as e:
-                logger.error(f"  ! Error: {e}")
-                story.enrichment_status = "error"
-                # Phase 4: Track error in enrichment log
-                log = (
-                    story.enrichment_log
-                    if isinstance(story.enrichment_log, dict)
-                    else {}
-                )
-                log["error"] = str(e)
-                log["error_at"] = datetime.now().isoformat()
-                story.enrichment_log = log
-                self.db.update_story(story)
-                self._metrics.validation_errors += 1
-                skipped += 1
-                continue
 
         # Phase 4: Log metrics summary
         logger.info(f"Enrichment complete: {enriched} enriched, {skipped} skipped")

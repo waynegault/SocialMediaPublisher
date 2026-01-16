@@ -48,12 +48,17 @@ class TestSuite:
     def __init__(self, name: str = "Test Suite") -> None:
         """Initialize a test suite with the given name."""
         self.name = name
-        self.tests: list[tuple[str, Callable[[], None]]] = []
+        self.tests: list[tuple[str, Callable[[], Any]]] = []
         self._setup: Optional[Callable[[], None]] = None
         self._teardown: Optional[Callable[[], None]] = None
 
-    def add_test(self, name: str, test_func: Callable[[], None]) -> None:
-        """Register a test function with a descriptive name."""
+    def add_test(self, name: str, test_func: Callable[[], Any]) -> None:
+        """Register a test function with a descriptive name.
+
+        Test functions can return None, bool, or any value. If they return
+        a bool, it's used as the pass/fail result. If they return anything
+        else (including None), the test passes if no exception is raised.
+        """
         self.tests.append((name, test_func))
 
     def set_setup(self, setup_func: Callable[[], None]) -> None:
@@ -77,13 +82,16 @@ class TestSuite:
         return result
 
     def _run_single_test(
-        self, name: str, test_func: Callable[[], None], verbose: bool
+        self, name: str, test_func: Callable[[], Any], verbose: bool
     ) -> TestResult:
         start_time = time.perf_counter()
         try:
             if self._setup:
                 self._setup()
-            test_func()
+            result = test_func()
+            # If test returns a bool, use it as pass/fail
+            if isinstance(result, bool) and not result:
+                raise AssertionError("Test returned False")
             if self._teardown:
                 self._teardown()
             duration_ms = (time.perf_counter() - start_time) * 1000
