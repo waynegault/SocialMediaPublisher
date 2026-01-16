@@ -285,11 +285,11 @@ class ContentVerifier:
         if self.local_client:
             try:
                 logger.info("Using local LLM for text verification...")
-                response = self.local_client.chat.completions.create(
-                    model=Config.LM_STUDIO_MODEL,
+                content = api_client.local_llm_generate(
+                    client=self.local_client,
                     messages=[{"role": "user", "content": prompt}],
+                    endpoint="text_verify",
                 )
-                content = response.choices[0].message.content
                 if content:
                     return self._parse_verification_response(content)
             except Exception as e:

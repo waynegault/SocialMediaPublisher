@@ -618,18 +618,8 @@ class LinkedInCompanyLookup:
     # Use module-level imports: INVALID_ORG_NAMES, INVALID_ORG_PATTERNS,
     # INVALID_PERSON_NAMES, VALID_SINGLE_WORD_ORGS
 
-    # === CLASS-LEVEL CACHES (DEPRECATED - migrated to LinkedInCache) ===
-    # These are kept for backward compatibility with legacy cache loading.
-    # All new cache operations use LinkedInCache from cache.py.
-    # TODO: Remove these after migration is complete and tested
-    _shared_person_cache: dict[str, Optional[str]] = {}  # DEPRECATED
-    _shared_found_profiles_by_name: dict[str, str] = {}  # DEPRECATED
-    _shared_company_url_to_name: dict[str, str] = {}  # DEPRECATED
-    _shared_failed_lookups: dict[str, float] = {}  # DEPRECATED
-    _FAILED_LOOKUP_TTL: float = 86400.0  # 24 hours
-    _shared_company_cache: dict[
-        str, Optional[tuple[str, Optional[str], Optional[str]]]
-    ] = {}  # DEPRECATED
+    # NOTE: Legacy dict caches have been removed. All caching now uses LinkedInCache
+    # from cache.py which provides SQLite-backed persistence with TTL support.
 
     def __init__(self, genai_client: Optional[genai.Client] = None) -> None:
         """Initialize the LinkedIn company lookup service.
@@ -731,33 +721,8 @@ class LinkedInCompanyLookup:
         """Set the shared login verification status."""
         LinkedInCompanyLookup._shared_linkedin_login_verified = value
 
-    @property
-    def _person_cache(self) -> dict[str, Optional[str]]:
-        """Get the shared person cache (class-level singleton)."""
-        return LinkedInCompanyLookup._shared_person_cache
-
-    @_person_cache.setter
-    def _person_cache(self, value: dict[str, Optional[str]]) -> None:
-        """Set the shared person cache (class-level singleton)."""
-        LinkedInCompanyLookup._shared_person_cache = value
-
-    @property
-    def _company_cache(
-        self,
-    ) -> dict[str, Optional[tuple[str, Optional[str], Optional[str]]]]:
-        """Get the shared company cache (class-level singleton)."""
-        return LinkedInCompanyLookup._shared_company_cache
-
-    @_company_cache.setter
-    def _company_cache(
-        self, value: dict[str, Optional[tuple[str, Optional[str], Optional[str]]]]
-    ) -> None:
-        """Set the shared company cache (class-level singleton)."""
-        LinkedInCompanyLookup._shared_company_cache = value
-
     # === LINKEDINCACHE HELPER METHODS ===
-    # These provide convenient access to the unified cache and should be used
-    # for new code. Existing code using the dict caches will continue to work.
+    # These provide convenient access to the unified cache.
 
     def _cache_person_result(self, name: str, company: str, url: Optional[str]) -> None:
         """Cache a person lookup result in the unified LinkedInCache.
@@ -844,29 +809,12 @@ class LinkedInCompanyLookup:
         """Get statistics about all search caches.
 
         Returns:
-            Dict with stats for 'person', 'company', and 'unified_cache' keys
+            Dict with stats for 'unified_cache' key (LinkedInCache)
         """
-        # Get stats from LinkedInCache
+        # Get stats from LinkedInCache (SQLite-backed)
         unified_stats = self._linkedin_cache.get_stats()
 
-        # Also include legacy dict cache sizes for transparency
-        person_total = len(self._person_cache)
-        person_found = sum(1 for url in self._person_cache.values() if url is not None)
-
-        company_total = len(self._company_cache)
-        company_found = sum(1 for v in self._company_cache.values() if v is not None)
-
         return {
-            "person": {
-                "total": person_total,
-                "found": person_found,
-                "not_found": person_total - person_found,
-            },
-            "company": {
-                "total": company_total,
-                "found": company_found,
-                "not_found": company_total - company_found,
-            },
             "unified_cache": unified_stats,
         }
 
@@ -1179,16 +1127,21 @@ class LinkedInCompanyLookup:
         return True
 
     def _load_cache_from_disk(self) -> None:
-        """Load persisted cache from disk if available.
+        """Migrate legacy JSON cache to LinkedInCache (SQLite).
 
-        Implements TTL-based expiry for negative cache entries:
-        - Positive results (URLs found) are kept forever
-        - Negative results (None) expire after NEGATIVE_CACHE_TTL_DAYS
+        This method handles one-time migration of old JSON cache files to
+        the new SQLite-backed LinkedInCache. After migration, the JSON file
+        is renamed to prevent re-migration.
+
+        Legacy cache format:
+        - person: {key: {url, ts}} or {key: url}
+        - company: {key: [url, slug, urn] or null}
+        - department: {key: [url, slug, urn]}
         """
         if not self._cache_file.exists():
             return
 
-        NEGATIVE_CACHE_TTL_DAYS = 7  # Retry failed searches after 7 days
+        NEGATIVE_CACHE_TTL_DAYS = 7  # Skip negative entries older than 7 days
         now = time.time()
         ttl_seconds = NEGATIVE_CACHE_TTL_DAYS * 24 * 3600
 
@@ -1196,144 +1149,137 @@ class LinkedInCompanyLookup:
             with open(self._cache_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            # Restore person cache with TTL for negative entries
+            migrated_count = 0
             expired_count = 0
+
+            # Migrate person cache to LinkedInCache
             person_data = data.get("person", {})
             for key, val in person_data.items():
+                # Parse key format: "name@company"
+                parts = key.split("@", 1)
+                name = parts[0] if parts else ""
+                company = parts[1] if len(parts) > 1 else ""
+
                 if isinstance(val, dict):
                     # New format with timestamp
                     url = val.get("url")
                     ts = val.get("ts", 0)
                     if url is not None:
-                        # Positive result - keep forever
-                        self._person_cache[key] = url
+                        # Positive result - migrate to LinkedInCache
+                        self._linkedin_cache.set_person(name, company, {"url": url})
+                        if url:
+                            self._linkedin_cache.set_person_by_name(name, url)
+                        migrated_count += 1
                     elif now - ts < ttl_seconds:
-                        # Recent negative result - keep it
-                        self._person_cache[key] = None
+                        # Recent negative result - migrate as not-found
+                        self._linkedin_cache.set_person(name, company, {"url": None})
+                        migrated_count += 1
                     else:
-                        # Expired negative result - don't add (will be re-searched)
+                        # Expired negative result - skip
                         expired_count += 1
                 else:
-                    # Old format without timestamp - treat as needing re-search if negative
+                    # Old format without timestamp
                     if val is not None:
-                        self._person_cache[key] = val
+                        self._linkedin_cache.set_person(name, company, {"url": val})
+                        self._linkedin_cache.set_person_by_name(name, val)
+                        migrated_count += 1
                     # Skip old None entries to force re-search
+
+            # Migrate company cache to LinkedInCache
+            for key, val in data.get("company", {}).items():
+                if val is not None and len(val) >= 1:
+                    url = val[0] if val[0] else ""
+                    slug = val[1] if len(val) > 1 else ""
+                    urn = val[2] if len(val) > 2 else ""
+                    self._linkedin_cache.set_company(key, url, slug or "", urn or "")
+                    migrated_count += 1
+
+            # Migrate department cache to LinkedInCache
+            for key, val in data.get("department", {}).items():
+                # Parse key format: assumed to be "dept@company"
+                parts = key.split("@", 1)
+                department = parts[0] if parts else ""
+                company = parts[1] if len(parts) > 1 else ""
+                if val is not None and len(val) >= 1:
+                    url = val[0] if val[0] else ""
+                    slug = val[1] if len(val) > 1 else ""
+                    urn = val[2] if len(val) > 2 else ""
+                    self._linkedin_cache.set_department(
+                        department, company, url, slug or "", urn or ""
+                    )
+                    migrated_count += 1
 
             if expired_count > 0:
                 logger.info(
-                    f"Expired {expired_count} old negative cache entries (will be retried)"
+                    f"Skipped {expired_count} expired negative cache entries during migration"
                 )
 
-            # Restore company cache (convert lists back to tuples)
-            for key, val in data.get("company", {}).items():
-                if val is None:
-                    self._company_cache[key] = None
-                else:
-                    self._company_cache[key] = tuple(val)  # type: ignore
+            logger.info(f"Migrated {migrated_count} cache entries from JSON to SQLite")
 
-            # Restore department cache (convert lists back to tuples)
-            for key, val in data.get("department", {}).items():
-                self._department_cache[key] = tuple(val)  # type: ignore
-
-            total = (
-                len(self._person_cache)
-                + len(self._company_cache)
-                + len(self._department_cache)
-            )
-            logger.info(f"Loaded {total} cached entries from {self._cache_file}")
+            # Rename the old cache file to prevent re-migration
+            migrated_file = self._cache_file.with_suffix(".json.migrated")
+            self._cache_file.rename(migrated_file)
+            logger.info(f"Renamed legacy cache file to {migrated_file}")
 
         except json.JSONDecodeError as e:
-            logger.warning(f"Corrupted cache file, starting fresh: {e}")
+            logger.warning(f"Corrupted cache file, skipping migration: {e}")
         except OSError as e:
-            logger.warning(f"Failed to load cache from disk: {e}")
+            logger.warning(f"Failed to migrate cache from disk: {e}")
 
     def save_cache_to_disk(self) -> None:
-        """Persist cache to disk for future runs.
+        """Legacy method - LinkedInCache now uses SQLite for persistence.
 
-        Saves person cache with timestamps for TTL-based expiry of negative entries.
+        This method is a no-op as the cache is automatically persisted via SQLite.
+        Kept for backwards compatibility with code that calls save_cache_to_disk().
         """
-        try:
-            self._cache_dir.mkdir(parents=True, exist_ok=True)
-
-            # Save person cache with timestamps for negative entries
-            person_data = {}
-            now = time.time()
-            for key, url in self._person_cache.items():
-                if url is not None:
-                    # Positive result - store with URL
-                    person_data[key] = {"url": url, "ts": now}
-                else:
-                    # Negative result - store with timestamp for TTL
-                    person_data[key] = {"url": None, "ts": now}
-
-            data = {
-                "person": person_data,
-                "company": {
-                    k: list(v) if v else None for k, v in self._company_cache.items()
-                },
-                "department": {k: list(v) for k, v in self._department_cache.items()},
-            }
-
-            with open(self._cache_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-
-            total = (
-                len(self._person_cache)
-                + len(self._company_cache)
-                + len(self._department_cache)
-            )
-            logger.info(f"Saved {total} cache entries to {self._cache_file}")
-
-        except (OSError, TypeError) as e:
-            logger.warning(f"Failed to save cache to disk: {e}")
+        # LinkedInCache uses SQLite-backed TwoLevelCache which auto-persists
+        # No action needed - the cache is already persistent
+        logger.debug(
+            "save_cache_to_disk called - LinkedInCache uses SQLite auto-persistence"
+        )
 
     def get_person_cache_stats(self) -> CacheCountStats:
         """Get statistics about the person search cache.
 
-        Returns:
-            Dict with 'total', 'found' (with URLs), 'not_found' (None values)
+        Note: Now returns stats from LinkedInCache (SQLite-backed).
         """
-        stats = self.get_cache_stats()["person"]
-        # Cast to CacheCountStats since we know "person" key has this structure
-        return cast(CacheCountStats, stats)
+        unified_stats = self._linkedin_cache.get_stats()
+        # Return a structure compatible with the old API
+        return {
+            "total": unified_stats.get("total_entries", 0),
+            "found": unified_stats.get("hits", 0),
+            "not_found": unified_stats.get("misses", 0),
+        }
 
     def clear_all_caches(self) -> dict[str, int]:
         """Clear all search caches.
+
+        Note: LinkedInCache uses SQLite - clearing is limited to session-scoped caches.
+        The SQLite cache entries will expire based on TTL.
 
         Returns:
             Dict with count of entries cleared per cache type
         """
         counts = {
-            "person": len(self._person_cache),
-            "company": len(self._company_cache),
             "department": len(self._department_cache),
-            "found_profiles_by_name": len(
-                LinkedInCompanyLookup._shared_found_profiles_by_name
-            ),
-            "company_url_to_name": len(
-                LinkedInCompanyLookup._shared_company_url_to_name
-            ),
         }
-        self._person_cache.clear()
-        self._company_cache.clear()
         self._department_cache.clear()
-        LinkedInCompanyLookup._shared_found_profiles_by_name.clear()
-        LinkedInCompanyLookup._shared_company_url_to_name.clear()
-        logger.info(f"Cleared all caches: {counts}")
+        # Note: LinkedInCache (SQLite) entries are not cleared here
+        # They have TTL-based expiration instead
+        logger.info(f"Cleared session caches: {counts}")
         return counts
 
     def clear_person_cache(self) -> int:
         """Clear the person search cache.
 
+        Note: LinkedInCache uses SQLite - person cache entries have TTL-based expiration.
+
         Returns:
-            Number of entries cleared
+            0 (LinkedInCache uses TTL-based expiration, not manual clearing)
         """
-        count = len(self._person_cache)
-        count += len(LinkedInCompanyLookup._shared_found_profiles_by_name)
-        self._person_cache.clear()
-        LinkedInCompanyLookup._shared_found_profiles_by_name.clear()
-        logger.info(f"Cleared person cache ({count} entries)")
-        return count
+        # LinkedInCache (SQLite) entries are not cleared - they have TTL-based expiration
+        logger.info("Person cache uses LinkedInCache with TTL-based expiration")
+        return 0
 
     def __enter__(self) -> "LinkedInCompanyLookup":
         """Context manager entry - returns self."""
@@ -2163,10 +2109,30 @@ class LinkedInCompanyLookup:
         all LinkedInCompanyLookup instances. Only call when completely done
         with all LinkedIn searches.
         """
-        # Close nodriver browser
+        # Close nodriver browser with proper async cleanup
         if LinkedInCompanyLookup._shared_nodriver_browser is not None:
             try:
-                self._run_async(LinkedInCompanyLookup._shared_nodriver_browser.stop())
+                # Run stop() and give async tasks time to complete
+                async def _close_nodriver():
+                    if LinkedInCompanyLookup._shared_nodriver_browser is not None:
+                        browser = LinkedInCompanyLookup._shared_nodriver_browser
+                        await browser.stop()
+                        # Brief sleep to allow websocket/connection tasks to finish
+                        await asyncio.sleep(0.5)
+                        # Cancel any remaining pending tasks in the event loop
+                        loop = asyncio.get_event_loop()
+                        pending = [
+                            t
+                            for t in asyncio.all_tasks(loop)
+                            if not t.done() and t is not asyncio.current_task()
+                        ]
+                        for task in pending:
+                            task.cancel()
+                        # Wait briefly for cancellations to process
+                        if pending:
+                            await asyncio.sleep(0.1)
+
+                self._run_async(_close_nodriver())
             except Exception:
                 pass
             LinkedInCompanyLookup._shared_nodriver_browser = None
@@ -2192,13 +2158,31 @@ class LinkedInCompanyLookup:
 
         Can be called without an instance: LinkedInCompanyLookup.close_shared_browser()
         """
-        # Close nodriver browser
+        # Close nodriver browser with proper async cleanup
         if cls._shared_nodriver_browser is not None:
             try:
-                # Need to run async in a sync context
+                # Need to run async in a sync context with proper cleanup
                 loop = cls._shared_event_loop
                 if loop and not loop.is_closed():
-                    loop.run_until_complete(cls._shared_nodriver_browser.stop())
+
+                    async def _close_nodriver():
+                        if cls._shared_nodriver_browser is not None:
+                            browser = cls._shared_nodriver_browser
+                            await browser.stop()
+                            # Brief sleep to allow websocket/connection tasks to finish
+                            await asyncio.sleep(0.5)
+                            # Cancel any remaining pending tasks
+                            pending = [
+                                t
+                                for t in asyncio.all_tasks(loop)
+                                if not t.done() and t is not asyncio.current_task()
+                            ]
+                            for task in pending:
+                                task.cancel()
+                            if pending:
+                                await asyncio.sleep(0.1)
+
+                    loop.run_until_complete(_close_nodriver())
             except Exception:
                 pass
             cls._shared_nodriver_browser = None
@@ -2827,12 +2811,12 @@ NOT_FOUND"""
 
         company_name = company_name.strip()
 
-        # === Check cache first (using normalized name for better matching) ===
+        # === Check LinkedInCache first (using normalized name for better matching) ===
         # This prevents duplicate searches for the same org with slight variations
         cache_key = self._normalize_org_name(company_name)
-        if cache_key in self._company_cache:
-            cached = self._company_cache[cache_key]
-            if cached:
+        cached = self._linkedin_cache.get_company(cache_key)
+        if cached is not None:
+            if cached[0]:  # Has URL
                 logger.info(f"Company cache hit: {company_name} -> {cached[0]}")
                 return (cached[0], cached[1])
             else:
@@ -2842,9 +2826,9 @@ NOT_FOUND"""
                 return (None, None)
 
         # Also check with original name as key (for backwards compatibility)
-        if company_name in self._company_cache:
-            cached = self._company_cache[company_name]
-            if cached:
+        cached = self._linkedin_cache.get_company(company_name)
+        if cached is not None:
+            if cached[0]:  # Has URL
                 logger.info(f"Company cache hit: {company_name} -> {cached[0]}")
                 return (cached[0], cached[1])
             else:
@@ -3198,39 +3182,39 @@ NOT_FOUND"""
         name_norm = normalize_name(name)
         company_norm = self._normalize_org_name(company)
 
-        # === IMPROVEMENT 3: Check if we already found this person by name ===
+        # === Check LinkedInCache for person by name (cross-company lookup) ===
         # If we found a profile for this person before (regardless of org), reuse it
-        if name_norm in LinkedInCompanyLookup._shared_found_profiles_by_name:
-            cached_url = LinkedInCompanyLookup._shared_found_profiles_by_name[name_norm]
-            logger.info(f"Person found in name-only cache: {name} -> {cached_url}")
-            return cached_url
+        cached_by_name = self._linkedin_cache.get_person_by_name(name_norm)
+        if cached_by_name:
+            logger.info(f"Person found in name-only cache: {name} -> {cached_by_name}")
+            return cached_by_name
 
-        # === IMPROVEMENT 2: Use company LinkedIn URL as cache key if available ===
+        # === Use company canonical name for consistent cache keys ===
         # This handles "UChicago" vs "University of Chicago" pointing to the same LinkedIn page
         company_cache_key = company_norm
-        if company_norm in self._company_cache:
-            cached_company = self._company_cache[company_norm]
-            if cached_company and cached_company[0]:  # Has URL
-                # Use LinkedIn URL as canonical key instead of name
-                linkedin_url = cached_company[0]
-                if linkedin_url in LinkedInCompanyLookup._shared_company_url_to_name:
-                    # Use the canonical name from first lookup
-                    company_cache_key = (
-                        LinkedInCompanyLookup._shared_company_url_to_name[linkedin_url]
-                    )
-                else:
-                    # First time seeing this company URL - register it
-                    LinkedInCompanyLookup._shared_company_url_to_name[linkedin_url] = (
-                        company_norm
-                    )
-                    company_cache_key = company_norm
+        cached_company = self._linkedin_cache.get_company(company_norm)
+        if cached_company and cached_company[0]:  # Has URL
+            linkedin_url = cached_company[0]
+            canonical_name = self._linkedin_cache.get_company_canonical_name(
+                linkedin_url
+            )
+            if canonical_name:
+                company_cache_key = canonical_name
+            else:
+                # First time seeing this company URL - register it
+                self._linkedin_cache.set_company_canonical_name(
+                    linkedin_url, company_norm
+                )
+                company_cache_key = company_norm
 
-        # Use simple cache key (name + canonical company) to avoid re-searching same person
-        simple_cache_key = f"{name_norm}@{company_cache_key}"
-
-        # Check simple cache first - this catches the same person across multiple stories
-        if simple_cache_key in self._person_cache:
-            cached_url = self._person_cache[simple_cache_key]
+        # Check person cache - this catches the same person across multiple stories
+        cached_result = self._linkedin_cache.get_person(name_norm, company_cache_key)
+        if cached_result is not None:
+            cached_url = (
+                cached_result.get("url")
+                if isinstance(cached_result, dict)
+                else cached_result
+            )
             if cached_url:
                 logger.info(f"Person cache hit: {name} at {company} -> {cached_url}")
             else:
@@ -3295,12 +3279,12 @@ NOT_FOUND"""
             logger.info(
                 f"Found person profile: {name} -> {profile_url} ({elapsed:.1f}s)"
             )
-            # Cache the successful result using simple key
-            self._person_cache[simple_cache_key] = profile_url
-            # Also cache by name only so we can find this person with different org variations
-            LinkedInCompanyLookup._shared_found_profiles_by_name[name_norm] = (
-                profile_url
+            # Cache the successful result using LinkedInCache
+            self._linkedin_cache.set_person(
+                name_norm, company_cache_key, {"url": profile_url}
             )
+            # Also cache by name only so we can find this person with different org variations
+            self._linkedin_cache.set_person_by_name(name_norm, profile_url)
             return profile_url
 
         # Fallback to Gemini search (skip if disabled due to low success rate)
@@ -3309,7 +3293,7 @@ NOT_FOUND"""
             self._timing_stats["person_search"].append(elapsed)
             logger.debug(f"Skipping Gemini fallback (disabled) for {name}")
             # Cache the negative result to avoid re-searching
-            self._person_cache[simple_cache_key] = None
+            self._linkedin_cache.set_person(name_norm, company_cache_key, {"url": None})
             return None
 
         result = self._search_person_gemini(
@@ -3319,11 +3303,11 @@ NOT_FOUND"""
         elapsed = time.time() - start_time
         self._timing_stats["person_search"].append(elapsed)
 
-        # Cache the result (found or not found) using simple key
-        self._person_cache[simple_cache_key] = result
+        # Cache the result (found or not found) using LinkedInCache
+        self._linkedin_cache.set_person(name_norm, company_cache_key, {"url": result})
         # If found, also cache by name only for future lookups with different org variations
         if result:
-            LinkedInCompanyLookup._shared_found_profiles_by_name[name_norm] = result
+            self._linkedin_cache.set_person_by_name(name_norm, result)
         return result
 
     def _search_person_gemini(
@@ -5173,10 +5157,10 @@ NOT_FOUND"""
             # Use normalized key for consistent cache matching
             cache_key = self._normalize_org_name(company)
 
-            # Check cache with normalized key first
-            if cache_key in self._company_cache:
-                cached = self._company_cache[cache_key]
-                if cached:
+            # Check LinkedInCache with normalized key first
+            cached = self._linkedin_cache.get_company(cache_key)
+            if cached is not None:
+                if cached[0]:  # Has URL
                     logger.info(f"Company cache hit: {company} -> {cached[0]}")
                     company_data[company] = cached
                     companies_found += 1
@@ -5186,9 +5170,9 @@ NOT_FOUND"""
                 continue
 
             # Also check with original name (backwards compatibility)
-            if company in self._company_cache:
-                cached = self._company_cache[company]
-                if cached:
+            cached = self._linkedin_cache.get_company(company)
+            if cached is not None:
+                if cached[0]:  # Has URL
                     logger.info(f"Company cache hit: {company} -> {cached[0]}")
                     company_data[company] = cached
                     companies_found += 1
@@ -5204,22 +5188,24 @@ NOT_FOUND"""
                 # Look up the organization URN via LinkedIn API
                 urn = self.lookup_organization_urn(linkedin_url)
                 company_data[company] = (linkedin_url, slug, urn)
-                # Store with normalized key for better matching
-                self._company_cache[cache_key] = (linkedin_url, slug, urn)
+                # Store in LinkedInCache with normalized key
+                self._linkedin_cache.set_company(
+                    cache_key, linkedin_url, slug or "", urn or ""
+                )
                 # Also store with original key for backwards compatibility
-                self._company_cache[company] = (linkedin_url, slug, urn)
+                self._linkedin_cache.set_company(
+                    company, linkedin_url, slug or "", urn or ""
+                )
                 # Register this company's LinkedIn URL for canonical name mapping
-                if (
-                    linkedin_url
-                    not in LinkedInCompanyLookup._shared_company_url_to_name
-                ):
-                    LinkedInCompanyLookup._shared_company_url_to_name[linkedin_url] = (
-                        cache_key
+                if not self._linkedin_cache.get_company_canonical_name(linkedin_url):
+                    self._linkedin_cache.set_company_canonical_name(
+                        linkedin_url, cache_key
                     )
                 companies_found += 1
             else:
-                self._company_cache[cache_key] = None
-                self._company_cache[company] = None
+                # Cache negative results
+                self._linkedin_cache.set_company(cache_key, "", "", "")
+                self._linkedin_cache.set_company(company, "", "", "")
                 companies_not_found += 1
 
             # Rate limiting
@@ -5254,12 +5240,17 @@ NOT_FOUND"""
             if name:
                 # search_person handles caching internally now
                 # Check cache before logging to avoid misleading "searching" messages
-                name_norm = name.lower().strip()
-                company_norm = company.lower().strip()
-                simple_cache_key = f"{name_norm}@{company_norm}"
+                name_norm = normalize_name(name)
+                company_norm = self._normalize_org_name(company)
 
-                if simple_cache_key in self._person_cache:
-                    cached_url = self._person_cache[simple_cache_key]
+                # Check LinkedInCache for cached person result
+                cached_result = self._linkedin_cache.get_person(name_norm, company_norm)
+                if cached_result is not None:
+                    cached_url = (
+                        cached_result.get("url")
+                        if isinstance(cached_result, dict)
+                        else cached_result
+                    )
                     if cached_url:
                         logger.info(
                             f"Level 1: Cache hit for {name} at {company} -> {cached_url}"
@@ -6331,15 +6322,19 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         lookup.close()
 
     def test_lookup_person_urn_no_driver():
-        """Test that lookup handles gracefully with or without browser driver."""
+        """Test that lookup handles gracefully with valid URL (may or may not use browser)."""
         lookup = LinkedInCompanyLookup(genai_client=None)
         # Test with valid LinkedIn profile URL (generic test user)
+        # This test may launch a browser if one is available, or return None if not
         result = lookup.lookup_person_urn("https://www.linkedin.com/in/john-doe-test")
-        # Result could be None (no driver) or a URN string (driver available)
+        # Result could be None (no driver/not found) or a URN string (driver found profile)
         assert result is None or (
             isinstance(result, str) and result.startswith("urn:li:")
         )
+        # Ensure proper cleanup to avoid async task warnings
         lookup.close()
+        # Give async cleanup time to complete
+        time.sleep(0.3)
 
     def test_urn_cache():
         """Test URN cache operations."""

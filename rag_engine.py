@@ -144,6 +144,7 @@ class RAGEngine:
         persist_directory: Optional[str] = None,
         collection_name: str = "personal_context",
         embedding_model: str = "all-MiniLM-L6-v2",
+        skip_embeddings: bool = False,
     ) -> None:
         """Initialize the RAG engine.
 
@@ -151,12 +152,14 @@ class RAGEngine:
             persist_directory: Directory to persist ChromaDB data
             collection_name: Name of the ChromaDB collection
             embedding_model: Sentence transformer model for embeddings
+            skip_embeddings: If True, skip loading embedding model (for testing)
         """
         self.persist_directory = persist_directory or str(
             Path(__file__).parent / ".rag_data"
         )
         self.collection_name = collection_name
         self.embedding_model_name = embedding_model
+        self._skip_embeddings = skip_embeddings
 
         # Initialize components
         self.chroma_client: "Optional[Any]" = None  # chromadb.Client when available
@@ -175,8 +178,12 @@ class RAGEngine:
 
     def _initialize(self) -> None:
         """Initialize ChromaDB and embedding model."""
-        # Initialize embedding model
-        if EMBEDDINGS_AVAILABLE and SentenceTransformer is not None:
+        # Initialize embedding model (skip during tests to avoid network calls)
+        if (
+            not self._skip_embeddings
+            and EMBEDDINGS_AVAILABLE
+            and SentenceTransformer is not None
+        ):
             try:
                 self.embedding_model = SentenceTransformer(self.embedding_model_name)
                 logger.info(f"Loaded embedding model: {self.embedding_model_name}")
@@ -804,14 +811,14 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     def test_rag_engine_creation():
         """Test RAGEngine class creation."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            engine = RAGEngine(persist_directory=tmpdir)
+            engine = RAGEngine(persist_directory=tmpdir, skip_embeddings=True)
             assert engine is not None
             assert engine.persist_directory == tmpdir
 
     def test_rag_engine_add_document():
         """Test RAGEngine add_document method."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            engine = RAGEngine(persist_directory=tmpdir)
+            engine = RAGEngine(persist_directory=tmpdir, skip_embeddings=True)
             engine.add_document(
                 doc_id="test_doc",
                 content="Test content about chemical engineering",
@@ -822,14 +829,14 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     def test_rag_engine_add_skill():
         """Test RAGEngine add_skill method."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            engine = RAGEngine(persist_directory=tmpdir)
+            engine = RAGEngine(persist_directory=tmpdir, skip_embeddings=True)
             engine.add_skill("Python", "10 years of experience", level="expert")
             assert any("python" in k for k in engine._documents.keys())
 
     def test_rag_engine_add_project():
         """Test RAGEngine add_project method."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            engine = RAGEngine(persist_directory=tmpdir)
+            engine = RAGEngine(persist_directory=tmpdir, skip_embeddings=True)
             engine.add_project(
                 project_name="Test Project",
                 description="A test project description",
@@ -840,16 +847,18 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     def test_rag_engine_keyword_retrieve():
         """Test RAGEngine keyword-based retrieval."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            engine = RAGEngine(persist_directory=tmpdir)
+            engine = RAGEngine(persist_directory=tmpdir, skip_embeddings=True)
             engine.add_document("doc1", "Python programming language", "skill")
             engine.add_document("doc2", "Java development", "skill")
             result = engine._keyword_retrieve("Python", n_results=2, doc_types=None)
             assert len(result.documents) > 0
 
     def test_get_rag_engine_singleton():
-        """Test get_rag_engine returns singleton."""
+        """Test get_rag_engine returns singleton (uses skip_embeddings for speed)."""
         global _rag_engine
         _rag_engine = None  # Reset for test
+        # Create with skip_embeddings to avoid network calls
+        _rag_engine = RAGEngine(skip_embeddings=True)
         r1 = get_rag_engine()
         r2 = get_rag_engine()
         assert r1 is r2

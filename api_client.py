@@ -214,6 +214,65 @@ class RateLimitedAPIClient:
             raise
 
     # =========================================================================
+    # Local LLM API (LM Studio compatible)
+    # =========================================================================
+
+    def local_llm_generate(
+        self,
+        client: Any,
+        messages: list[dict[str, Any]],
+        model: Optional[str] = None,
+        max_tokens: int = 500,
+        temperature: float = 0.1,
+        timeout: int = 60,
+        endpoint: str = "default",
+    ) -> str:
+        """Make a rate-limited request to a local LLM (LM Studio compatible).
+
+        This provides a unified interface for all local LLM calls with:
+        - Consistent error handling
+        - Response content extraction
+        - Logging
+
+        Args:
+            client: OpenAI-compatible client (e.g., from openai.OpenAI)
+            messages: List of message dicts with 'role' and 'content' keys
+            model: Model name (defaults to Config.LM_STUDIO_MODEL)
+            max_tokens: Maximum tokens in response
+            temperature: Sampling temperature
+            timeout: Request timeout in seconds
+            endpoint: Endpoint name for logging/metrics
+
+        Returns:
+            The text content from the LLM response
+
+        Raises:
+            Exception: If the LLM request fails
+        """
+        from config import Config
+
+        model_name = model or Config.LM_STUDIO_MODEL
+
+        logger.debug(f"Local LLM request [{endpoint}]: {len(messages)} messages")
+
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=timeout,
+            )
+
+            content = response.choices[0].message.content or ""
+            logger.debug(f"Local LLM response [{endpoint}]: {len(content)} chars")
+            return content
+
+        except Exception as e:
+            logger.warning(f"Local LLM request failed [{endpoint}]: {e}")
+            raise
+
+    # =========================================================================
     # Imagen API
     # =========================================================================
 
