@@ -1423,17 +1423,28 @@ class LinkedInCompanyLookup:
     async def _create_nodriver_browser_async(self) -> bool:
         """Create a new nodriver browser instance asynchronously."""
         try:
+            # Use a persistent profile directory to keep LinkedIn login between runs
+            # This prevents having to re-login every time a new browser is created
+            automation_profile = os.path.expandvars(
+                r"%LOCALAPPDATA%\SocialMediaPublisher\NodriverProfile"
+            )
+            os.makedirs(automation_profile, exist_ok=True)
+            logger.debug(f"Using nodriver profile at {automation_profile}")
+
             # Start browser with optimal settings for anti-detection
             LinkedInCompanyLookup._shared_nodriver_browser = await nodriver.start(
                 headless=False,  # Must be False for anti-detection
                 sandbox=False,
                 lang="en-US",
+                user_data_dir=automation_profile,  # Persist profile for login retention
             )
 
             # Get the initial tab
             if LinkedInCompanyLookup._shared_nodriver_browser is not None:
                 LinkedInCompanyLookup._shared_nodriver_tab = (
-                    await LinkedInCompanyLookup._shared_nodriver_browser.get("about:blank")
+                    await LinkedInCompanyLookup._shared_nodriver_browser.get(
+                        "about:blank"
+                    )
                 )
             LinkedInCompanyLookup._shared_browser_backend = "nodriver"
 
@@ -1461,12 +1472,9 @@ class LinkedInCompanyLookup:
                     f"Resetting search count after {self._driver_search_count} searches"
                 )
                 self._driver_search_count = 0
+                # Just add a pause to avoid detection - don't clear cookies
+                # Clearing cookies would log out the user
                 time.sleep(5 + random.random() * 3)
-                # Clear cookies via async
-                try:
-                    self._run_async(self._clear_nodriver_cookies_async())
-                except Exception:
-                    pass
             return NodriverWrapper(self)
 
         # Create new browser
@@ -1524,17 +1532,10 @@ class LinkedInCompanyLookup:
                 )
                 # Instead of recreating, just reset count and add a longer delay
                 # Recreating the driver causes Chrome profile lock issues
+                # Don't clear cookies - we want to preserve the login session
                 self._driver_search_count = 0
                 time.sleep(5 + random.random() * 3)  # Longer pause to avoid detection
-                try:
-                    # Clear cookies and refresh to reset LinkedIn's tracking
-                    self._uc_driver.delete_all_cookies()
-                    self._uc_driver.get("https://www.linkedin.com")
-                    time.sleep(2)
-                    return self._uc_driver
-                except Exception:
-                    # Driver died, will recreate below
-                    self._force_cleanup_driver()
+                return self._uc_driver
             else:
                 try:
                     # Check if driver is still alive
@@ -1934,13 +1935,8 @@ class LinkedInCompanyLookup:
             # Detect if using NodriverWrapper
             is_nodriver = isinstance(driver, NodriverWrapper)
 
-            # Clear cookies first to ensure clean login state
-            try:
-                driver.delete_all_cookies()
-            except Exception:
-                pass
-
-            # Navigate to login page with a fresh start
+            # Navigate to login page
+            # Note: Don't clear cookies here - we want to preserve any existing session
             driver.get("https://www.linkedin.com/login")
             time.sleep(3)  # Give page more time to fully load
 
@@ -4150,13 +4146,11 @@ NOT_FOUND"""
             if location_city:
                 location_query = f'"{query_name}" {location_city} site:linkedin.com/in'
 
-        # Build simple name-only query (last resort - just name + linkedin)
+        # Build simple name-only query (last resort - just name)
         # This helps when org name is too specific and returns no results
-        # e.g., "gregory stephanopoulos" "linkedin" works when
-        # "gregory stephanopoulos" "MIT Department of Chemical Engineering" "linkedin" fails
-        simple_query = (
-            f'"{query_name}" linkedin site:linkedin.com/in' if query_name else ""
-        )
+        # e.g., "gregory stephanopoulos" works when
+        # "gregory stephanopoulos" "MIT Department of Chemical Engineering" fails
+        simple_query = f'"{query_name}" site:linkedin.com/in' if query_name else ""
 
         # Try multiple query strategies in order of specificity
         search_queries = [

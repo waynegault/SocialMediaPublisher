@@ -515,7 +515,7 @@ class DatabaseServicesProvider(ServiceProvider):
             from database import Database
             from config import Config
 
-            path = db_path or Config.STORIES_DB_PATH
+            path = db_path or Config.DB_NAME
             return Database(path)
 
         container.register(

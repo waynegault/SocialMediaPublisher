@@ -55,7 +55,7 @@ class PublishDaemon:
             db_path: Path to database (uses default if not specified)
         """
         self.check_interval = check_interval
-        self.db = Database(db_path or Config.DB_PATH)
+        self.db = Database(db_path or Config.DB_NAME)
         self.publisher = LinkedInPublisher(self.db)
         self.running = False
         self._setup_signal_handlers()

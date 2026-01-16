@@ -116,7 +116,7 @@ def get_organizations_from_db():
 
 def search_indirect_people_uc(org: str, roles: list[str]) -> list[dict]:
     """Search for multiple indirect-people roles using undetected-chromedriver (single browser session)."""
-    if not UC_AVAILABLE:
+    if not UC_AVAILABLE or uc is None or By is None:
         print("undetected-chromedriver not installed")
         return []
 
@@ -125,7 +125,7 @@ def search_indirect_people_uc(org: str, roles: list[str]) -> list[dict]:
 
     try:
         # Configure Chrome options for stealth (based on ancestry repo patterns)
-        options = uc.ChromeOptions()
+        options = uc.ChromeOptions()  # type: ignore[union-attr]
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
@@ -143,7 +143,7 @@ def search_indirect_people_uc(org: str, roles: list[str]) -> list[dict]:
         options.add_argument(f"--user-agent={user_agent}")
 
         # Create undetected Chrome driver with stability options
-        driver = uc.Chrome(
+        driver = uc.Chrome(  # type: ignore[union-attr]
             options=options,
             use_subprocess=False,  # False is more stable on Windows
             suppress_welcome=True,
@@ -164,13 +164,13 @@ def search_indirect_people_uc(org: str, roles: list[str]) -> list[dict]:
             org_words = [w for w in org_lower.split() if len(w) > 2]
 
             found = False
-            result_items = driver.find_elements(By.CSS_SELECTOR, ".b_algo")
+            result_items = driver.find_elements(By.CSS_SELECTOR, ".b_algo")  # type: ignore[union-attr]
 
             for item in result_items[:5]:  # Check first 5 results
                 try:
-                    heading = item.find_element(By.CSS_SELECTOR, "h2")
+                    heading = item.find_element(By.CSS_SELECTOR, "h2")  # type: ignore[union-attr]
                     title = heading.text
-                    link = heading.find_element(By.CSS_SELECTOR, "a")
+                    link = heading.find_element(By.CSS_SELECTOR, "a")  # type: ignore[union-attr]
                     href = link.get_attribute("href") or ""
 
                     # Decode Bing redirect URL
@@ -192,7 +192,7 @@ def search_indirect_people_uc(org: str, roles: list[str]) -> list[dict]:
 
                     # Get snippet for context
                     try:
-                        snippet_el = item.find_element(By.CSS_SELECTOR, ".b_caption p")
+                        snippet_el = item.find_element(By.CSS_SELECTOR, ".b_caption p")  # type: ignore[union-attr]
                         snippet = snippet_el.text
                     except Exception:
                         snippet = ""
