@@ -257,10 +257,13 @@ class ContentVerifier:
                         return self._parse_verification_response(content)
                 except Exception as e:
                     logger.warning(
-                        f"Local image verification failed: {e}. Falling back to Gemini."
+                        f"Local image verification failed: {e}. Trying Groq..."
                     )
 
-            # Fallback to Gemini
+            # Try Groq as fallback (can't do vision, so fall through to Gemini for images)
+            # Groq doesn't support vision yet, so we skip directly to Gemini for image verification
+
+            # Fallback to Gemini (required for image verification)
             image = Image.open(str(image_path))
             response = api_client.gemini_generate(
                 client=self.client,
@@ -293,11 +296,26 @@ class ContentVerifier:
                 if content:
                     return self._parse_verification_response(content)
             except Exception as e:
+                logger.warning(f"Local text verification failed: {e}. Trying Groq...")
+
+        # Try Groq as fallback (free, fast)
+        groq_client = api_client.get_groq_client()
+        if groq_client:
+            try:
+                logger.info("Using Groq for text verification...")
+                content = api_client.groq_generate(
+                    client=groq_client,
+                    messages=[{"role": "user", "content": prompt}],
+                    endpoint="text_verify",
+                )
+                if content:
+                    return self._parse_verification_response(content)
+            except Exception as e:
                 logger.warning(
-                    f"Local text verification failed: {e}. Falling back to Gemini."
+                    f"Groq text verification failed: {e}. Falling back to Gemini."
                 )
 
-        # Fallback to Gemini
+        # Final fallback to Gemini
         response = api_client.gemini_generate(
             client=self.client,
             model=Config.MODEL_VERIFICATION,

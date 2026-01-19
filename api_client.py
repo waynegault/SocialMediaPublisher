@@ -74,6 +74,15 @@ class RateLimitedAPIClient:
             rate_limiter_429_backoff=0.5,
         )
 
+        # Groq API - generous free tier (30 RPM, 14400 RPD)
+        self.groq_limiter = AdaptiveRateLimiter(
+            initial_fill_rate=0.5,  # 1 request per 2 seconds (conservative)
+            min_fill_rate=0.1,  # Minimum: 1 per 10 seconds
+            max_fill_rate=1.0,  # Maximum: 1 per second
+            success_threshold=5,
+            rate_limiter_429_backoff=0.5,
+        )
+
         # Browser-based searches - very conservative (CAPTCHA prevention)
         # Used by linkedin_profile_lookup for browser-based searches
         self.browser_limiter = AdaptiveRateLimiter(
@@ -86,6 +95,93 @@ class RateLimitedAPIClient:
 
         # Session pool for connection reuse
         self._sessions: dict[str, requests.Session] = {}
+
+        # Groq client singleton (lazy-initialized)
+        self._groq_client: Any = None
+
+    def get_groq_client(self) -> Any:
+        """Get or create a Groq client singleton."""
+        if self._groq_client is None:
+            from config import Config
+
+            if Config.GROQ_API_KEY:
+                try:
+                    from groq import Groq
+
+                    self._groq_client = Groq(api_key=Config.GROQ_API_KEY)
+                    logger.debug("Groq client initialized")
+                except ImportError:
+                    logger.warning("groq package not installed")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize Groq client: {e}")
+        return self._groq_client
+
+    def generate_text(
+        self,
+        prompt: str,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+        endpoint: str = "default",
+        gemini_client: Any = None,
+        gemini_model: Optional[str] = None,
+        gemini_config: Optional[Any] = None,
+    ) -> str:
+        """
+        Unified text generation that prefers Groq over Gemini.
+
+        Priority order:
+        1. Groq (if GROQ_API_KEY configured) - free, fast
+        2. Gemini (fallback)
+
+        Args:
+            prompt: The text prompt
+            max_tokens: Maximum tokens in response
+            temperature: Sampling temperature
+            endpoint: Endpoint name for rate limiting/logging
+            gemini_client: Gemini client (for fallback)
+            gemini_model: Gemini model name (for fallback)
+            gemini_config: Gemini config (for fallback)
+
+        Returns:
+            Generated text content
+
+        Raises:
+            Exception: If all providers fail
+        """
+        from config import Config
+
+        # Try Groq first if configured
+        if Config.GROQ_API_KEY:
+            groq_client = self.get_groq_client()
+            if groq_client:
+                try:
+                    messages = [{"role": "user", "content": prompt}]
+                    return self.groq_generate(
+                        client=groq_client,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        endpoint=endpoint,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Groq generation failed, falling back to Gemini: {e}"
+                    )
+
+        # Fallback to Gemini
+        if gemini_client:
+            response = self.gemini_generate(
+                client=gemini_client,
+                model=gemini_model or Config.MODEL_TEXT,
+                contents=prompt,
+                config=gemini_config,
+                endpoint=endpoint,
+            )
+            return response.text if hasattr(response, "text") else str(response)
+
+        raise RuntimeError(
+            "No LLM provider available (Groq not configured, Gemini client not provided)"
+        )
 
     # =========================================================================
     # Session Factory
@@ -214,6 +310,70 @@ class RateLimitedAPIClient:
             raise
 
     # =========================================================================
+    # Groq API (Free cloud LLM)
+    # =========================================================================
+
+    def groq_generate(
+        self,
+        client: Any,
+        messages: list[dict[str, Any]],
+        model: Optional[str] = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+        endpoint: str = "default",
+    ) -> str:
+        """
+        Rate-limited Groq API call.
+
+        Groq provides free, fast inference for open-source models like Llama.
+        Free tier: 30 requests/min, 14,400 requests/day.
+
+        Args:
+            client: Groq client instance
+            messages: List of message dicts with 'role' and 'content' keys
+            model: Model name (defaults to Config.GROQ_MODEL)
+            max_tokens: Maximum tokens in response
+            temperature: Sampling temperature
+            endpoint: Endpoint name for rate limiting
+
+        Returns:
+            The text content from the response
+
+        Raises:
+            Exception: If the API request fails
+        """
+        from config import Config
+
+        model_name = model or Config.GROQ_MODEL
+        full_endpoint = f"groq_{endpoint}"
+
+        # Wait according to rate limiter
+        wait_time = self.groq_limiter.wait(endpoint=full_endpoint)
+        if wait_time > 0.5:
+            logger.debug(f"Groq rate limiter ({endpoint}): waited {wait_time:.1f}s")
+
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+
+            content = response.choices[0].message.content or ""
+            self.groq_limiter.on_success(endpoint=full_endpoint)
+            logger.debug(f"Groq response [{endpoint}]: {len(content)} chars")
+            return content
+
+        except Exception as e:
+            if self._is_rate_limit_error(e):
+                retry_after = self._parse_retry_after(str(e))
+                self.groq_limiter.on_429_error(
+                    endpoint=full_endpoint, retry_after=retry_after
+                )
+            raise
+
+    # =========================================================================
     # Local LLM API (LM Studio compatible)
     # =========================================================================
 
@@ -269,7 +429,11 @@ class RateLimitedAPIClient:
             return content
 
         except Exception as e:
-            logger.warning(f"Local LLM request failed [{endpoint}]: {e}")
+            # Use debug for "no model loaded" since fallback to Groq is expected behavior
+            if "No models loaded" in str(e):
+                logger.debug(f"Local LLM has no model [{endpoint}]: using fallback")
+            else:
+                logger.warning(f"Local LLM request failed [{endpoint}]: {e}")
             raise
 
     # =========================================================================

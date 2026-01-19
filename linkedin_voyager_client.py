@@ -323,6 +323,11 @@ class LinkedInVoyagerClient:
         Returns:
             List of LinkedInProfile objects
         """
+        # Check master switch - LinkedIn searching is disabled
+        if not Config.LINKEDIN_SEARCH_ENABLED:
+            logger.info("LinkedIn search disabled (LINKEDIN_SEARCH_ENABLED=false)")
+            return []
+
         # Build keyword query
         keyword_parts = []
         if keywords:
@@ -463,6 +468,11 @@ class LinkedInVoyagerClient:
         Returns:
             List of LinkedInOrganization objects
         """
+        # Check master switch - LinkedIn searching is disabled
+        if not Config.LINKEDIN_SEARCH_ENABLED:
+            logger.info("LinkedIn search disabled (LINKEDIN_SEARCH_ENABLED=false)")
+            return []
+
         params = {
             "decorationId": "com.linkedin.voyager.dash.deco.search.SearchClusterCollection-175",
             "origin": "FACETED_SEARCH",
@@ -879,6 +889,11 @@ class HybridLinkedInLookup:
         Returns:
             Tuple of (profile_url, urn, match_confidence)
         """
+        # Check master switch - LinkedIn searching is disabled
+        if not Config.LINKEDIN_SEARCH_ENABLED:
+            logger.info("LinkedIn search disabled (LINKEDIN_SEARCH_ENABLED=false)")
+            return (None, None, "disabled")
+
         # 1. Try RapidAPI Fresh LinkedIn Data API first (most reliable)
         if HybridLinkedInLookup._rapidapi_client is not None:
             try:
@@ -980,6 +995,11 @@ class HybridLinkedInLookup:
         Returns:
             Tuple of (page_url, urn)
         """
+        # Check master switch - LinkedIn searching is disabled
+        if not Config.LINKEDIN_SEARCH_ENABLED:
+            logger.info("LinkedIn search disabled (LINKEDIN_SEARCH_ENABLED=false)")
+            return (None, None)
+
         # Try Voyager API first
         if self.voyager_client:
             try:

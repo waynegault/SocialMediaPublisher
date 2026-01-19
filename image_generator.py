@@ -316,6 +316,10 @@ class ImageGenerator:
         rate_limiter_429_backoff=0.5,  # Aggressive backoff on 429: halve the rate
     )
 
+    # Track if HuggingFace is unavailable (402 Payment Required)
+    # This persists across all instances to avoid repeated failed calls
+    _huggingface_unavailable: bool = False
+
     def __init__(
         self,
         database: Database,
@@ -443,12 +447,13 @@ class ImageGenerator:
         prompt = self._build_image_prompt(story)
 
         try:
-            # Provider selection diagnostics
+            # Provider selection diagnostics - use effective token which checks both TOKEN and KEY
+            hf_token = Config.get_settings().effective_huggingface_token
             logger.debug(
-                f"HF token present={bool(Config.HUGGINGFACE_API_TOKEN)}, prefer_hf={Config.HF_PREFER_IF_CONFIGURED}"
+                f"HF token present={bool(hf_token)}, prefer_hf={Config.HF_PREFER_IF_CONFIGURED}"
             )
             # If a Hugging Face token is configured and preferred, try it first
-            if Config.HUGGINGFACE_API_TOKEN and Config.HF_PREFER_IF_CONFIGURED:
+            if hf_token and Config.HF_PREFER_IF_CONFIGURED:
                 hf_result = self._generate_huggingface_image(story, prompt)
                 if hf_result:
                     image_path, _ = hf_result
@@ -531,7 +536,8 @@ class ImageGenerator:
             if "billed users" in error_msg.lower():
                 print("\n" + "-" * 60)
                 print("Notice: Google's Imagen API requires a billed account.")
-                if Config.HUGGINGFACE_API_TOKEN:
+                hf_token = Config.get_settings().effective_huggingface_token
+                if hf_token:
                     print("I'll try Hugging Face Inference instead...")
                     hf_result = self._generate_huggingface_image(story, prompt)
                     if hf_result:
@@ -565,6 +571,11 @@ class ImageGenerator:
         """Generate an image using Hugging Face InferenceClient (FREE with FLUX.1-schnell).
         Returns (file_path, prompt_used) if successful, or None.
         """
+        # Skip if HuggingFace was already determined to be unavailable (402 error)
+        if ImageGenerator._huggingface_unavailable:
+            logger.debug("Skipping HuggingFace (previously got 402 Payment Required)")
+            return None
+
         # Use the configured model or default to the free FLUX.1-schnell
         model = Config.HF_TTI_MODEL or "black-forest-labs/FLUX.1-schnell"
 
@@ -572,8 +583,10 @@ class ImageGenerator:
 
         try:
             # Initialize InferenceClient - works with or without token for free models
-            if Config.HUGGINGFACE_API_TOKEN:
-                client = InferenceClient(token=Config.HUGGINGFACE_API_TOKEN)
+            # Use effective token which checks both HUGGINGFACE_API_TOKEN and HUGGINGFACE_API_KEY
+            hf_token = Config.get_settings().effective_huggingface_token
+            if hf_token:
+                client = InferenceClient(token=hf_token)
             else:
                 client = InferenceClient()
 
@@ -612,7 +625,15 @@ class ImageGenerator:
             return (filepath, prompt)
 
         except Exception as e:
-            logger.warning(f"Hugging Face image generation failed: {e}")
+            error_str = str(e)
+            # Handle 402 Payment Required - HuggingFace free tier exhausted
+            if "402" in error_str or "Payment Required" in error_str:
+                logger.warning(
+                    "HuggingFace free tier exhausted (402). Disabling for this session."
+                )
+                ImageGenerator._huggingface_unavailable = True
+            else:
+                logger.warning(f"Hugging Face image generation failed: {e}")
             return None
 
     def _generate_local_image(
@@ -880,7 +901,8 @@ class ImageGenerator:
             if img.width < 200 or img.height < 200:
                 return ""
 
-            # Use Gemini to analyze the image
+            # Use Gemini to analyze the image (requires vision capability)
+            # Note: Groq doesn't support vision, so Gemini is required here
             analysis_prompt = """Analyze this image from a technical/engineering news article.
 Describe in 2-3 sentences:
 1. What specific equipment, technology, or facility is shown (be precise - e.g., "PEM electrolyzer stack", "distillation column", "CRISPR gene editing setup")
@@ -891,12 +913,21 @@ Focus on technical accuracy. Be specific about equipment types, not generic.
 If this appears to be a stock photo or generic image, say "GENERIC STOCK IMAGE".
 Keep response under 100 words."""
 
-            response = api_client.gemini_generate(
-                client=self.client,
-                model=Config.MODEL_TEXT,
-                contents=[analysis_prompt, img],
-                endpoint="image_analysis",
-            )
+            try:
+                response = api_client.gemini_generate(
+                    client=self.client,
+                    model=Config.MODEL_TEXT,
+                    contents=[analysis_prompt, img],
+                    endpoint="image_analysis",
+                )
+            except Exception as e:
+                # Check for rate limit errors - skip analysis rather than fail
+                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                    logger.info(
+                        "Skipping image analysis (Gemini rate limited). Image generation will proceed without source image context."
+                    )
+                    return ""
+                raise
 
             if response and response.text:
                 analysis = response.text.strip()
@@ -1183,22 +1214,54 @@ Do NOT include: close-up portraits, waist-up shots of individuals, or any person
 
         try:
             refined = None
+
+            # Try Local LLM first
             if self.local_client:
-                if Config.HUMAN_IN_IMAGE:
-                    logger.info(
-                        f"Using local LLM to refine image prompt (appearance: {random_appearance[:50]}...)"
+                try:
+                    if Config.HUMAN_IN_IMAGE:
+                        logger.info(
+                            f"Using local LLM to refine image prompt (appearance: {random_appearance[:50]}...)"
+                        )
+                    else:
+                        logger.info(
+                            "Using local LLM to refine image prompt (no central human)"
+                        )
+                    refined = api_client.local_llm_generate(
+                        client=self.local_client,
+                        messages=[{"role": "user", "content": refinement_prompt}],
+                        endpoint="prompt_refinement",
                     )
-                else:
-                    logger.info(
-                        "Using local LLM to refine image prompt (no central human)"
-                    )
-                refined = api_client.local_llm_generate(
-                    client=self.local_client,
-                    messages=[{"role": "user", "content": refinement_prompt}],
-                    endpoint="prompt_refinement",
-                )
-            else:
-                # Fallback to Gemini for refinement
+                except Exception as e:
+                    if "No models loaded" in str(e):
+                        logger.debug("Local LLM has no model loaded, using Groq...")
+                    else:
+                        logger.warning(
+                            f"Local LLM refinement failed: {e}. Trying Groq..."
+                        )
+
+            # Try Groq as fallback
+            if not refined:
+                groq_client = api_client.get_groq_client()
+                if groq_client:
+                    try:
+                        if Config.HUMAN_IN_IMAGE:
+                            logger.info(
+                                f"Using Groq to refine image prompt (appearance: {random_appearance[:50]}...)"
+                            )
+                        else:
+                            logger.info(
+                                "Using Groq to refine image prompt (no central human)"
+                            )
+                        refined = api_client.groq_generate(
+                            client=groq_client,
+                            messages=[{"role": "user", "content": refinement_prompt}],
+                            endpoint="prompt_refinement",
+                        )
+                    except Exception as e:
+                        logger.warning(f"Groq refinement failed: {e}. Trying Gemini...")
+
+            # Final fallback to Gemini
+            if not refined:
                 if Config.HUMAN_IN_IMAGE:
                     logger.info(
                         f"Using Gemini to refine image prompt (appearance: {random_appearance[:50]}...)"
@@ -1295,14 +1358,40 @@ Return ONLY the alt text, nothing else."""
 
         try:
             alt_text = None
+
+            # Try Local LLM first
             if self.local_client:
-                logger.debug("Using local LLM to generate alt text")
-                alt_text = api_client.local_llm_generate(
-                    client=self.local_client,
-                    messages=[{"role": "user", "content": alt_text_prompt}],
-                    endpoint="alt_text",
-                )
-            else:
+                try:
+                    logger.debug("Using local LLM to generate alt text")
+                    alt_text = api_client.local_llm_generate(
+                        client=self.local_client,
+                        messages=[{"role": "user", "content": alt_text_prompt}],
+                        endpoint="alt_text",
+                    )
+                except Exception as e:
+                    if "No models loaded" in str(e):
+                        logger.debug("Local LLM has no model loaded, using Groq...")
+                    else:
+                        logger.warning(
+                            f"Local LLM alt text failed: {e}. Trying Groq..."
+                        )
+
+            # Try Groq as fallback
+            if not alt_text:
+                groq_client = api_client.get_groq_client()
+                if groq_client:
+                    try:
+                        logger.debug("Using Groq to generate alt text")
+                        alt_text = api_client.groq_generate(
+                            client=groq_client,
+                            messages=[{"role": "user", "content": alt_text_prompt}],
+                            endpoint="alt_text",
+                        )
+                    except Exception as e:
+                        logger.warning(f"Groq alt text failed: {e}. Trying Gemini...")
+
+            # Final fallback to Gemini
+            if not alt_text:
                 logger.debug("Using Gemini to generate alt text")
                 response = api_client.gemini_generate(
                     client=self.client,

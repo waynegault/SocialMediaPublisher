@@ -350,7 +350,8 @@ class StorySearcher:
         Returns the number of new stories saved.
         """
         since_date = self.get_search_start_date()
-        search_prompt = Config.SEARCH_PROMPT
+        # Substitute {discipline} placeholder with actual discipline
+        search_prompt = Config.SEARCH_PROMPT.format(discipline=Config.DISCIPLINE)
         summary_words = Config.SUMMARY_WORD_COUNT
 
         logger.info(
@@ -729,61 +730,86 @@ class StorySearcher:
             return None
 
     def _get_search_query(self, search_prompt: str) -> str:
-        """Convert a conversational prompt into a concise search query using Local LLM."""
-        if not self.local_client:
-            return search_prompt
-
+        """Convert a conversational prompt into a concise search query using Local LLM or Groq."""
         # If the prompt is already short (e.g. < 8 words), just use it
         if len(search_prompt.split()) < 8:
             return search_prompt
 
         logger.info("Distilling conversational prompt into search keywords...")
 
-        try:
-            content = api_client.local_llm_generate(
-                client=self.local_client,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": Config.SEARCH_DISTILL_PROMPT,
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Extract search keywords from: {search_prompt}",
-                    },
-                ],
-                max_tokens=50,
-                temperature=0.1,
-                timeout=30,
-                endpoint="search_distill",
-            )
-            if not content:
-                logger.warning("Local LLM returned empty content for distillation")
-                return self._manual_distill(search_prompt)
+        messages = [
+            {
+                "role": "system",
+                "content": Config.SEARCH_DISTILL_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": f"Extract search keywords from: {search_prompt}",
+            },
+        ]
 
-            logger.info(f"LLM distillation raw output: '{content.strip()}'")
+        content = None
 
-            query = content.strip().strip('"').strip()
-            # Remove common prefixes LLMs add
-            query = re.sub(
-                r"^(Search Query:|Keywords:|Query:)\s*", "", query, flags=re.IGNORECASE
-            )
+        # Try Local LLM first
+        if self.local_client:
+            try:
+                content = api_client.local_llm_generate(
+                    client=self.local_client,
+                    messages=messages,
+                    max_tokens=50,
+                    temperature=0.1,
+                    timeout=30,
+                    endpoint="search_distill",
+                )
+            except Exception as e:
+                if "No models loaded" in str(e):
+                    logger.debug("Local LLM has no model loaded, using Groq...")
+                else:
+                    logger.warning(
+                        f"Local LLM distillation failed: {e}. Trying Groq..."
+                    )
 
-            # If the LLM just echoed the whole thing or returned something too long, manual distill
-            if len(query.split()) > 10:
-                logger.info("LLM output too long, using manual distillation")
-                return self._manual_distill(search_prompt)
+        # Fallback to Groq
+        if not content:
+            groq_client = api_client.get_groq_client()
+            if groq_client:
+                try:
+                    content = api_client.groq_generate(
+                        client=groq_client,
+                        messages=messages,
+                        max_tokens=50,
+                        temperature=0.1,
+                        endpoint="search_distill",
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Groq distillation failed: {e}. Using manual distillation."
+                    )
 
-            if not query:
-                return self._manual_distill(search_prompt)
-
-            logger.info(f"Distilled query: {query}")
-            return query
-        except Exception as e:
+        if not content:
             logger.warning(
-                f"Failed to distill search query: {e}. Using manual distillation."
+                "No LLM available for distillation, using manual distillation"
             )
             return self._manual_distill(search_prompt)
+
+        logger.info(f"LLM distillation raw output: '{content.strip()}'")
+
+        query = content.strip().strip('"').strip()
+        # Remove common prefixes LLMs add
+        query = re.sub(
+            r"^(Search Query:|Keywords:|Query:)\s*", "", query, flags=re.IGNORECASE
+        )
+
+        # If the LLM just echoed the whole thing or returned something too long, manual distill
+        if len(query.split()) > 10:
+            logger.info("LLM output too long, using manual distillation")
+            return self._manual_distill(search_prompt)
+
+        if not query:
+            return self._manual_distill(search_prompt)
+
+        logger.info(f"Distilled query: {query}")
+        return query
 
     def _manual_distill(self, text: str) -> str:
         """Fallback to extract keywords if LLM fails."""
@@ -854,14 +880,7 @@ class StorySearcher:
 
         logger.info(f"DuckDuckGo search complete. Found {len(search_results)} results.")
 
-        # 2. Process results with Local LLM
-        if not self.local_client:
-            logger.error("Local client not available in _search_local")
-            return 0
-
-        self._report_progress(
-            f"Processing {len(search_results)} results with Local LLM ({Config.LM_STUDIO_MODEL})..."
-        )
+        # 2. Process results with Local LLM -> Groq -> error
         max_stories = Config.MAX_STORIES_PER_SEARCH
         author_name = Config.LINKEDIN_AUTHOR_NAME or "the LinkedIn profile owner"
         prompt = Config.LOCAL_LLM_SEARCH_PROMPT.format(
@@ -873,32 +892,55 @@ class StorySearcher:
             discipline=Config.DISCIPLINE,
         )
 
-        try:
-            content = api_client.local_llm_generate(
-                client=self.local_client,
-                messages=[{"role": "user", "content": prompt}],
-                timeout=Config.LLM_LOCAL_TIMEOUT,
-                endpoint="search_process",
+        content = None
+
+        # Try Local LLM first
+        if self.local_client:
+            self._report_progress(
+                f"Processing {len(search_results)} results with Local LLM ({Config.LM_STUDIO_MODEL})..."
             )
-        except Exception as e:
-            error_msg = str(e)
-            if "No models loaded" in error_msg:
-                logger.error(
-                    "LM Studio error: No model loaded. Please load a model in LM Studio."
+            try:
+                content = api_client.local_llm_generate(
+                    client=self.local_client,
+                    messages=[{"role": "user", "content": prompt}],
+                    timeout=Config.LLM_LOCAL_TIMEOUT,
+                    endpoint="search_process",
                 )
-                print("\nERROR: LM Studio has no model loaded.")
-                print(
-                    "Please open LM Studio, go to the 'Local Server' tab, and load a model."
+            except Exception as e:
+                error_msg = str(e)
+                if "No models loaded" in error_msg:
+                    logger.debug("Local LLM has no model loaded, using Groq...")
+                else:
+                    logger.warning(f"Local LLM processing failed: {e}. Trying Groq...")
+
+        # Fallback to Groq if local failed or not available
+        if not content:
+            groq_client = api_client.get_groq_client()
+            if groq_client:
+                self._report_progress(
+                    f"Processing {len(search_results)} results with Groq ({Config.GROQ_MODEL})..."
                 )
-                return 0
-            logger.error(f"Local LLM processing failed: {e}")
-            return 0
+                try:
+                    content = api_client.groq_generate(
+                        client=groq_client,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=2048,
+                        endpoint="search_process",
+                    )
+                except Exception as e:
+                    logger.error(f"Groq processing failed: {e}")
 
         if not content:
-            logger.warning("Empty response from Local LLM")
+            logger.error(
+                "No LLM available for search processing (Local LLM and Groq both failed)"
+            )
+            print("\nERROR: No LLM available for search processing.")
+            print("Please either:")
+            print("  1. Load a model in LM Studio, OR")
+            print("  2. Set GROQ_API_KEY in .env (free at console.groq.com)")
             return 0
 
-        logger.info("Local LLM processing complete.")
+        logger.info("LLM processing complete.")
         stories_data = self._parse_response(content)
         return self._process_stories_data(stories_data, since_date)
 
@@ -1415,7 +1457,8 @@ class StorySearcher:
         Caches results for later selective saving.
         """
         since_date = self.get_search_start_date()
-        search_prompt = Config.SEARCH_PROMPT
+        # Substitute {discipline} placeholder with actual discipline
+        search_prompt = Config.SEARCH_PROMPT.format(discipline=Config.DISCIPLINE)
         summary_words = Config.SUMMARY_WORD_COUNT
 
         self._report_progress(f"Searching for preview: '{search_prompt[:50]}...'")
@@ -1646,28 +1689,64 @@ class StorySearcher:
         """
         Attempt to repair malformed JSON using an LLM.
         This is a fallback when initial parsing fails.
+        Uses Local LLM -> Groq -> Gemini fallback chain.
         """
         repair_prompt = Config.JSON_REPAIR_PROMPT.format(
             malformed_json=malformed_json[:3000]
         )
 
-        try:
-            if self.local_client:
-                return api_client.local_llm_generate(
+        # If no repair prompt configured, use a sensible default
+        if not repair_prompt.strip():
+            repair_prompt = (
+                "Fix this malformed JSON and return ONLY the corrected JSON array, no explanation:\n\n"
+                f"{malformed_json[:3000]}"
+            )
+
+        content = None
+
+        # Try Local LLM first
+        if self.local_client:
+            try:
+                content = api_client.local_llm_generate(
                     client=self.local_client,
                     messages=[{"role": "user", "content": repair_prompt}],
                     timeout=Config.LLM_LOCAL_TIMEOUT,
                     endpoint="json_repair",
                 )
-            else:
-                response = api_client.gemini_generate(
-                    client=self.client,
-                    model=Config.MODEL_TEXT,
-                    contents=repair_prompt,
-                    config={"response_mime_type": "application/json"},
+                if content:
+                    return content
+            except Exception as e:
+                if "No models loaded" in str(e):
+                    logger.debug("Local LLM has no model loaded, using Groq...")
+                else:
+                    logger.warning(f"Local LLM JSON repair failed: {e}. Trying Groq...")
+
+        # Fallback to Groq (free, fast)
+        groq_client = api_client.get_groq_client()
+        if groq_client:
+            try:
+                content = api_client.groq_generate(
+                    client=groq_client,
+                    messages=[{"role": "user", "content": repair_prompt}],
                     endpoint="json_repair",
                 )
-                return response.text
+                if content:
+                    return content
+            except Exception as e:
+                logger.warning(
+                    f"Groq JSON repair failed: {e}. Falling back to Gemini..."
+                )
+
+        # Final fallback to Gemini
+        try:
+            response = api_client.gemini_generate(
+                client=self.client,
+                model=Config.MODEL_TEXT,
+                contents=repair_prompt,
+                config={"response_mime_type": "application/json"},
+                endpoint="json_repair",
+            )
+            return response.text
         except Exception as e:
             logger.error(f"JSON repair failed: {e}")
             return None
