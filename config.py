@@ -108,6 +108,14 @@ class SettingsModel(BaseSettings):
     linkedin_username: str = Field(default="", alias="LINKEDIN_USERNAME")
     linkedin_password: str = Field(default="", alias="LINKEDIN_PASSWORD")
 
+    # --- LinkedIn Search & Connection Master Switch ---
+    # WARNING: LinkedIn has threatened account bans for automation detection.
+    # Set to True only if you accept the risk of account restrictions.
+    # When False, all LinkedIn profile searching and connection requests are disabled.
+    linkedin_search_enabled: bool = Field(
+        default=False, alias="LINKEDIN_SEARCH_ENABLED"
+    )
+
     # --- LinkedIn Search Settings ---
     # Skip LinkedIn's direct search (subject to rate limits) and use Google/Bing instead
     skip_linkedin_direct_search: bool = Field(
@@ -149,6 +157,12 @@ class SettingsModel(BaseSettings):
     )
     lm_studio_model: str = Field(default="local-model", alias="LM_STUDIO_MODEL")
     prefer_local_llm: bool = Field(default=True, alias="PREFER_LOCAL_LLM")
+
+    # --- Groq API (free cloud LLM alternative) ---
+    # Get free API key from: https://console.groq.com/keys
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+    groq_model: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")
+    prefer_groq: bool = Field(default=False, alias="PREFER_GROQ")
 
     # --- AI Models ---
     model_text: str = Field(default="gemini-2.0-flash", alias="MODEL_TEXT")
@@ -342,20 +356,107 @@ class SettingsModel(BaseSettings):
     # --- Prompt Templates (loaded separately for brevity) ---
     # These are loaded from env vars but validated as non-empty strings
     image_refinement_prompt: str = Field(default="", alias="IMAGE_REFINEMENT_PROMPT")
-    image_fallback_prompt: str = Field(default="", alias="IMAGE_FALLBACK_PROMPT")
+    image_refinement_prompt_no_human: str = Field(
+        default="", alias="IMAGE_REFINEMENT_PROMPT_NO_HUMAN"
+    )
+    image_fallback_prompt: str = Field(
+        default=(
+            "A photo of {appearance} {discipline} professional, framed from waist up in center-right of image, "
+            "actively working with the subject matter related to: {story_title}. "
+            "She occupies 45% of the frame with face clearly visible, confident warm expression. "
+            "Relevant tools, subjects, or setting visible behind her shoulder. "
+            "Authentic workplace setting appropriate to {discipline} (clinic, lab, field, office, facility). "
+            "Shot with 85mm lens, natural workplace lighting, editorial quality for a professional publication."
+        ),
+        alias="IMAGE_FALLBACK_PROMPT",
+    )
     search_instruction_prompt: str = Field(
         default="", alias="SEARCH_INSTRUCTION_PROMPT"
     )
-    verification_prompt: str = Field(default="", alias="VERIFICATION_PROMPT")
-    search_distill_prompt: str = Field(default="", alias="SEARCH_DISTILL_PROMPT")
-    local_llm_search_prompt: str = Field(default="", alias="LOCAL_LLM_SEARCH_PROMPT")
+    verification_prompt: str = Field(
+        default=(
+            "You are verifying content for LinkedIn publication.\n\n"
+            "STORY TO EVALUATE:\n"
+            "Title: {story_title}\n"
+            "Summary: {story_summary}\n"
+            "Sources: {story_sources}\n"
+            "Discipline: {discipline}\n"
+            "Promotion: {promotion_message}\n"
+            "People identified: {people_count}\n"
+            "LinkedIn profiles found: {linkedin_profiles_found}\n"
+            "Word limit: {summary_word_limit}\n"
+            "Search criteria: {search_prompt}\n\n"
+            "Respond with APPROVED or REJECTED followed by a brief reason.\n"
+            "APPROVED: Content is professional and suitable.\n"
+            "REJECTED: Content has issues."
+        ),
+        alias="VERIFICATION_PROMPT",
+    )
+    search_distill_prompt: str = Field(
+        default=(
+            "You are a search query optimizer. Extract 3-6 concise search keywords from the user's conversational query. "
+            "Return ONLY the keywords as a short phrase, no explanations or formatting. "
+            "Example: 'chemical engineering breakthroughs 2024' NOT 'Here are the keywords:...'"
+        ),
+        alias="SEARCH_DISTILL_PROMPT",
+    )
+    local_llm_search_prompt: str = Field(
+        default=(
+            "You are a news curator for a {discipline} professional. Analyze these search results and extract relevant stories.\n\n"
+            "SEARCH RESULTS:\n{search_results}\n\n"
+            "TASK: Select up to {max_stories} stories most relevant to a {discipline} professional for LinkedIn publication.\n\n"
+            "For each story, provide:\n"
+            "- title: Clear, engaging headline\n"
+            "- summary: {summary_words}-word first-person summary starting with 'I' (e.g., 'I came across...', 'I was excited to see...')\n"
+            "- source_links: Array of source URLs\n"
+            "- quality_score: 1-10 rating for professional relevance\n"
+            "- category: One of [Research, Industry, Career, Technology, Policy]\n\n"
+            "Return ONLY a valid JSON array, no markdown or explanation:\n"
+            '[{{"title": "...", "summary": "...", "source_links": ["..."], "quality_score": 8, "category": "Research"}}]'
+        ),
+        alias="LOCAL_LLM_SEARCH_PROMPT",
+    )
     linkedin_mention_prompt: str = Field(default="", alias="LINKEDIN_MENTION_PROMPT")
-    story_enrichment_prompt: str = Field(default="", alias="STORY_ENRICHMENT_PROMPT")
+    story_enrichment_prompt: str = Field(
+        default=(
+            "Extract organizations and people from this news story.\n\n"
+            "Title: {story_title}\n"
+            "Summary: {story_summary}\n"
+            "Sources: {story_sources}\n\n"
+            "Look for:\n"
+            "- Company/organization names mentioned\n"
+            "- People quoted or mentioned by name with their titles\n\n"
+            "Return ONLY valid JSON (no markdown, no explanation):\n"
+            '{{"organizations": ["Org Name"], "direct_people": [{{"name": "Full Name", "title": "Job Title", "affiliation": "Organization"}}]}}\n\n'
+            'If nothing found, return: {"organizations": [], "direct_people": []}'
+        ),
+        alias="STORY_ENRICHMENT_PROMPT",
+    )
     linkedin_profile_search_prompt: str = Field(
         default="", alias="LINKEDIN_PROFILE_SEARCH_PROMPT"
     )
-    indirect_people_prompt: str = Field(default="", alias="INDIRECT_PEOPLE_PROMPT")
-    company_mention_prompt: str = Field(default="", alias="COMPANY_MENTION_PROMPT")
+    indirect_people_prompt: str = Field(
+        default=(
+            "Find 1-3 senior leaders at {organization_name} relevant to this story.\n"
+            "Story category: {story_category}\n"
+            "Story title: {story_title}\n\n"
+            "Return ONLY valid JSON (no markdown, no explanation):\n"
+            '{{"leaders": [{{"name": "Full Name", "title": "Job Title", "organization": "{organization_name}", "role_type": "executive|academic|pr_comms", "location": "City, Country"}}]}}\n\n'
+            'If you cannot find specific leaders, return: {"leaders": []}'
+        ),
+        alias="INDIRECT_PEOPLE_PROMPT",
+    )
+    company_mention_prompt: str = Field(
+        default=(
+            "Given this story, generate a brief company mention sentence.\n\n"
+            "Title: {story_title}\n"
+            "Summary: {story_summary}\n"
+            "Sources: {story_sources}\n\n"
+            "If companies are mentioned, return a single sentence mentioning them.\n"
+            "If no companies are mentioned, return: NO_COMPANY_MENTION"
+        ),
+        alias="COMPANY_MENTION_PROMPT",
+    )
     individual_extraction_prompt: str = Field(
         default="", alias="INDIVIDUAL_EXTRACTION_PROMPT"
     )
@@ -444,1311 +545,119 @@ except Exception as e:
 
 
 # ============================================================================
-# Legacy Helper Functions (kept for backward compatibility)
+# Config Class - Provides uppercase access to Pydantic settings
 # ============================================================================
-def _get_int(key: str, default: int) -> int:
-    """Get integer from environment variable."""
-    try:
-        return int(os.getenv(key, str(default)))
-    except ValueError:
-        return default
+class _ConfigMeta(type):
+    """Metaclass that provides uppercase attribute access to _settings."""
+
+    def __getattr__(cls, name: str):
+        """Map UPPERCASE_NAME to _settings.lowercase_name."""
+        # Convert UPPERCASE_NAME to lowercase_name
+        lower_name = name.lower()
+        if hasattr(_settings, lower_name):
+            return getattr(_settings, lower_name)
+        raise AttributeError(f"Config has no attribute '{name}'")
+
+    def __setattr__(cls, name: str, value):
+        """Map UPPERCASE_NAME assignment to _settings.lowercase_name."""
+        # Allow setting class-level attributes normally (like _settings)
+        if name.startswith("_"):
+            super().__setattr__(name, value)
+            return
+        # Convert UPPERCASE_NAME to lowercase_name and set on _settings
+        lower_name = name.lower()
+        if hasattr(_settings, lower_name):
+            object.__setattr__(_settings, lower_name, value)
+        else:
+            raise AttributeError(f"Config has no attribute '{name}'")
 
 
-def _get_float(key: str, default: float) -> float:
-    """Get float from environment variable."""
-    try:
-        return float(os.getenv(key, str(default)))
-    except ValueError:
-        return default
-
-
-def _get_bool(key: str, default: bool) -> bool:
-    """Get boolean from environment variable."""
-    value = os.getenv(key, str(default)).lower()
-    return value in ("true", "1", "yes", "on")
-
-
-def _get_str(key: str, default: str = "") -> str:
-    """Get string from environment variable."""
-    return os.getenv(key, default)
-
-
-class Config:
+class Config(metaclass=_ConfigMeta):
     """
     Application configuration loaded from environment variables.
 
-    NOTE: Configuration is now validated at import time using Pydantic.
-    Invalid configuration will cause the application to exit immediately
-    with clear error messages.
+    Configuration is validated at import time using Pydantic.
+    Access settings using UPPERCASE names: Config.LINKEDIN_SEARCH_ENABLED
 
-    This class provides backward-compatible access to configuration values
-    via class attributes. The underlying validated settings are in `_settings`.
+    The underlying validated settings are in _settings (SettingsModel instance).
     """
 
-    # Access to the validated Pydantic settings model
-    _pydantic_settings: SettingsModel = _settings
-
-    # --- API Keys ---
-    GEMINI_API_KEY: str = _get_str("GEMINI_API_KEY")
-    OPENAI_API_KEY: str = _get_str("OPENAI_API_KEY")  # For RAG and embeddings
-    # Support either HUGGINGFACE_API_TOKEN or HUGGINGFACE_API_KEY
-    HUGGINGFACE_API_TOKEN: str = _get_str("HUGGINGFACE_API_TOKEN") or _get_str(
-        "HUGGINGFACE_API_KEY"
-    )
-    LINKEDIN_ACCESS_TOKEN: str = _get_str("LINKEDIN_ACCESS_TOKEN")
-    LINKEDIN_AUTHOR_URN: str = _get_str("LINKEDIN_AUTHOR_URN")
-    # Optional org URN to post as a company (e.g. urn:li:organization:123456)
-    LINKEDIN_ORGANIZATION_URN: str = _get_str("LINKEDIN_ORGANIZATION_URN")
-    # Author's display name for first-person story writing (e.g., "Wayne Gault")
-    LINKEDIN_AUTHOR_NAME: str = _get_str("LINKEDIN_AUTHOR_NAME", "")
-
-    # --- Professional Discipline ---
-    # The user's professional discipline (e.g., "chemical engineer", "software developer")
-    DISCIPLINE: str = _get_str("DISCIPLINE", "chemical engineer")
-
-    # LinkedIn browser login credentials (for profile URN extraction)
-    # Note: Uses lowercase keys to match .env file format
-    LINKEDIN_USERNAME: str = _get_str("linkedin_username", "")
-    LINKEDIN_PASSWORD: str = _get_str("linkedin_password", "")
-
-    # --- LinkedIn Voyager API (internal API using browser cookies) ---
-    # Extract these from browser dev tools after logging into LinkedIn
-    LINKEDIN_LI_AT: str = _get_str("LINKEDIN_LI_AT", "")
-    LINKEDIN_JSESSIONID: str = _get_str("LINKEDIN_JSESSIONID", "")
-
-    # --- LinkedIn Engagement Limits ---
-    # These limits help avoid triggering LinkedIn's anti-automation detection
-    LINKEDIN_DAILY_COMMENT_LIMIT: int = _get_int("LINKEDIN_DAILY_COMMENT_LIMIT", 25)
-    LINKEDIN_HOURLY_COMMENT_LIMIT: int = _get_int("LINKEDIN_HOURLY_COMMENT_LIMIT", 5)
-    LINKEDIN_MIN_COMMENT_INTERVAL: int = _get_int("LINKEDIN_MIN_COMMENT_INTERVAL", 300)
-    LINKEDIN_WEEKLY_CONNECTION_LIMIT: int = _get_int(
-        "LINKEDIN_WEEKLY_CONNECTION_LIMIT", 100
-    )
-    LINKEDIN_DAILY_CONNECTION_LIMIT: int = _get_int(
-        "LINKEDIN_DAILY_CONNECTION_LIMIT", 20
-    )
-
-    # --- LinkedIn Search Settings ---
-    # Skip LinkedIn's direct search (subject to rate limits) and use Google/Bing instead
-    SKIP_LINKEDIN_DIRECT_SEARCH: bool = _get_bool("SKIP_LINKEDIN_DIRECT_SEARCH", True)
-
-    # --- RapidAPI Fresh LinkedIn Data API ---
-    # Primary method for reliable LinkedIn profile lookups (90%+ success rate)
-    # Get API key from: https://rapidapi.com/freshdata-freshdata-default/api/fresh-linkedin-profile-data
-    RAPIDAPI_KEY: str = _get_str("RAPIDAPI_KEY", "")
-
-    # --- Local LLM (LM Studio) ---
-    LM_STUDIO_BASE_URL: str = _get_str("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
-    LM_STUDIO_MODEL: str = _get_str("LM_STUDIO_MODEL", "local-model")
-    PREFER_LOCAL_LLM: bool = _get_bool("PREFER_LOCAL_LLM", True)
-
-    # --- AI Models ---
-    MODEL_TEXT: str = _get_str("MODEL_TEXT", "gemini-2.0-flash")
-    MODEL_VERIFICATION: str = _get_str("MODEL_VERIFICATION", "gemini-2.0-flash")
-    MODEL_IMAGE: str = _get_str("MODEL_IMAGE", "imagen-4.0-generate-001")
-
-    # --- Hugging Face Image Generation ---
-    # Default to FLUX.1-schnell - a FREE, fast model via InferenceClient
-    HF_TTI_MODEL: str = _get_str("HF_TTI_MODEL", "black-forest-labs/FLUX.1-schnell")
-    # Optional: use a dedicated Inference Endpoint URL instead of the public models route
-    HF_INFERENCE_ENDPOINT: str = _get_str("HF_INFERENCE_ENDPOINT", "")
-    # Optional negative prompt to reduce unwanted artifacts (not used by FLUX models)
-    HF_NEGATIVE_PROMPT: str = _get_str(
-        "HF_NEGATIVE_PROMPT",
-        "text, watermark, logo, blurry, low quality, artifacts, jpeg artifacts, nsfw",
-    )
-    # Automatically prefer Hugging Face for images when a token is present
-    HF_PREFER_IF_CONFIGURED: bool = _get_bool("HF_PREFER_IF_CONFIGURED", True)
-
-    # --- Image Style Settings ---
-    # Style directive for image generation prompts - professional field photography
-    IMAGE_STYLE: str = _get_str(
-        "IMAGE_STYLE",
-        "documentary-style professional photography, authentic real-world setting for the subject matter, "
-        "female professional actively working, clear view of field-specific tools/subjects, "
-        "accurate PPE or professional attire appropriate to the field, "
-        "natural workplace lighting with contextual highlights, "
-        "photorealistic, editorial quality suitable for a professional publication",
-    )
-    # Aspect ratio for generated images (options: 1:1, 16:9, 9:16, 4:3, 3:4)
-    IMAGE_ASPECT_RATIO: str = _get_str("IMAGE_ASPECT_RATIO", "16:9")
-    # Image resolution size ("1K" or "2K") - higher = better quality but slower
-    IMAGE_SIZE: str = _get_str("IMAGE_SIZE", "2K")
-    # Control whether generated images include a central human character
-    # True = Include central human character (default behavior)
-    # False = No central character; random humans only if incidental/peripheral
-    HUMAN_IN_IMAGE: bool = _get_bool("HUMAN_IN_IMAGE", True)
-    # Negative prompt - describes what to AVOID in generated images
-    IMAGE_NEGATIVE_PROMPT: str = _get_str(
-        "IMAGE_NEGATIVE_PROMPT",
-        "text, words, letters, numbers, labels, signs, writing, captions, titles, "
-        "watermark, logo, blurry, low quality, artifacts, jpeg artifacts, "
-        "cartoon, illustration, anime, drawing, painting, sketch, abstract, "
-        "deformed, distorted, disfigured, bad anatomy, unrealistic proportions, "
-        "stock photo watermark, grainy, out of focus, overexposed, underexposed",
-    )
-
-    # --- Prompt Templates ---
-    # Image refinement prompt - sent to LLM to generate image generation prompts
-    # Placeholders: {story_title}, {story_summary}, {image_style}
-    IMAGE_REFINEMENT_PROMPT: str = _get_str(
-        "IMAGE_REFINEMENT_PROMPT",
-        """You are creating an image for a professional {discipline} publication.
-
-STORY TO ILLUSTRATE:
-- Title: {story_title}
-- Summary: {story_summary}
-
-CRITICAL: YOUR IMAGE MUST DIRECTLY ILLUSTRATE THIS SPECIFIC STORY
-Do NOT create a generic scene. Your image must show:
-- The exact subject or activity described (technology, patient, animal, experiment, field site, instrument, product, facility)
-- If the story mentions a specific organization, setting, device, species, or process — SHOW THAT
-- Match the environment to the story (clinic, lab, field site, office, control room, classroom, facility, etc.)
-
-READ THE SOURCE ARTICLE CONTEXT ABOVE (if provided) for additional visual details.
-This ensures your image reflects the real story, not a generic illustration.
-
-STEP 1 - EXTRACT THE KEY VISUAL ELEMENTS FROM SOURCE:
-Identify the specific subjects, people, equipment, animals, patients, locations, materials, or processes mentioned.
-
-STEP 2 - CREATE A SCENE THAT DIRECTLY DEPICTS THE STORY:
-- Research breakthrough → show the experiment setup, samples, or instruments in use
-- Clinical/animal care → show practitioner with patient/animal, relevant tools, and setting
-- Field work → show on-site inspection/measurement with the environment visible
-- Operations/manufacturing → show the relevant line, machinery, or workflow step being discussed
-- If the source describes colors, equipment types, or context details, include them
-
-STEP 3 - SUGGEST AUTHENTIC SETTING:
-- Choose a setting appropriate to the field: clinic/hospital, laboratory, field site, office/control room, classroom, industrial or agricultural facility, etc.
-- Avoid explicit logos/branding; keep the look credible for the discipline and story
-
-STEP 4 - ADD A PROMINENT HUMAN ELEMENT (MINIMUM 40% of image):
-- Include a beautiful female {discipline} professional as the PROMINENT SUBJECT occupying 40-50% of the frame
-- Position her CENTER-LEFT or CENTER-RIGHT (not at the far edges)
-- Frame waist-up or closer; show her actively working on the story’s subject (examining, operating, sampling, analyzing, reviewing data)
-- Face clearly visible with confident, warm expression; vary hair color/features across images
-- Authentic PPE or professional attire appropriate to the setting (scrubs, lab coat, safety gear, business attire, field gear, etc.)
-
-TECHNICAL ACCURACY IS CRITICAL:
-- Use specific details from the story: name the subject/equipment/species/process shown
-- Match the environment to what the story implies
-- Include relevant instruments, tools, or context objects; avoid invented or generic props
-
-COMPOSITION RULE (STRICT - MINIMUM 40% HUMAN):
-- Female professional: 40-50% of the frame, positioned center-left or center-right
-- Subject matter shares the frame (equipment/patient/animal/data/setting) and is clearly visible
-- Medium or medium close-up framing; show active interaction with the subject
-
-AVOID:
-- Generic backgrounds that could apply to any story
-- Vague descriptions like "technical equipment" without specifics
-- Putting the person tiny or at the far edge of the frame
-- Full-body distant shots; backs of heads; hidden faces
-- Settings or tools that do not match the story
-- Explicit company logos or trademarks
-
-CRITICAL - NO TEXT IN IMAGE:
-- NEVER include any text, words, labels, signs, or writing in the image
-- Describe controls/indicators by appearance, not by text labels
-
-GOOD IMAGE PROMPT EXAMPLE (story-specific):
-"A photo of a beautiful brunette female {discipline} professional, framed from waist up in center-right, gently examining a patient/subject relevant to the story, confident warm expression, field-appropriate tools visible behind her shoulder, she occupies 45% of the frame, shot with 85mm lens, natural workplace lighting, editorial quality"
-
-STYLE: {image_style}
-
-CRITICAL OUTPUT FORMAT:
-- MUST start with "A photo of..." (this triggers photorealistic rendering)
-- Write ONLY the image prompt. Maximum 80 words.
-- NEVER include any text, labels, signs, or writing
-- Describe visual elements only; no readable text
-- End with photography/camera style keywords like "shot with professional camera, editorial quality"
-- The prompt MUST describe the specific subject/process from the story, not a generic scene.""",
-    )
-
-    # Image refinement prompt for NO HUMAN mode - focus on technology/environments
-    # Placeholders: {story_title}, {story_summary}, {image_style}, {discipline}
-    IMAGE_REFINEMENT_PROMPT_NO_HUMAN: str = _get_str(
-        "IMAGE_REFINEMENT_PROMPT_NO_HUMAN",
-        """You are creating an image for a professional {discipline} publication.
-
-STORY TO ILLUSTRATE:
-- Title: {story_title}
-- Summary: {story_summary}
-
-CRITICAL: YOUR IMAGE MUST DIRECTLY ILLUSTRATE THIS SPECIFIC STORY
-Do NOT create a generic scene. Your image must show:
-- The exact subject or activity described (technology, equipment, experiment, facility, environment, product)
-- If the story mentions a specific organization, setting, device, species, or process — SHOW THAT
-- Match the environment to the story (lab, factory, field site, office, control room, facility, etc.)
-
-READ THE SOURCE ARTICLE CONTEXT ABOVE (if provided) for additional visual details.
-
-STEP 1 - EXTRACT THE KEY VISUAL ELEMENTS FROM SOURCE:
-Identify the specific equipment, technology, environments, materials, or processes mentioned.
-
-STEP 2 - CREATE A SCENE THAT DIRECTLY DEPICTS THE STORY:
-- Research breakthrough → show the experiment setup, samples, or instruments
-- Manufacturing/industry → show the machinery, production line, or products
-- Field work → show the environment, site, or natural phenomena
-- Technology → show the devices, systems, or infrastructure
-
-STEP 3 - SUGGEST AUTHENTIC SETTING:
-- Choose a setting appropriate to the field and story
-- Avoid explicit logos/branding; keep the look credible
-
-CRITICAL - NO PEOPLE AS CENTRAL SUBJECT:
-- DO NOT include any person as the main subject of the image
-- If people appear, they must be incidental background elements (small, distant, silhouettes)
-- Focus entirely on EQUIPMENT, TECHNOLOGY, ENVIRONMENTS, or PROCESSES
-- The subject matter should be a thing or place, NOT a person
-
-TECHNICAL ACCURACY IS CRITICAL:
-- Use specific details from the story
-- Match the environment to what the story implies
-- Include relevant equipment, machinery, or context objects
-
-AVOID:
-- Generic backgrounds
-- Any person as the central or prominent figure
-- Portrait-style compositions
-- Close-up or waist-up shots of people
-- Explicit company logos or trademarks
-
-CRITICAL - NO TEXT IN IMAGE:
-- NEVER include any text, words, labels, signs, or writing in the image
-
-GOOD IMAGE PROMPT EXAMPLE:
-"A photo of industrial laboratory equipment with precision instruments and sample containers on a clean workbench, modern research facility environment with soft ambient lighting, wide shot showing the full experimental setup, professional documentary photography style, editorial quality"
-
-STYLE: {image_style}
-
-CRITICAL OUTPUT FORMAT:
-- MUST start with "A photo of..." (this triggers photorealistic rendering)
-- Write ONLY the image prompt. Maximum 80 words.
-- NEVER include any text, labels, signs, or writing
-- NO PEOPLE as the main subject
-- End with photography/camera style keywords like "shot with professional camera, editorial quality"
-- The prompt MUST describe the specific subject/process from the story, not a generic scene.""",
-    )
-
-    # Fallback image prompt template when LLM refinement fails
-    # Placeholders: {story_title}, {appearance}, {discipline}
-    IMAGE_FALLBACK_PROMPT: str = _get_str(
-        "IMAGE_FALLBACK_PROMPT",
-        "A photo of {appearance} {discipline} professional, framed from waist up in center-right of image, "
-        "actively working with the subject matter related to: {story_title}. "
-        "She occupies 45% of the frame with face clearly visible, confident warm expression. "
-        "Relevant tools, subjects, or setting visible behind her shoulder. Authentic workplace setting appropriate to {discipline} (clinic, lab, field, office, facility). "
-        "Shot with 85mm lens, natural workplace lighting, editorial quality for a professional publication.",
-    )
-
-    # Search instruction prompt - the system prompt for story search
-    # Placeholders: {max_stories}, {search_prompt}, {since_date}, {summary_words}, {author_name}
-    SEARCH_INSTRUCTION_PROMPT: str = _get_str(
-        "SEARCH_INSTRUCTION_PROMPT",
-        """You are writing AS {author_name}, a {discipline} professional sharing insights on LinkedIn. Find EXACTLY {max_stories} recent news stories matching: "{search_prompt}"
-
-CRITICAL - STORY COUNT:
-- Return EXACTLY {max_stories} stories - no more, no fewer
-- If you find more candidates, select only the {max_stories} highest quality ones
-- Do NOT return extra stories "just in case"
-
-REQUIREMENTS:
-- Stories must be from after {since_date}
-- Each story needs:
-    * title: An informative, credible headline (avoid clickbait). Use FULL institution names, NOT abbreviations:
-      - "University of California, Riverside" NOT "UC Riverside" or "UCR"
-      - "University of California, Los Angeles" NOT "UCLA"
-      - "University of Southern California" NOT "USC"
-      - "University of Chicago" NOT "UChicago"
-      - "Massachusetts Institute of Technology" NOT "MIT"
-      - "California Institute of Technology" NOT "Caltech"
-      - Apply this rule to ALL universities and institutions
-    * sources: Array of REAL source URLs from your search results
-    * summary: {summary_words} words max, written in FIRST PERSON as {author_name}
-    * category: One of: Clinical/Practice, Research, Technology, Business, Policy/Regulation, Education, Science, Other
-    * quality_score: 1-10 rating (see scoring rubric below)
-    * quality_justification: Brief explanation of the score
-    * hashtags: Array of 1-3 relevant hashtags (without # symbol)
-    * direct_people: Array of people objects (see format below) - MAX 3 most relevant people per story
-
-QUALITY SCORE RUBRIC:
-- 10: Breakthrough with major implications for the field, from top-tier source
-- 8-9: Significant development with clear relevance to the discipline, reputable source
-- 6-7: Relevant professional news, solid source, moderate significance
-- 4-5: Tangential relevance or routine announcement
-- 1-3: Weak relevance, questionable source, or outdated
-
-GEOGRAPHIC PRIORITY (add +1 to score for stories from these regions):
-- English-speaking countries: USA, UK, Canada, Australia, New Zealand, Ireland
-- European countries: Germany, France, Netherlands, Switzerland, Sweden, Denmark, Norway, Finland, Belgium, Austria, Italy, Spain
-- Apply the +1 bonus AFTER calculating the base score (cap at 10)
-
-CRITICAL - INCLUDE NAMES IN SUMMARY:
-- The summary MUST mention specific ORGANIZATION names (e.g., "researchers at MIT", "RSPCA veterinarians", "BASF announced")
-- The summary MUST mention at least ONE key individual by full name with their role
-- If the story is academic: name the institution AND lead researcher(s)
-- If the story is about a company/clinic/agency: name the organization AND any executives or practitioners mentioned
-
-DIRECT PEOPLE - MANDATORY EXTRACTION:
-For EVERY story, identify and include in direct_people (people explicitly mentioned in the story):
-1. The FIRST AUTHOR of any research paper (usually listed first in author order)
-2. The CORRESPONDING/SENIOR AUTHOR who supervised the research
-3. Other co-authors if prominently mentioned
-4. Executives, practitioners, or spokespersons quoted in the article
-5. Look for: "first author", "senior author", "lead author", "principal investigator", "corresponding author", "supervised by"
-
-CRITICAL - AUTHOR AFFILIATIONS:
-- Use the author's ACTUAL INSTITUTIONAL AFFILIATION (their university/company/clinic/agency), NOT the journal name
-- Journal names (e.g., Nature, Science, JAMA, Chemical Engineering Journal) are PUBLISHERS, not affiliations
-
-Note: direct_people captures people explicitly mentioned for LinkedIn @mentions. Indirect leadership comes from indirect_people enrichment.
-The summary should still name at least 1-2 key individuals for readability.
-
-CRITICAL - NO PLACEHOLDERS:
-- Extract REAL names from the article - never use "TBA", "Unknown", "N/A", or placeholder text
-- If you cannot find real names, leave direct_people as an empty array []
-
-DIRECT_PEOPLE FIELD REQUIREMENTS (for accurate LinkedIn matching):
-- name: FULL name (first AND last name required)
-- company: Organization name (university, company, clinic, agency, institution)
-- position: Job title/role exactly as stated
-- department: Department/service/school if mentioned
-- location: City/country if mentioned
-- role_type: One of: "academic", "executive", "researcher", "practitioner", "engineer", "student", "spokesperson", "other"
-- research_area: Research/subject area if mentioned (leave "" if not stated)
-- linkedin_profile: Leave empty ""
-
-WRITING STYLE FOR SUMMARIES:
-- Write in first person ("I", "what stands out to me")
-- Sound like an expert {discipline} sharing professional insight
-- Be concise, analytical, and reflective rather than promotional
-- Include at least one field-relevant perspective (e.g., clinical impact, patient/animal welfare, operational feasibility, safety, policy/regulatory nuance, cost, adoption/scale, evidence strength, limitations)
-- When mentioning "applications" or "potential uses", ALWAYS provide at least one SPECIFIC example (e.g., "applications in energy storage, such as next-generation batteries" NOT just "applications in energy storage")
-- Avoid sounding like a news aggregator or influencer
-
-HOOK AND CTA STRUCTURE (CRITICAL FOR LINKEDIN ENGAGEMENT):
-- START with an attention-grabbing HOOK in the first 1-2 sentences:
-  * Ask a provocative question
-  * Share a surprising statistic or finding
-  * Make a bold or counterintuitive statement
-  * Create curiosity that makes readers want to continue
-- END with a call-to-action (CTA) question to invite engagement:
-  * "What's your take on this approach?"
-  * "Have you seen similar results in your practice?"
-  * "Would this work in your organization?"
-  * "What implications do you see for [field]?"
-
-HOOK EXAMPLES:
-- "What if the solution to antibiotic resistance has been hiding in plain sight?"
-- "I never expected a 40% reduction in processing time from such a simple change."
-- "The data on this one stopped me in my tracks."
-- "This challenges everything I thought I knew about [topic]."
-
-BAD SUMMARY EXAMPLE (too promotional, no hook, no CTA):
-"This breakthrough will change everything overnight! Truly revolutionary!"
-
-GOOD SUMMARY EXAMPLE (hook + insight + CTA):
-"What if the solution to crop yield optimization was hiding in our gut microbiome? Researchers at MIT just demonstrated a 30% improvement using this unexpected approach. What stands out to me is how quickly this could translate into practice — the workflow and safety profile look feasible. Have you seen similar cross-disciplinary approaches work in your field?"
-
-HASHTAG GUIDELINES:
-- Use 1-3 relevant, professional hashtags per story
-- CamelCase for multi-word hashtags (e.g., VeterinaryMedicine, AnimalHealth, ProcessSafety, ClimatePolicy)
-- Focus on discipline- or topic-specific tags; also include the story category as a tag
-
-CRITICAL - SOURCE URLs:
-- Stories originated from a URL. Only include URLs you found in the search results and used to create the story.
-- Do NOT invent or guess URLs. Every story must have at least 1 URL used to create the story associated with it.
-- URLs must be SPECIFIC ARTICLE pages, NOT generic category/index pages like "/news/" or "/articles/"
-- BAD URL examples: "https://example.com/news/", "https://example.com/veterinary/", "https://example.com/"
-- GOOD URL examples: "https://example.com/news/2026/01/laying-hen-welfare-plans", "https://example.com/articles/12345-study-reveals"
-
-RESPOND WITH ONLY THIS JSON FORMAT:
-{{
-    "stories": [
-        {{
-            "title": "Story Title",
-            "sources": ["https://real-url-from-search.com/article"],
-            "summary": "I found this work compelling because... [first-person summary]",
-            "category": "Research",
-            "quality_score": 8,
-            "quality_justification": "Highly relevant topic, reputable source, timely",
-            "hashtags": ["VeterinaryMedicine", "AnimalHealth"],
-            "organizations": ["University of Glasgow", "RSPCA"],
-            "direct_people": [
-                {{"name": "Dr. Jane Smith", "company": "University of Glasgow", "position": "Lead Researcher", "department": "Veterinary Medicine", "location": "Glasgow, UK", "role_type": "academic", "research_area": "zoonotic disease", "linkedin_profile": ""}},
-                {{"name": "John Doe", "company": "RSPCA", "position": "Clinical Director", "department": "", "location": "London, UK", "role_type": "practitioner", "research_area": "", "linkedin_profile": ""}}
-            ]
-        }}
-    ]
-}}
-
-ORGANIZATIONS - ALWAYS EXTRACT:
-- ALWAYS include an "organizations" array listing ALL companies, universities, clinics, agencies, and institutions mentioned in the story
-- PRIORITIZE the institutions where the named people WORK (their affiliations)
-- Journal names are PUBLISHERS, not organizations to include
-- Organizations enable later lookup of leadership profiles on LinkedIn
-
-IMPORTANT: Return complete, valid JSON. Keep summaries concise. Use ONLY real URLs. Write ALL summaries in first person. ALWAYS populate direct_people with people from the story AND key leaders from mentioned organizations. ALWAYS populate organizations with ALL institutions mentioned.""",
-    )
-
-    # Verification prompt - used to verify story suitability for publication
-    # Placeholders: {search_prompt}, {story_title}, {story_summary}, {story_sources}, {people_count}, {linkedin_profiles_found}, {summary_word_limit}, {promotion_message}
-    VERIFICATION_PROMPT: str = _get_str(
-        "VERIFICATION_PROMPT",
-        """You are a strict editorial review board for a professional, discipline-focused LinkedIn publication.
-
-ORIGINAL SELECTION CRITERIA:
-"{search_prompt}"
-
-STORY TO EVALUATE:
-Title: {story_title}
-Summary: {story_summary}
-Sources: {story_sources}
-
-PROMOTION MESSAGE (appended to post):
-{promotion_message}
-
-LINKEDIN PROFILE STATUS:
-People identified: {people_count}
-LinkedIn profiles found: {linkedin_profiles_found}
-
-EVALUATION CRITERIA:
-1. RELEVANCE: Does this story clearly and genuinely match the original selection criteria?
-2. PROFESSIONALISM: Is the tone suitable for a professional audience on LinkedIn?
-3. DECENCY: Is the content appropriate for all professional audiences?
-4. CREDIBILITY: Does the summary appear factual, plausible, and supported by reputable sources? (Major publications, academic institutions, established industry sources)
-5. FIELD VALUE: Does the post demonstrate discipline-specific insight, judgement, or practical relevance (e.g., clinical or operational implications, safety, policy/regulatory nuance, feasibility, limitations)?
-6. DISTINCTIVENESS: Would this post make the author appear thoughtful rather than automated or generic?
-7. LENGTH: Is the summary appropriately concise (under {summary_word_limit} words)?
-8. HASHTAGS: Are hashtags professional and relevant (no promotional or generic tags like #news)?
-9. LINKEDIN MENTIONS: Have LinkedIn profiles been identified for key people? (Not required for approval, but good to have)
-
-PROMOTION MESSAGE EVALUATION:
-10. PROMOTION ALIGNMENT: Does the promotion message connect authentically to the story's topic/technology/industry?
-11. PROMOTION TONE: Is the promotion professional, dignified, and confident WITHOUT being:
-    - Sycophantic (excessive flattery or fawning)
-    - Begging or desperate-sounding
-    - Self-demeaning or apologetic
-    - Overly humble or submissive
-    - Pushy, aggressive, or demanding
-12. PROMOTION EFFECTIVENESS: Is it an effective call to action that:
-    - Clearly signals availability for opportunities
-    - Invites connection or conversation
-    - Demonstrates genuine interest in the field/technology
-    - Would encourage recruiters or hiring managers to reach out
-13. PROMOTION QUALITY: Does it maintain professional gravitas while being approachable and personable?
-
-BAD PROMOTION EXAMPLES (should REJECT):
-- "I would be so grateful if anyone could help me find a job, I really need this opportunity!" (desperate, begging)
-- "Your company is absolutely amazing and I'd do anything to work there!" (sycophantic)
-- "I know I'm just a graduate but maybe someone might consider giving me a chance?" (self-demeaning)
-- "HIRE ME! DM for my CV!" (pushy, unprofessional)
-- "Passionate about sustainability." (vague, no call to action)
-
-GOOD PROMOTION EXAMPLES (should APPROVE):
-- "DVM exploring opportunities in advanced animal health. I'd welcome a conversation with teams working in this space."
-- "Clinical researcher actively seeking roles in translational medicine. Open to connecting with hiring managers in trial operations or data science."
-- "Data professional looking to contribute to impactful analytics projects. If your team is building in this area, I'd love to hear from you."
-- "Fascinated by this approach. Currently seeking roles in this field — feel free to reach out or connect."
-
-IMAGE EVALUATION (if an image is provided):
-13. IMAGE PROFESSIONALISM: Is the image appropriate for a professional context?
-14. IMAGE RELEVANCE: Does the image relate to the subject of the story?
-15. IMAGE CREDIBILITY: Does the image depict realistic settings, tools, or subjects appropriate to the story?
-
-IMPORTANT NOTES ON IMAGES - BE LENIENT:
-- Images are AI-generated and intentionally feature attractive professionals
-- An attractive or beautiful person in the image is EXPECTED and ACCEPTABLE - do NOT reject for this reason
-- Professional appearance (well-groomed, confident, attractive) is a positive quality in business imagery
-- DO NOT reject for minor clothing details like necklines, fitted clothing, or fashionable professional attire
-- Lab coats, safety gear, and professional attire in various styles are ALL acceptable
-- Only reject images showing explicit content, nudity, or clearly unprofessional scenarios (e.g., swimwear, lingerie)
-- A "low-cut" top or fitted clothing is NOT grounds for rejection - this is normal professional attire
-- Focus ONLY on: Is there safety gear where needed? Is the setting credible? Does equipment match the story?
-- AI watermarks or generation artifacts are acceptable
-- When in doubt about clothing or appearance, APPROVE the image
-
-IMPORTANT NOTES:
-- LinkedIn profiles are helpful but not mandatory for approval
-- The promotion message MUST maintain professional dignity - reject if it sounds desperate or self-demeaning
-
-BAD CONTENT EXAMPLE (should REJECT):
-Title: "AMAZING Breakthrough Will Change Everything!"
-Summary: "This incredible new technology is absolutely revolutionary and will transform the entire industry overnight! Everyone needs to know about this game-changing innovation!"
-Reason: Promotional tone, lacks substance, clickbait headline, no professional perspective
-
-GOOD CONTENT EXAMPLE (should APPROVE):
-Title: "Clinical team reports improved outcomes with new protocol"
-Summary: "What interests me is how this protocol could improve routine practice — the early safety signals and workflow fit look promising, but I'd like to see longer-term follow-up before broad adoption."
-Reason: Professional tone, first-person perspective, discipline-relevant analysis, specific details, critical thinking
-
-DECISION RULES:
-- APPROVE only if ALL primary criteria (1-9) AND promotion criteria (10-13) are satisfied
-- REJECT if ANY primary criterion is weak or unmet
-- REJECT if promotion message sounds sycophantic, begging, self-demeaning, or lacks a clear call to action
-- REJECT if promotion is vague without inviting engagement or connection
-- When uncertain, REJECT
-
-Respond with ONLY one of these exact words:
-APPROVED
-or
-REJECTED
-
-Then on a new line, provide a brief (one sentence) reason.""",
-    )
-
-    # Search query distillation prompt - converts long search requests into keywords
-    # Used by local LLM to optimize DuckDuckGo queries
-    SEARCH_DISTILL_PROMPT: str = _get_str(
-        "SEARCH_DISTILL_PROMPT",
-        """You are a search query optimizer for technical news. Convert the user's request into 3-5 keyword search terms optimized for DuckDuckGo news search.
-
-Focus on:
-- Technical terms and industry jargon
-- Company or institution names if mentioned
-- Specific technologies or processes
-
-Do NOT include generic terms like "news", "recent", "latest", or "update".
-
-BAD EXAMPLE:
-Input: "Find recent news about chemical engineering innovations in sustainable processes"
-Output: "recent news chemical engineering" (too generic, includes "news")
-
-GOOD EXAMPLE:
-Input: "Find recent news about chemical engineering innovations in sustainable processes"
-Output: "chemical engineering sustainable process innovation catalyst" (specific, technical terms)
-
-Return ONLY the 3-5 keywords, space-separated, no explanation.""",
-    )
-
-    # Local LLM story processing prompt - processes DuckDuckGo results into stories
-    # Placeholders: {author_name}, {search_prompt}, {search_results}, {max_stories}, {summary_words}
-    LOCAL_LLM_SEARCH_PROMPT: str = _get_str(
-        "LOCAL_LLM_SEARCH_PROMPT",
-        """You are writing AS {author_name}, a {discipline} professional sharing industry insights on LinkedIn. I have found the following search results for the query: "{search_prompt}"
-
-SEARCH RESULTS:
-{search_results}
-
-TASK:
-1. Select EXACTLY {max_stories} of the most relevant and interesting stories - no more, no fewer.
-2. For each story, provide:
-   - title: An informative, technical headline (avoid clickbait or sensationalism). Use FULL institution names, NOT abbreviations:
-     - "University of California, Riverside" NOT "UC Riverside" or "UCR"
-     - "University of California, Los Angeles" NOT "UCLA"
-     - "University of Southern California" NOT "USC"
-     - "University of Chicago" NOT "UChicago"
-     - "Massachusetts Institute of Technology" NOT "MIT"
-     - "California Institute of Technology" NOT "Caltech"
-     - Apply this rule to ALL universities and institutions
-   - summary: A {summary_words}-word summary written in FIRST PERSON as {author_name}
-   - sources: A list containing the original link
-   - category: One of: Medicine, Hydrogen, Research, Technology, Business, Science, AI, Other
-   - quality_score: 1-10 rating (see scoring rubric below)
-   - quality_justification: Brief explanation of the score
-    - hashtags: Array of 1-3 relevant hashtags (without # symbol)
-    - direct_people: Array of MAX 3 people objects - only the most relevant people mentioned in the story
-
-QUALITY SCORE RUBRIC:
-- 10: Breakthrough with major industry implications, from top-tier source
-- 8-9: Significant news with clear engineering relevance, reputable source
-- 6-7: Relevant industry news, solid source, moderate significance
-- 4-5: Tangential relevance or routine announcement
-- 1-3: Weak relevance, questionable source, or outdated
-
-CRITICAL - INCLUDE NAMES IN SUMMARY:
-- ALWAYS mention specific COMPANY NAMES involved (e.g., "BASF", "MIT", "ExxonMobil")
-- ALWAYS mention KEY INDIVIDUALS by full name (researchers, CEOs, lead engineers)
-- Include their role/title (e.g., "Dr. Jane Smith, lead researcher at MIT")
-- If academic research, name the university AND lead researcher(s) by name
-- If company development, name the company AND any executives mentioned
-- Read the source article carefully to extract actual names
-
-DIRECT PEOPLE - MANDATORY EXTRACTION:
-For EVERY story, identify and include in direct_people (people explicitly mentioned in the story):
-1. The FIRST AUTHOR of any research paper (usually listed first in author order)
-2. The CORRESPONDING/SENIOR AUTHOR who supervised the research
-3. Other co-authors if prominently mentioned
-4. Executives or spokespersons quoted in the article
-5. Look for: "first author", "senior author", "lead author", "principal investigator", "corresponding author", "supervised by"
-
-CRITICAL - AUTHOR AFFILIATIONS:
-- Use the author's ACTUAL INSTITUTIONAL AFFILIATION (their university/company), NOT the journal name
-- Example: If a paper in "Chemical Engineering Journal" is by researchers at "National Taiwan University",
-  use company: "National Taiwan University", NOT "Chemical Engineering Journal"
-- Journal names (e.g., Nature, Science, Chemical Engineering Journal) are PUBLISHERS, not affiliations
-- Look for phrases like "researchers at", "from", "affiliated with", "Department of X at Y University"
-
-CRITICAL - NO PLACEHOLDERS:
-- Extract REAL names from the article - never use "TBA", "Unknown", "N/A", or placeholder text
-- If a person's name is explicitly mentioned in the article, include them
-- If you cannot find real names, leave direct_people as an empty array []
-- Academic stories usually mention researchers by name - look carefully
-
-WRITING STYLE FOR SUMMARIES:
-- Write in first person (use "I", "what stands out to me", "from an engineering perspective", etc.)
-- Sound like an expert {discipline} professional sharing insights
-- Be concise, technical, and reflective rather than promotional
-- Each summary MUST include at least one engineering or industrial perspective
-  (e.g. scalability, process efficiency, integration, cost, energy use, sustainability, environment, or limitations)
-- Avoid sounding like a news aggregator or influencer
-
-BAD SUMMARY EXAMPLE (too promotional):
-"Dow Chemical just launched an AMAZING new process that's going to REVOLUTIONIZE polymer production! This is HUGE!"
-
-GOOD SUMMARY EXAMPLE (thoughtful, technical):
-"What interests me about Dow's new polyethylene process is the claimed 30% energy reduction — if that holds at commercial scale, it could reshape economics for downstream converters. The question I'd want answered is catalyst longevity under continuous operation."
-
-APPLICATIONS - BE SPECIFIC:
-- When mentioning "applications" or "potential uses", ALWAYS provide at least one SPECIFIC example
-- BAD: "applications in energy storage and more"
-- GOOD: "applications in energy storage, such as next-generation lithium-ion batteries and supercapacitors"
-
-HASHTAG GUIDELINES:
-- Use 1-3 relevant, professional hashtags per story
-- CamelCase for multi-word hashtags (e.g., ChemicalEngineering, ProcessOptimization)
-- Focus on industry, technology, or topic-specific tags
-- Common tags: ChemicalEngineering, ProcessSafety, Sustainability, Innovation, Engineering, ClimateChange, Hydrogen
-- Also use the story category as a Tag
-
-Return the results as a JSON object with a "stories" key containing an array of story objects.
-Example:
-{{
-  "stories": [
-    {{
-      "title": "Example Story",
-      "summary": "I found this work at Dow Chemical fascinating... [first-person summary]",
-      "sources": ["https://example.com"],
-      "category": "Technology",
-      "quality_score": 8,
-      "quality_justification": "Highly relevant, reputable source",
-      "hashtags": ["ChemicalEngineering", "Innovation"],
-      "direct_people": [
-        {{"name": "Dr. John Doe", "company": "Dow Chemical", "position": "Lead Researcher", "linkedin_profile": ""}},
-        {{"name": "Jane Smith", "company": "Dow Chemical", "position": "CEO", "linkedin_profile": ""}}
-      ]
-    }}
-  ]
-}}
-
-Return ONLY the JSON object. Write ALL summaries in first person. ALWAYS populate direct_people.
-
-CRITICAL - SOURCE URLs:
-- Sources must be the ACTUAL article URLs from the search results that you used to create each story
-- Do NOT invent or guess URLs
-- URLs must be SPECIFIC ARTICLE pages, NOT generic category/index pages like "/news/" or "/articles/"
-- BAD URL examples: "https://example.com/news/", "https://example.com/veterinary/", "https://example.com/"
-- GOOD URL examples: "https://example.com/news/2026/01/laying-hen-welfare-plans", "https://example.com/articles/12345-study-reveals"
-- Every story must have at least 1 specific article URL""",
-    )
-
-    # LinkedIn mention search prompt - finds LinkedIn profiles for story entities
-    # Placeholders: {title}, {summary}, {sources_text}
-    LINKEDIN_MENTION_PROMPT: str = _get_str(
-        "LINKEDIN_MENTION_PROMPT",
-        """Analyze this news story and find LinkedIn profiles for key entities.
-
-STORY TITLE: {title}
-
-STORY SUMMARY: {summary}
-
-SOURCES:
-{sources_text}
-
-TASK: Search for LinkedIn profiles/company pages for:
-1. The main company/companies mentioned in the story
-2. Key executives (CEO, CTO, Chief Engineer, Founder, Owner, etc.) of those companies
-3. Researchers or authors named in the story
-4. Any other notable individuals mentioned
-
-For each entity found, provide:
-- name: Full name or company name
-- linkedin_url: The LinkedIn profile/company page URL (must be real, verified URL)
-- type: "person" or "organization"
-- role: Their role in the story context (e.g., "company", "ceo", "researcher", "author")
-
-IMPORTANT: Only include entities where you can find a REAL LinkedIn profile/page.
-Do NOT guess or make up LinkedIn URLs.
-
-Return JSON format:
-{{
-  "mentions": [
-    {{
-      "name": "Company or Person Name",
-      "linkedin_url": "https://www.linkedin.com/company/xxx or /in/xxx",
-      "type": "organization",
-      "role": "company"
-    }}
-  ]
-}}
-
-If no LinkedIn profiles can be found, return: {{"mentions": []}}""",
-    )
-
-    # Story enrichment prompt - extracts organizations and people from stories
-    # Placeholders: {story_title}, {story_summary}, {story_sources}
-    STORY_ENRICHMENT_PROMPT: str = _get_str(
-        "STORY_ENRICHMENT_PROMPT",
-        """Analyze this news story and extract all organizations and people mentioned.
-
-STORY TITLE: {story_title}
-
-STORY SUMMARY: {story_summary}
-
-SOURCES: {story_sources}
-
-TASK: Extract all organizations and people explicitly mentioned in this story.
-
-WHAT COUNTS AS AN ORGANIZATION:
-- Companies (e.g., BASF, Shell, ExxonMobil, Ecovyst, SABIC)
-- Universities (e.g., MIT, UCLA, Chalmers University, Imperial College)
-- University research groups or initiatives (e.g., MIT Energy Initiative, Stanford AI Lab)
-- Research institutions (e.g., Max Planck Institute, CSIRO, Fraunhofer Institute)
-- Professional bodies (e.g., IChemE, AIChE, RSC)
-- Government agencies (e.g., EPA, DOE, NASA)
-- Industry associations and consortia
-
-WHAT COUNTS AS A PERSON:
-- Researchers or scientists named in the story
-- Executives or company leaders mentioned
-- Professors or academics
-- Anyone receiving an award or honor
-- Spokespersons quoted in the story
-
-RULES:
-1. Only include organizations and people EXPLICITLY NAMED in the story
-2. Do NOT guess or infer names
-3. Include affiliation/title where stated
-4. Extract SPECIALTY/RESEARCH AREA when mentioned or clearly implied by the story context
-5. List ALL organizations mentioned, not just the primary one
-
-SPECIALTY EXTRACTION GUIDANCE:
-- Look for research areas mentioned (e.g., "carbon capture", "catalysis", "polymer science")
-- Infer from department names (e.g., "Department of Electrochemistry" → "electrochemistry")
-- Infer from project focus (e.g., working on "hydrogen electrolyzers" → "hydrogen/electrolysis")
-- Use the story topic if person's specific role relates to it
-- Common specialties: catalysis, process engineering, sustainability, materials science,
-  electrochemistry, polymer chemistry, thermodynamics, separation processes, etc.
-
-BAD EXTRACTION EXAMPLE:
-Story mentions "a major oil company" → Do NOT add "ExxonMobil" or guess which company
-
-GOOD EXTRACTION EXAMPLE:
-Story mentions "researchers at MIT's Department of Chemical Engineering led by Prof. Chen, working on carbon capture technologies" →
-Add organization: "MIT", "MIT Department of Chemical Engineering"
-Add person: {{"name": "Prof. Chen", "title": "Professor", "affiliation": "MIT", "specialty": "carbon capture"}}
-
-Return a JSON object:
-{{
-  "organizations": ["Organization Name 1", "Organization Name 2"],
-  "direct_people": [
-    {{"name": "Dr. Jane Smith", "title": "Lead Researcher", "affiliation": "MIT", "specialty": "catalysis"}},
-    {{"name": "John Doe", "title": "CEO", "affiliation": "BASF", "specialty": ""}}
-  ]
-}}
-
-If nothing found, return: {{"organizations": [], "direct_people": []}}
-
-Return ONLY valid JSON, no explanation.""",
-    )
-
-    # LinkedIn profile search prompt - finds actual LinkedIn profile URLs
-    # Placeholders: {people_list}
-    LINKEDIN_PROFILE_SEARCH_PROMPT: str = _get_str(
-        "LINKEDIN_PROFILE_SEARCH_PROMPT",
-        """Search for the PERSONAL LinkedIn profile URLs of the following people.
-
-PEOPLE TO FIND:
-{people_list}
-
-STORY CONTEXT (use to help verify correct profiles):
-{story_context}
-
-**CRITICAL: ONLY RETURN URLs FROM ACTUAL SEARCH RESULTS**
-- You MUST search Google for each person's LinkedIn profile
-- ONLY return a URL if you found it in actual search results
-- DO NOT generate, guess, or construct LinkedIn URLs
-- If search returns no LinkedIn profile for a person, do NOT include them in the output
-
-**SEARCH STRATEGY:**
-- Search: "FirstName LastName" site:linkedin.com/in
-- Look for the actual LinkedIn URL in search results
-- The URL format is: linkedin.com/in/username (username varies per person)
-
-**VERIFICATION:**
-For each URL you find in search results:
-1. Verify the name on the profile matches the person you're searching for
-2. Verify the organization/title is plausible (current OR past employer)
-3. If the search result shows a snippet with wrong name/org, skip it
-
-**DO NOT:**
-- Invent URLs like linkedin.com/in/firstname-lastname-12345 (these are often wrong)
-- Guess what someone's LinkedIn username might be
-- Return URLs you haven't actually found in search results
-
-**HANDLING NO RESULTS:**
-- If Google search finds no LinkedIn profile for a person, simply omit them
-- It's OK to return fewer profiles than people searched, or even an empty array
-- Many people (especially academics) don't have LinkedIn profiles
-
-Return a JSON array with ONLY profiles you found in search results:
-[
-  {{"name": "Person Name", "linkedin_url": "https://www.linkedin.com/in/actualusername", "title": "Their Title", "affiliation": "Their Organization", "confidence": "high|medium"}}
-]
-
-If no profiles found in search results, return: []
-
-Return ONLY the JSON array, no explanation.""",
-    )
-
-    # Indirect people prompt - finds key executives for organizations
-    # Placeholders: {organization_name}
-    INDIRECT_PEOPLE_PROMPT: str = _get_str(
-        "INDIRECT_PEOPLE_PROMPT",
-        """Search for CURRENT key contacts at "{organization_name}" relevant to this story context.
-
-STORY CONTEXT (use to prioritize leader types):
-Story Category: {story_category}
-Story Title: {story_title}
-
-IMPORTANT: Leadership positions change frequently. Use web search to find CURRENT information.
-Do NOT rely on potentially outdated training data.
-
-ORGANIZATION TYPE DETECTION:
-First, determine if this is a COMPANY or a UNIVERSITY/RESEARCH INSTITUTION.
-
-LEADER TYPE PRIORITIES BY STORY CATEGORY:
-
-FOR RESEARCH/SCIENCE/TECHNOLOGY STORIES:
-- Principal Investigator / Lead Researcher / Lab Director (HIGHEST PRIORITY)
-- Department Head / Chair of relevant department
-- CTO / Chief Science Officer / VP R&D
-- Dean of Engineering/Science (for universities)
-
-FOR BUSINESS/JOBS/HIRING STORIES:
-- Head of HR / Talent Acquisition Director / Chief People Officer (HIGHEST PRIORITY)
-- Recruitment Manager / University Careers Director
-- CEO / Managing Director (if directly quoted in story)
-
-FOR PR/ANNOUNCEMENTS/NEWS STORIES:
-- Head of Communications / PR Director / Media Relations (HIGHEST PRIORITY)
-- Corporate Communications Manager / Press Office
-- CEO / Founder (if announcement is about company direction)
-
-FOR GENERAL STORIES:
-- CEO / Managing Director / Founder (for companies)
-- Department Head / Dean (for universities)
-- CTO / VP Engineering (for tech-related)
-
-EXPANDED ROLE TYPES TO SEARCH:
-
-EXECUTIVE ROLES (C-suite):
-- CEO, CTO, CFO, COO, CSO (Chief Science Officer)
-- Managing Director, President, Founder, Owner
-- VP/SVP Engineering, Research, Technology, Operations
-
-HR/RECRUITMENT ROLES:
-- Chief People Officer, Head of HR, HR Director
-- Talent Acquisition Director/Manager, Recruiting Lead
-- University Careers/Placement Director
-
-PR/COMMUNICATIONS ROLES:
-- Chief Communications Officer, VP Communications
-- Director of Media Relations, Press Office Lead
-- Corporate Communications Manager
-
-ACADEMIC ROLES:
-- Department Chair/Head, Dean, Associate Dean
-- Principal Investigator, Lab Director
-- Director of Research, Research Group Leader
-
-SEARCH AND VERIFICATION RULES:
-1. Search for current information: "{organization_name} [role] 2025" or 2026
-2. For universities, search department-specific: "[university] [department] head"
-3. Only include leaders found in RECENT search results
-4. Verify the person is CURRENTLY in the role
-5. Include LOCATION if found (city, country) for LinkedIn matching
-6. When in doubt, OMIT — a missing leader is better than a wrong one
-7. Maximum 4 leaders per organization
-8. Include role_type for each leader: "executive", "academic", "hr_recruiter", "pr_comms", "researcher"
-9. Extract SPECIALTY if evident from their role or the story context
-
-SPECIALTY EXTRACTION:
-- Infer from their department (e.g., "Head of Catalysis" → specialty: "catalysis")
-- Infer from story topic if their role is directly related
-- Common specialties: process engineering, sustainability, R&D, catalysis, polymers,
-  separations, energy, materials, biotechnology, digitalization, etc.
-- For HR/PR roles, specialty is usually not applicable - leave blank
-
-Return a JSON object with enhanced fields:
-{{
-  "leaders": [
-    {{
-      "name": "Full Name",
-      "title": "Exact Title",
-      "organization": "{organization_name}",
-      "role_type": "executive|academic|hr_recruiter|pr_comms|researcher",
-      "department": "Department name if applicable",
-      "location": "City, Country if found",
-      "specialty": "Area of expertise if known"
-    }}
-  ]
-}}
-
-If no leaders can be VERIFIED with high confidence, return: {{"leaders": []}}
-
-Return ONLY valid JSON, no explanation.""",
-    )
-
-    # DEPRECATED - kept for backward compatibility
-    # Organization mention enrichment prompt - identifies organizations for professional mentions
-    # Placeholders: {story_title}, {story_summary}, {story_sources}
-    COMPANY_MENTION_PROMPT: str = _get_str(
-        "COMPANY_MENTION_PROMPT",
-        """Analyze this news story and identify if a specific organization is EXPLICITLY NAMED as the primary subject.
-
-STORY TITLE: {story_title}
-
-STORY SUMMARY: {story_summary}
-
-SOURCES: {story_sources}
-
-TASK: Determine if a specific, real organization is explicitly named and central to this story.
-
-WHAT COUNTS AS AN ORGANIZATION:
-- Companies (e.g., BASF, Shell, ExxonMobil)
-- Universities (e.g., MIT, UCLA, Stanford, Oklahoma State University)
-- Research institutions (e.g., Max Planck Institute, CSIRO)
-- Professional bodies (e.g., IChemE, AIChE, RSC)
-- Government agencies (e.g., EPA, DOE, NASA)
-- Industry associations
-
-RULES:
-1. Only identify organizations that are EXPLICITLY NAMED in the story (not inferred)
-2. The organization must be the PRIMARY subject of the story, not just mentioned
-3. Do NOT guess or infer organization names from context
-4. If multiple organizations are mentioned, choose the most prominent one
-5. If no specific organization is clearly the primary subject, respond with: NO_COMPANY_MENTION
-
-If an organization qualifies, respond with a single professional sentence like:
-"This development from [Organization Name] demonstrates their commitment to [area]."
-
-If no organization qualifies, respond with exactly: NO_COMPANY_MENTION
-
-Respond with ONLY the sentence or NO_COMPANY_MENTION, nothing else.""",
-    )
-
-    # Individual extraction prompt - identifies key people from stories
-    # Placeholders: {story_title}, {story_summary}, {company_context}
-    INDIVIDUAL_EXTRACTION_PROMPT: str = _get_str(
-        "INDIVIDUAL_EXTRACTION_PROMPT",
-        """Analyze this news story to identify key individuals.
-
-STORY TITLE: {story_title}
-
-STORY SUMMARY: {story_summary}
-
-{company_context}
-
-TASK: Identify key individuals associated with this story.
-
-LOOK FOR:
-1. Anyone EXPLICITLY NAMED in the story (researchers, executives, spokespersons, scientists, engineers)
-2. Authors or lead researchers on the work described
-3. Company executives if a company is involved (CEO, CTO, President, Founder, Owner)
-4. University professors or lab directors if academic research
-5. Government officials if regulatory/policy related
-
-RULES:
-1. Only include people who are REAL and can be verified
-2. Prioritize people mentioned in the story itself
-3. Include their job title/affiliation if known
-4. Maximum 5 individuals
-
-Return a JSON object with an array of individuals:
-{{
-  "individuals": [
-    {{"name": "Full Name", "title": "Job Title or Affiliation", "source": "mentioned_in_story" or "known_expert"}},
-    ...
-  ]
-}}
-
-If no individuals can be identified, return: {{"individuals": []}}
-
-Return ONLY valid JSON, no explanation.""",
-    )
-
-    # JSON repair prompt - attempts to fix malformed JSON from LLM responses
-    # Placeholder: {malformed_json}
-    JSON_REPAIR_PROMPT: str = _get_str(
-        "JSON_REPAIR_PROMPT",
-        """The following JSON is malformed. Please fix it and return ONLY the corrected JSON:
-
-{malformed_json}
-
-Return ONLY valid JSON, no explanation.""",
-    )
-
-    # --- Search Settings ---
-    SEARCH_PROMPT: str = _get_str(
-        "SEARCH_PROMPT",
-        (
-            f"I'm a professional {DISCIPLINE}. I'm looking for the latest professional {DISCIPLINE} "
-            "stories I can summarise for publication on my LinkedIn profile"
-        ),
-    )
-    # Optional template for the full search instruction prompt.
-    # Supports placeholders: {criteria}, {since_date}, {summary_words}
-    SEARCH_PROMPT_TEMPLATE: str = _get_str("SEARCH_PROMPT_TEMPLATE", "")
-    SEARCH_LOOKBACK_DAYS: int = _get_int("SEARCH_LOOKBACK_DAYS", 7)
-    USE_LAST_CHECKED_DATE: bool = _get_bool("USE_LAST_CHECKED_DATE", True)
-    # Search engine for LinkedIn profile lookups (google, bing, duckduckgo)
-    SEARCH_ENGINE: str = _get_str("SEARCH_ENGINE", "google").lower()
-    # Browser automation backend: "uc" (undetected-chromedriver) or "nodriver" (recommended)
-    # nodriver is the successor to undetected-chromedriver with better anti-detection
-    BROWSER_BACKEND: str = _get_str("BROWSER_BACKEND", "uc").lower()
-    # Skip direct LinkedIn search (to avoid LinkedIn rate limits)
-    SKIP_LINKEDIN_DIRECT_SEARCH: bool = _get_bool("SKIP_LINKEDIN_DIRECT_SEARCH", False)
-    # Maximum number of stories to find per search (default 5)
-    MAX_STORIES_PER_SEARCH: int = _get_int("MAX_STORIES_PER_SEARCH", 5)
-    # Maximum number of people to search for LinkedIn profiles per story (reduces API calls)
-    MAX_PEOPLE_PER_STORY: int = _get_int("MAX_PEOPLE_PER_STORY", 3)
-    # Similarity threshold for semantic deduplication (0.0-1.0, higher = stricter)
-    DEDUP_SIMILARITY_THRESHOLD: float = float(
-        _get_str("DEDUP_SIMILARITY_THRESHOLD", "0.7")
-    )
-    # Days to look back for all story deduplication (title matching)
-    DEDUP_ALL_STORIES_WINDOW_DAYS: int = _get_int("DEDUP_ALL_STORIES_WINDOW_DAYS", 90)
-    # Days to look back for published story deduplication (prevents similar content)
-    DEDUP_PUBLISHED_WINDOW_DAYS: int = _get_int("DEDUP_PUBLISHED_WINDOW_DAYS", 30)
-    # Number of retries for transient API failures
-    API_RETRY_COUNT: int = _get_int("API_RETRY_COUNT", 3)
-    # Base delay for exponential backoff (seconds)
-    API_RETRY_DELAY: float = float(_get_str("API_RETRY_DELAY", "2.0"))
-    # Default timeout for API calls (seconds)
-    API_TIMEOUT_DEFAULT: int = _get_int("API_TIMEOUT_DEFAULT", 30)
-    # Timeout for local LLM calls (seconds) - often need longer than cloud APIs
-    LLM_LOCAL_TIMEOUT: int = _get_int("LLM_LOCAL_TIMEOUT", 120)
-    # Enable URL validation before saving sources
-    VALIDATE_SOURCE_URLS: bool = _get_bool("VALIDATE_SOURCE_URLS", True)
-    # Enable story preview mode in test search
-    SEARCH_PREVIEW_MODE: bool = _get_bool("SEARCH_PREVIEW_MODE", True)
-    # Max results to fetch from DuckDuckGo search
-    DUCKDUCKGO_MAX_RESULTS: int = _get_int("DUCKDUCKGO_MAX_RESULTS", 10)
-    # Max output tokens for LLM responses
-    LLM_MAX_OUTPUT_TOKENS: int = _get_int("LLM_MAX_OUTPUT_TOKENS", 8192)
-
-    # --- Content Settings ---
-    SUMMARY_WORD_COUNT: int = _get_int("SUMMARY_WORD_COUNT", 250)
-    MIN_QUALITY_SCORE: int = _get_int("MIN_QUALITY_SCORE", 7)
-
-    # --- Quality Score Calibration ---
-    # These weights allow fine-tuning of the quality scoring system.
-    # Higher weights = more influence on final score. Set to 0 to disable a factor.
-    # The AI provides a base score (1-10), then these weights adjust it.
-    QUALITY_WEIGHT_RECENCY: float = _get_float(
-        "QUALITY_WEIGHT_RECENCY", 1.0
-    )  # Newer is better
-    QUALITY_WEIGHT_SOURCE: float = _get_float(
-        "QUALITY_WEIGHT_SOURCE", 1.0
-    )  # Reputable sources
-    QUALITY_WEIGHT_RELEVANCE: float = _get_float(
-        "QUALITY_WEIGHT_RELEVANCE", 1.0
-    )  # Topic match
-    QUALITY_WEIGHT_PEOPLE_MENTIONED: float = _get_float(
-        "QUALITY_WEIGHT_PEOPLE_MENTIONED", 0.5
-    )  # Named sources
-    QUALITY_WEIGHT_GEOGRAPHIC: float = _get_float(
-        "QUALITY_WEIGHT_GEOGRAPHIC", 0.5
-    )  # Priority regions
-    # Maximum bonus points from calibration (prevents inflation)
-    QUALITY_MAX_CALIBRATION_BONUS: int = _get_int("QUALITY_MAX_CALIBRATION_BONUS", 2)
-
-    # --- Originality Checking ---
-    # Maximum word similarity (0-1) before flagging as too similar to source
-    ORIGINALITY_MAX_SIMILARITY: float = _get_float("ORIGINALITY_MAX_SIMILARITY", 0.6)
-    # Maximum n-gram overlap (0-1) before flagging copied phrases
-    ORIGINALITY_MAX_NGRAM_OVERLAP: float = _get_float(
-        "ORIGINALITY_MAX_NGRAM_OVERLAP", 0.4
-    )
-    # Enable/disable originality checking during verification
-    ORIGINALITY_CHECK_ENABLED: bool = _get_bool("ORIGINALITY_CHECK_ENABLED", True)
-
-    # --- Source Verification ---
-    # Minimum number of sources required for a story
-    MIN_SOURCES_REQUIRED: int = _get_int("MIN_SOURCES_REQUIRED", 1)
-    # Minimum average credibility score (0-1) for sources
-    MIN_SOURCE_CREDIBILITY: float = _get_float("MIN_SOURCE_CREDIBILITY", 0.3)
-    # Require at least one tier 1 or tier 2 source
-    REQUIRE_TIER1_OR_2_SOURCE: bool = _get_bool("REQUIRE_TIER1_OR_2_SOURCE", False)
-    # Enable/disable source verification during content verification
-    SOURCE_VERIFICATION_ENABLED: bool = _get_bool("SOURCE_VERIFICATION_ENABLED", True)
-
-    # --- URL Archiving ---
-    # Automatically archive source URLs to Wayback Machine to prevent link rot
-    ARCHIVE_SOURCE_URLS: bool = _get_bool("ARCHIVE_SOURCE_URLS", False)
-
-    # --- Publication Settings ---
-    MAX_STORIES_PER_DAY: int = _get_int("MAX_STORIES_PER_DAY", 4)
-    START_PUB_TIME: str = _get_str("START_PUB_TIME", "08:00")
-    END_PUB_TIME: str = _get_str("END_PUB_TIME", "20:00")
-    JITTER_MINUTES: int = _get_int("JITTER_MINUTES", 30)
-    # Include "open to opportunities" postscript in LinkedIn posts
-    INCLUDE_OPPORTUNITY_MESSAGE: bool = _get_bool("INCLUDE_OPPORTUNITY_MESSAGE", True)
-
-    # --- LinkedIn Post Thresholds ---
-    # Character count thresholds for post warnings
-    LINKEDIN_POST_MIN_CHARS: int = _get_int("LINKEDIN_POST_MIN_CHARS", 100)
-    LINKEDIN_POST_OPTIMAL_CHARS: int = _get_int("LINKEDIN_POST_OPTIMAL_CHARS", 1500)
-    LINKEDIN_POST_MAX_CHARS: int = _get_int("LINKEDIN_POST_MAX_CHARS", 3000)
-    # Hashtag recommendations
-    LINKEDIN_MAX_HASHTAGS: int = _get_int("LINKEDIN_MAX_HASHTAGS", 5)
-
-    @classmethod
-    def get_pub_start_hour(cls) -> int:
-        """Parse START_PUB_TIME and return hour."""
-        try:
-            return int(cls.START_PUB_TIME.split(":")[0])
-        except (ValueError, IndexError):
-            return 8
-
-    @classmethod
-    def get_pub_end_hour(cls) -> int:
-        """Parse END_PUB_TIME and return hour."""
-        try:
-            return int(cls.END_PUB_TIME.split(":")[0])
-        except (ValueError, IndexError):
-            return 20
-
-    # --- Cleanup Settings ---
-    EXCLUSION_PERIOD_DAYS: int = _get_int("EXCLUSION_PERIOD_DAYS", 30)
-    # Days after which stories are too old for image regeneration
-    IMAGE_REGEN_CUTOFF_DAYS: int = _get_int("IMAGE_REGEN_CUTOFF_DAYS", 14)
-
-    # --- Signature Details ---
-    SIGNATURE_BLOCK_DETAIL: str = _get_str("SIGNATURE_BLOCK_DETAIL", "")
-
-    # --- Paths ---
-    DB_NAME: str = _get_str("DB_NAME", "content_engine.db")
-    IMAGE_DIR: str = _get_str("IMAGE_DIR", "generated_images")
-
-    # --- Cycle Timing ---
-    SEARCH_CYCLE_HOURS: int = _get_int("SEARCH_CYCLE_HOURS", 24)
-    PUBLISHER_CHECK_INTERVAL_SECONDS: int = _get_int(
-        "PUBLISHER_CHECK_INTERVAL_SECONDS", 60
-    )
-
-    @classmethod
-    def validate(cls) -> list[str]:
-        """
-        Validate that required configuration is present.
-
-        NOTE: Pydantic validation already runs at import time for type/range checks.
-        This method provides additional runtime validation for required fields
-        that may be empty strings (valid for Pydantic but not for actual use).
-
-        Returns a list of error messages (empty if valid).
-        """
-        errors: list[str] = []
-
-        # Check required API keys (may be empty strings which pass Pydantic)
-        if not cls.GEMINI_API_KEY:
-            errors.append("GEMINI_API_KEY is required")
-
-        if not cls.LINKEDIN_ACCESS_TOKEN:
-            errors.append("LINKEDIN_ACCESS_TOKEN is required for publishing")
-
-        if not cls.LINKEDIN_AUTHOR_URN:
-            errors.append("LINKEDIN_AUTHOR_URN is required for publishing")
-
-        # Time range validation (already validated by Pydantic, but kept for compatibility)
-        if cls.get_pub_start_hour() >= cls.get_pub_end_hour():
-            errors.append("START_PUB_TIME must be before END_PUB_TIME")
-
-        # Range validation (already validated by Pydantic, but kept for compatibility)
-        if cls.MAX_STORIES_PER_DAY < 1:
-            errors.append("MAX_STORIES_PER_DAY must be at least 1")
-
-        if cls.SUMMARY_WORD_COUNT < 50:
-            errors.append("SUMMARY_WORD_COUNT should be at least 50")
-
-        return errors
+    # Direct access to the validated Pydantic settings model
+    _settings: SettingsModel = _settings
 
     @classmethod
     def get_settings(cls) -> SettingsModel:
-        """Get the underlying Pydantic settings model for advanced access."""
-        return cls._pydantic_settings
+        """Get the underlying Pydantic settings model."""
+        return _settings
+
+    @classmethod
+    def validate(cls) -> list[str]:
+        """Validate configuration. Returns list of error messages (empty if valid)."""
+        # Pydantic validates at load time, so if we got here, config is valid
+        return []
+
+    @classmethod
+    def get_pub_start_hour(cls) -> int:
+        """Get the publishing window start hour."""
+        return int(_settings.start_pub_time.split(":")[0])
+
+    @classmethod
+    def get_pub_end_hour(cls) -> int:
+        """Get the publishing window end hour."""
+        return int(_settings.end_pub_time.split(":")[0])
 
     @classmethod
     def ensure_directories(cls) -> None:
         """Ensure required directories exist."""
-        Path(cls.IMAGE_DIR).mkdir(parents=True, exist_ok=True)
+        Path(_settings.image_dir).mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def print_config(cls) -> None:
         """Print current configuration (masking sensitive values)."""
+        s = _settings
         print("=== Social Media Publisher Configuration ===")
-        print(f"  GEMINI_API_KEY: {'*' * 8 if cls.GEMINI_API_KEY else 'NOT SET'}")
+        print(f"  GEMINI_API_KEY: {'*' * 8 if s.gemini_api_key else 'NOT SET'}")
         print(
-            f"  HUGGINGFACE_API_TOKEN: {'*' * 8 if cls.HUGGINGFACE_API_TOKEN else 'NOT SET'}"
+            f"  HUGGINGFACE_API_TOKEN: {'*' * 8 if s.huggingface_api_token else 'NOT SET'}"
         )
         print(
-            f"  LINKEDIN_ACCESS_TOKEN: {'*' * 8 if cls.LINKEDIN_ACCESS_TOKEN else 'NOT SET'}"
+            f"  LINKEDIN_ACCESS_TOKEN: {'*' * 8 if s.linkedin_access_token else 'NOT SET'}"
         )
-        print(f"  LINKEDIN_AUTHOR_URN: {cls.LINKEDIN_AUTHOR_URN or 'NOT SET'}")
-        print(f"  MODEL_TEXT: {cls.MODEL_TEXT}")
-        print(f"  MODEL_IMAGE: {cls.MODEL_IMAGE}")
-        if cls.HUGGINGFACE_API_TOKEN:
+        print(f"  LINKEDIN_AUTHOR_URN: {s.linkedin_author_urn or 'NOT SET'}")
+        print(f"  LINKEDIN_SEARCH_ENABLED: {s.linkedin_search_enabled}")
+        print(f"  MODEL_TEXT: {s.model_text}")
+        print(f"  MODEL_IMAGE: {s.model_image}")
+        if s.huggingface_api_token:
             print(
-                f"  HF_TTI_MODEL: {cls.HF_TTI_MODEL} (prefer={cls.HF_PREFER_IF_CONFIGURED})"
+                f"  HF_TTI_MODEL: {s.hf_tti_model} (prefer={s.hf_prefer_if_configured})"
             )
-        print(f"  SEARCH_PROMPT: {cls.SEARCH_PROMPT[:50]}...")
-        if cls.SEARCH_PROMPT_TEMPLATE:
+        print(f"  SEARCH_PROMPT: {s.search_prompt[:50]}...")
+        if s.search_prompt_template:
             print("  SEARCH_PROMPT_TEMPLATE: custom (from .env)")
-        print(f"  SEARCH_LOOKBACK_DAYS: {cls.SEARCH_LOOKBACK_DAYS}")
-        print(f"  USE_LAST_CHECKED_DATE: {cls.USE_LAST_CHECKED_DATE}")
-        print(f"  MAX_STORIES_PER_SEARCH: {cls.MAX_STORIES_PER_SEARCH}")
-        print(f"  DEDUP_SIMILARITY_THRESHOLD: {cls.DEDUP_SIMILARITY_THRESHOLD}")
-        print(f"  API_RETRY_COUNT: {cls.API_RETRY_COUNT}")
-        print(f"  VALIDATE_SOURCE_URLS: {cls.VALIDATE_SOURCE_URLS}")
-        print(f"  SEARCH_PREVIEW_MODE: {cls.SEARCH_PREVIEW_MODE}")
-        print(f"  SUMMARY_WORD_COUNT: {cls.SUMMARY_WORD_COUNT}")
-        print(f"  MIN_QUALITY_SCORE: {cls.MIN_QUALITY_SCORE}")
-        print(f"  MAX_STORIES_PER_DAY: {cls.MAX_STORIES_PER_DAY}")
-        print(f"  START_PUB_TIME: {cls.START_PUB_TIME}")
-        print(f"  END_PUB_TIME: {cls.END_PUB_TIME}")
-        print(f"  JITTER_MINUTES: {cls.JITTER_MINUTES}")
-        print(f"  EXCLUSION_PERIOD_DAYS: {cls.EXCLUSION_PERIOD_DAYS}")
-        print(f"  DB_NAME: {cls.DB_NAME}")
-        print(f"  IMAGE_DIR: {cls.IMAGE_DIR}")
+        print(f"  SEARCH_LOOKBACK_DAYS: {s.search_lookback_days}")
+        print(f"  USE_LAST_CHECKED_DATE: {s.use_last_checked_date}")
+        print(f"  MAX_STORIES_PER_SEARCH: {s.max_stories_per_search}")
+        print(f"  DEDUP_SIMILARITY_THRESHOLD: {s.dedup_similarity_threshold}")
+        print(f"  API_RETRY_COUNT: {s.api_retry_count}")
+        print(f"  VALIDATE_SOURCE_URLS: {s.validate_source_urls}")
+        print(f"  SEARCH_PREVIEW_MODE: {s.search_preview_mode}")
+        print(f"  SUMMARY_WORD_COUNT: {s.summary_word_count}")
+        print(f"  MIN_QUALITY_SCORE: {s.min_quality_score}")
+        print(f"  MAX_STORIES_PER_DAY: {s.max_stories_per_day}")
+        print(f"  START_PUB_TIME: {s.start_pub_time}")
+        print(f"  END_PUB_TIME: {s.end_pub_time}")
+        print(f"  JITTER_MINUTES: {s.jitter_minutes}")
+        print(f"  EXCLUSION_PERIOD_DAYS: {s.exclusion_period_days}")
+        print(f"  DB_NAME: {s.db_name}")
+        print(f"  IMAGE_DIR: {s.image_dir}")
         print("=============================================")
 
 
-# ============================================================================
-# Unit Tests
-# ============================================================================
 def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     """Create unit tests for config module."""
     from test_framework import TestSuite
 
     suite = TestSuite("Config Tests")
-
-    def test_get_int_valid():
-        result = _get_int("NONEXISTENT_VAR_12345", 42)
-        assert result == 42, f"Expected 42, got {result}"
-
-    def test_get_bool_default():
-        result = _get_bool("NONEXISTENT_VAR_12345", True)
-        assert result is True, f"Expected True, got {result}"
-
-    def test_get_str_default():
-        result = _get_str("NONEXISTENT_VAR_12345", "default")
-        assert result == "default", f"Expected 'default', got {result}"
-
-    def test_get_float_default():
-        result = _get_float("NONEXISTENT_VAR_12345", 3.14)
-        assert result == 3.14, f"Expected 3.14, got {result}"
 
     def test_config_defaults():
         assert Config.SUMMARY_WORD_COUNT >= 50
@@ -1770,10 +679,6 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert 0 <= end_hour <= 23
         assert start_hour < end_hour
 
-    suite.add_test("_get_int with default", test_get_int_valid)
-    suite.add_test("_get_bool with default", test_get_bool_default)
-    suite.add_test("_get_str with default", test_get_str_default)
-    suite.add_test("_get_float with default", test_get_float_default)
     suite.add_test("Config defaults", test_config_defaults)
     suite.add_test("Config validate", test_config_validate)
     suite.add_test("Config ensure directories", test_config_ensure_directories)

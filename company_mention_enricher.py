@@ -2117,6 +2117,12 @@ If nothing found, return: {{"organizations": [], "direct_people": []}}
 
 Return ONLY valid JSON, no explanation."""
 
+        # If PREFER_GROQ is set, skip Gemini Google Search grounding and use fallback directly
+        # This avoids 429 rate limit errors when Gemini quota is exhausted
+        if Config.get_settings().prefer_groq:
+            logger.debug("Skipping Gemini Google Search grounding (PREFER_GROQ=true)")
+            return self._extract_orgs_and_people_fallback(story)
+
         try:
             # Use Gemini with Google Search grounding to fetch source content
             response = api_client.gemini_generate(
@@ -2131,7 +2137,7 @@ Return ONLY valid JSON, no explanation."""
             )
 
             if not response.text:
-                logger.warning("Empty response from source article extraction")
+                logger.debug("Empty response from source article extraction")
                 # Fall back to non-grounded extraction
                 return self._extract_orgs_and_people_fallback(story)
 
@@ -2155,10 +2161,14 @@ Return ONLY valid JSON, no explanation."""
             }
 
         except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse enrichment JSON: {e}")
+            logger.debug(f"Failed to parse enrichment JSON: {e}")
             return self._extract_orgs_and_people_fallback(story)
         except Exception as e:
-            logger.error(f"Error extracting orgs/people with search: {e}")
+            # Handle rate limiting gracefully
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                logger.debug("Gemini rate-limited, using fallback extraction")
+            else:
+                logger.warning(f"Error extracting orgs/people with search: {e}")
             return self._extract_orgs_and_people_fallback(story)
 
     def _extract_orgs_and_people_fallback(self, story: Story) -> dict | None:
@@ -2174,25 +2184,50 @@ Return ONLY valid JSON, no explanation."""
             story_sources=sources_str,
         )
 
+        # Validate prompt is not empty
+        if not prompt or not prompt.strip():
+            logger.warning(
+                "STORY_ENRICHMENT_PROMPT is empty, cannot extract orgs/people"
+            )
+            return None
+
         try:
             response_text = self._get_ai_response(prompt)
             if not response_text:
+                logger.debug("Empty response from AI for org/people extraction")
                 return None
 
             # Clean up response - sometimes AI adds markdown code blocks
             response_text = strip_markdown_code_block(response_text)
 
+            # Try to extract JSON from verbose responses
+            if not response_text.strip().startswith("{"):
+                # Look for JSON object in response
+                json_match = re.search(
+                    r'\{[^{}]*"organizations"[^{}]*\}', response_text, re.DOTALL
+                )
+                if json_match:
+                    response_text = json_match.group(0)
+
             data = json.loads(response_text)
+            orgs = data.get("organizations", [])
+            people = data.get("direct_people", [])
+
+            if orgs or people:
+                logger.info(
+                    f"  Fallback extracted: {len(orgs)} orgs, {len(people)} people"
+                )
+
             return {
-                "organizations": data.get("organizations", []),
-                "direct_people": data.get("direct_people", []),
+                "organizations": orgs,
+                "direct_people": people,
             }
 
         except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse enrichment JSON (fallback): {e}")
+            logger.debug(f"Failed to parse enrichment JSON (fallback): {e}")
             return None
         except Exception as e:
-            logger.error(f"Error extracting orgs/people (fallback): {e}")
+            logger.debug(f"Error extracting orgs/people (fallback): {e}")
             return None
 
     def find_indirect_people(self) -> tuple[int, int]:
@@ -2403,13 +2438,31 @@ Return ONLY valid JSON, no explanation."""
             story_title=story_title or "N/A",
         )
 
+        response_text: str | None = None
         try:
             response_text = self._get_ai_response(prompt)
             if not response_text:
+                logger.debug(
+                    f"Empty response for indirect people lookup: {organization_name}"
+                )
                 return []
 
             # Clean up response
             response_text = strip_markdown_code_block(response_text)
+
+            # Try to extract JSON from response if it contains extra text
+            if not response_text.strip().startswith("{"):
+                # Look for JSON object in the response
+                json_match = re.search(
+                    r'\{[^{}]*"leaders"[^{}]*\[.*?\]\s*\}', response_text, re.DOTALL
+                )
+                if json_match:
+                    response_text = json_match.group(0)
+                else:
+                    logger.debug(
+                        f"No valid JSON found in response: {response_text[:200]}"
+                    )
+                    return []
 
             data = json.loads(response_text)
             leaders = data.get("leaders", [])
@@ -2441,7 +2494,9 @@ Return ONLY valid JSON, no explanation."""
             return validated_leaders
 
         except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse leaders JSON: {e}")
+            logger.warning(
+                f"Failed to parse leaders JSON: {e}. Response: {response_text[:100] if response_text else 'empty'}"
+            )
             return []
         except Exception as e:
             logger.error(f"Error getting indirect people: {e}")
@@ -3117,7 +3172,17 @@ Return ONLY valid JSON, no explanation."""
         return stories
 
     def _get_ai_response(self, prompt: str) -> str | None:
-        """Get response from AI (local LLM or Gemini)."""
+        """Get response from AI (local LLM -> Groq -> Gemini).
+
+        Stops at Groq if successful to avoid Gemini rate limits.
+        Only falls back to Gemini if both Local LLM and Groq fail.
+        """
+        # Validate prompt is not empty
+        if not prompt or not prompt.strip():
+            logger.warning("Empty prompt passed to _get_ai_response")
+            return None
+
+        # Try local LLM first
         if self.local_client:
             try:
                 content = api_client.local_llm_generate(
@@ -3128,16 +3193,49 @@ Return ONLY valid JSON, no explanation."""
                 if content:
                     return content.strip()
             except Exception as e:
-                logger.warning(f"Local AI failed: {e}. Falling back to Gemini.")
+                if "No models loaded" in str(e):
+                    logger.debug("Local LLM has no model loaded, using Groq...")
+                else:
+                    logger.warning(f"Local AI failed: {e}. Trying Groq...")
 
-        # Fallback to Gemini
-        response = api_client.gemini_generate(
-            client=self.client,
-            model=Config.MODEL_TEXT,
-            contents=prompt,
-            endpoint="ai_response",
-        )
-        return response.text.strip() if response.text else None
+        # Try Groq as preferred fallback (free, fast) - STOP HERE if successful
+        groq_client = api_client.get_groq_client()
+        if groq_client:
+            try:
+                content = api_client.groq_generate(
+                    client=groq_client,
+                    messages=[{"role": "user", "content": prompt}],
+                    endpoint="ai_response",
+                )
+                if content:
+                    return content.strip()
+                else:
+                    logger.debug("Groq returned empty response")
+            except Exception as e:
+                logger.warning(f"Groq failed: {e}")
+
+        # Only fall back to Gemini if both Local LLM and Groq failed
+        # Check if Gemini is rate-limited before trying
+        if Config.get_settings().prefer_groq:
+            logger.debug(
+                "Skipping Gemini fallback (PREFER_GROQ=true and Groq available)"
+            )
+            return None
+
+        try:
+            response = api_client.gemini_generate(
+                client=self.client,
+                model=Config.MODEL_TEXT,
+                contents=prompt,
+                endpoint="ai_response",
+            )
+            return response.text.strip() if response.text else None
+        except Exception as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                logger.debug("Gemini rate-limited, returning None")
+            else:
+                logger.warning(f"Gemini fallback failed: {e}")
+            return None
 
     def _enrich_story(self, story: Story) -> tuple[str, str]:
         """
@@ -3169,11 +3267,13 @@ Return ONLY valid JSON, no explanation."""
     def _get_company_mention(self, prompt: str) -> str:
         """Get company mention from AI model.
         Returns the mention text or NO_COMPANY_MENTION.
+
+        Stops at Groq if successful to avoid Gemini rate limits.
         """
         # Use local LLM if available
         if self.local_client:
             try:
-                logger.info("Using local LLM for company mention enrichment...")
+                logger.debug("Using local LLM for company mention enrichment...")
                 content = api_client.local_llm_generate(
                     client=self.local_client,
                     messages=[{"role": "user", "content": prompt}],
@@ -3182,19 +3282,47 @@ Return ONLY valid JSON, no explanation."""
                 if content:
                     return content.strip()
             except Exception as e:
-                logger.warning(f"Local enrichment failed: {e}. Falling back to Gemini.")
+                if "No models loaded" in str(e):
+                    logger.debug("Local LLM has no model loaded, using Groq...")
+                else:
+                    logger.warning(f"Local enrichment failed: {e}. Trying Groq...")
 
-        # Fallback to Gemini
-        response = api_client.gemini_generate(
-            client=self.client,
-            model=Config.MODEL_TEXT,
-            contents=prompt,
-            endpoint="company_mention",
-        )
-        if not response.text:
-            logger.warning("Empty response from Gemini during enrichment")
+        # Try Groq as preferred fallback (free, fast) - STOP HERE if successful
+        groq_client = api_client.get_groq_client()
+        if groq_client:
+            try:
+                logger.debug("Using Groq for company mention enrichment...")
+                content = api_client.groq_generate(
+                    client=groq_client,
+                    messages=[{"role": "user", "content": prompt}],
+                    endpoint="company_mention",
+                )
+                if content:
+                    return content.strip()
+            except Exception as e:
+                logger.warning(f"Groq enrichment failed: {e}")
+
+        # Only fall back to Gemini if both Local LLM and Groq failed
+        if Config.get_settings().prefer_groq:
+            logger.debug("Skipping Gemini fallback for company mention")
             return NO_COMPANY_MENTION
-        return response.text.strip()
+
+        try:
+            response = api_client.gemini_generate(
+                client=self.client,
+                model=Config.MODEL_TEXT,
+                contents=prompt,
+                endpoint="company_mention",
+            )
+            if not response.text:
+                return NO_COMPANY_MENTION
+            return response.text.strip()
+        except Exception as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                logger.debug("Gemini rate-limited for company mention")
+            else:
+                logger.warning(f"Gemini enrichment failed: {e}")
+            return NO_COMPANY_MENTION
 
     def _build_enrichment_prompt(self, story: Story) -> str:
         """Build the enrichment prompt for a story."""

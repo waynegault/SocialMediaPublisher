@@ -138,6 +138,14 @@ Copy `.env.example` to `.env` and configure the following:
 | `LINKEDIN_ACCESS_TOKEN` | OAuth token from [LinkedIn Developer](https://developer.linkedin.com/) |
 | `LINKEDIN_AUTHOR_URN` | Your LinkedIn URN (e.g., `urn:li:person:ABC123`) |
 
+### LinkedIn Search & Connection (Master Switch)
+
+⚠️ **WARNING**: LinkedIn actively detects automation and may restrict or ban accounts.
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `LINKEDIN_SEARCH_ENABLED` | `false` | Master switch for LinkedIn profile searching and connection requests. Set to `true` only if you accept the risk of account restrictions. When `false`, all LinkedIn profile lookups and connection features are disabled. |
+
 ### Optional: Hugging Face Image Generation
 
 If you have a Hugging Face token, the app can generate images via the Inference API. When a token is configured, the app will prefer Hugging Face for image generation.

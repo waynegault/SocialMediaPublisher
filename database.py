@@ -1600,16 +1600,19 @@ class Database:
         Returns:
             True if restore succeeded
         """
-        if backup_path is None:
-            backup_path = self.db_name + ".backup"
+        resolved_path: str = (
+            backup_path if backup_path is not None else self.db_name + ".backup"
+        )
 
-        if not Path(backup_path).exists():
-            logger.error(f"Backup file not found: {backup_path}")
+        # Type narrowing: resolved_path is now guaranteed to be str
+        backup_file = Path(resolved_path)
+        if not backup_file.exists():
+            logger.error(f"Backup file not found: {resolved_path}")
             return False
 
         try:
-            shutil.copy2(backup_path, self.db_name)
-            logger.info(f"Restored database from: {backup_path}")
+            shutil.copy2(backup_file, self.db_name)
+            logger.info(f"Restored database from: {resolved_path}")
             return True
         except Exception as e:
             logger.error(f"Failed to restore from backup: {e}")

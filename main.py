@@ -330,45 +330,71 @@ GOOD EXAMPLES (direct job-seeking with clear CTA):
 
 OUTPUT: Write ONLY the promotion message, nothing else."""
 
-            try:
-                response = api_client.gemini_generate(
-                    client=self.genai_client,
-                    model="gemini-2.0-flash",
-                    contents=prompt,
-                    endpoint="promotion_message",
-                )
-                if response.text:
-                    promotion = response.text.strip().strip('"').strip("'")
-                else:
-                    promotion = random.choice(style_examples)
+            promotion = None
 
-                # Ensure signature detail is woven in when provided
-                if (
-                    signature_detail
-                    and signature_detail.lower() not in promotion.lower()
-                ):
-                    promotion = (
-                        f"As a {signature_detail}, {promotion[0].lower()}{promotion[1:]}"
-                        if promotion
-                        else f"As a {signature_detail}, actively seeking opportunities."
+            # Try Local LLM first if available
+            if hasattr(self, "local_client") and self.local_client:
+                try:
+                    content = api_client.local_llm_generate(
+                        client=self.local_client,
+                        messages=[{"role": "user", "content": prompt}],
+                        endpoint="promotion_message",
                     )
+                    if content:
+                        promotion = content.strip().strip('"').strip("'")
+                except Exception as e:
+                    if "No models loaded" in str(e):
+                        logger.debug("Local LLM has no model loaded, using Groq...")
+                    else:
+                        logger.warning(
+                            f"Local LLM failed for promotion: {e}. Trying Groq..."
+                        )
 
-                if len(promotion) > 300:
-                    promotion = promotion[:297] + "..."
+            # Fallback to Groq (free, fast)
+            if not promotion:
+                groq_client = api_client.get_groq_client()
+                if groq_client:
+                    try:
+                        content = api_client.groq_generate(
+                            client=groq_client,
+                            messages=[{"role": "user", "content": prompt}],
+                            endpoint="promotion_message",
+                        )
+                        if content:
+                            promotion = content.strip().strip('"').strip("'")
+                    except Exception as e:
+                        logger.warning(
+                            f"Groq failed for promotion: {e}. Falling back to Gemini..."
+                        )
 
-            except Exception as e:
-                logger.warning(f"AI generation failed for story {story_id}: {e}")
+            # Final fallback to Gemini
+            if not promotion:
+                try:
+                    response = api_client.gemini_generate(
+                        client=self.genai_client,
+                        model="gemini-2.0-flash",
+                        contents=prompt,
+                        endpoint="promotion_message",
+                    )
+                    if response.text:
+                        promotion = response.text.strip().strip('"').strip("'")
+                except Exception as e:
+                    logger.warning(f"Gemini failed for story {story_id}: {e}")
+
+            # Use fallback if all LLMs failed
+            if not promotion:
                 promotion = random.choice(style_examples)
 
-                if (
-                    signature_detail
-                    and signature_detail.lower() not in promotion.lower()
-                ):
-                    promotion = (
-                        f"As a {signature_detail}, {promotion[0].lower()}{promotion[1:]}"
-                        if promotion
-                        else f"As a {signature_detail}, actively seeking opportunities."
-                    )
+            # Ensure signature detail is woven in when provided
+            if signature_detail and signature_detail.lower() not in promotion.lower():
+                promotion = (
+                    f"As a {signature_detail}, {promotion[0].lower()}{promotion[1:]}"
+                    if promotion
+                    else f"As a {signature_detail}, actively seeking opportunities."
+                )
+
+            if len(promotion) > 300:
+                promotion = promotion[:297] + "..."
 
             self.db.update_story_promotion(story_id, promotion)
 
@@ -535,6 +561,7 @@ Social Media Publisher - Debug Menu
   Connection Management:
    40. Process Connection Queue (send queued requests)
    41. View Connection Tracking Dashboard
+   42. Clear LinkedIn Profile Cache (retry failed lookups)
 
    0. Exit
 ============================================================
@@ -542,12 +569,12 @@ Social Media Publisher - Debug Menu
     import subprocess
 
     while True:
-        # Use subprocess to call cls - this ensures a fresh terminal state
-        subprocess.call("cls", shell=True)
-        # Print menu using standard print
-        print(menu_text)
-
         try:
+            # Use subprocess to call cls - this ensures a fresh terminal state
+            subprocess.call("cls", shell=True)
+            # Print menu using standard print
+            print(menu_text)
+
             choice = input("Enter choice: ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting...")
@@ -642,6 +669,8 @@ Social Media Publisher - Debug Menu
             _process_connection_queue(engine)
         elif choice == "41":
             _view_connection_dashboard(engine)
+        elif choice == "42":
+            _clear_linkedin_profile_cache()
         else:
             print("Invalid choice. Please try again.")
 
@@ -671,7 +700,17 @@ def _test_search(engine: ContentEngine) -> None:
     5. Offer connection requests
     """
     print("\n--- Story Search, Enrichment & Promotions ---")
-    print(f"Search prompt: {Config.SEARCH_PROMPT[:80]}...")
+
+    # Warn if LinkedIn features are disabled
+    if not Config.LINKEDIN_SEARCH_ENABLED:
+        print("⚠️  LinkedIn search/connect DISABLED (LINKEDIN_SEARCH_ENABLED=false)")
+        print(
+            "   LinkedIn profiles will NOT be looked up. Set LINKEDIN_SEARCH_ENABLED=true in .env to enable.\n"
+        )
+
+    # Display search prompt with {discipline} substituted
+    display_prompt = Config.SEARCH_PROMPT.format(discipline=Config.DISCIPLINE)
+    print(f"Search prompt: {display_prompt[:80]}...")
     print(f"Lookback days: {Config.SEARCH_LOOKBACK_DAYS}")
     print(f"Use last checked date: {Config.USE_LAST_CHECKED_DATE}")
     print(f"Max stories per search: {Config.MAX_STORIES_PER_SEARCH}")
@@ -2477,6 +2516,13 @@ def _human_validation(engine: ContentEngine) -> None:
 def _test_linkedin_connection(engine: ContentEngine) -> None:
     """Test LinkedIn API connection."""
     print("\n--- Testing LinkedIn Connection ---")
+
+    # Warn if LinkedIn search/connect is disabled
+    if not Config.LINKEDIN_SEARCH_ENABLED:
+        print("⚠️  LinkedIn search/connect DISABLED (LINKEDIN_SEARCH_ENABLED=false)")
+        print("   Profile searches and connection requests are blocked.")
+        print("   Set LINKEDIN_SEARCH_ENABLED=true in .env to enable.\n")
+
     print(f"Author URN: {Config.LINKEDIN_AUTHOR_URN or 'NOT SET'}")
     print(f"Access Token: {'SET' if Config.LINKEDIN_ACCESS_TOKEN else 'NOT SET'}")
 
@@ -2510,6 +2556,10 @@ def _offer_connection_requests(engine: ContentEngine) -> None:
     """Offer to send LinkedIn connection requests to people found in stories using browser automation."""
     from config import Config
     from database import Person
+
+    # === Master switch check ===
+    if not Config.LINKEDIN_SEARCH_ENABLED:
+        return  # LinkedIn features disabled, skip silently
 
     # Get unique people with LinkedIn profiles who haven't been connected yet
     people_needing_connection = engine.db.get_people_needing_connection()
@@ -2885,6 +2935,13 @@ def _process_connection_queue(engine: ContentEngine) -> None:
     import random
 
     print("\n--- Process Connection Queue ---")
+
+    # Check master switch
+    if not Config.LINKEDIN_SEARCH_ENABLED:
+        print("⚠️  LinkedIn search/connect DISABLED (LINKEDIN_SEARCH_ENABLED=false)")
+        print("   Connection requests are blocked to protect your account.")
+        print("   Set LINKEDIN_SEARCH_ENABLED=true in .env to enable.")
+        return
 
     # Get queue stats
     stats = engine.db.get_queue_stats()
@@ -4440,6 +4497,59 @@ def _test_notifications(engine: ContentEngine) -> None:
         logger.exception("Notification test failed")
 
 
+def _clear_linkedin_profile_cache() -> None:
+    """Clear LinkedIn profile cache to allow re-searching for failed lookups."""
+    print("\n--- CLEAR LINKEDIN PROFILE CACHE ---")
+    print("\nThis will clear cached 'not found' results, allowing the system to")
+    print("retry profile lookups that previously failed.\n")
+
+    print("Options:")
+    print("  1. Clear cache only (next search will retry lookups)")
+    print("  2. Clear cache AND reset stories for re-enrichment")
+    print("  0. Cancel")
+
+    choice = input("\nChoice: ").strip()
+    if choice == "0":
+        print("Cancelled.")
+        return
+
+    try:
+        from cache import get_linkedin_cache
+
+        linkedin_cache = get_linkedin_cache()
+        linkedin_cache.clear_person_cache()
+        print("\n✓ LinkedIn profile cache cleared!")
+
+        if choice == "2":
+            # Also reset enrichment status of stories with missing profiles
+            from database import Database
+
+            db = Database()
+            with db._get_connection() as conn:
+                cursor = conn.cursor()
+                # Find stories where people have no LinkedIn profiles and reset their status
+                cursor.execute("""
+                    UPDATE stories
+                    SET enrichment_status = 'pending'
+                    WHERE enrichment_status = 'enriched'
+                    AND (
+                        -- Has direct people without profiles
+                        (direct_people IS NOT NULL AND direct_people != '[]' AND direct_people != '')
+                        OR
+                        -- Has indirect people without profiles
+                        (indirect_people IS NOT NULL AND indirect_people != '[]' AND indirect_people != '')
+                    )
+                """)
+                count = cursor.rowcount
+                conn.commit()
+                print(f"✓ Reset {count} stories to 'pending' for re-enrichment")
+
+        print("\nNext time you run option 16 (Search, Enrich & Assign Promotions),")
+        print("the system will re-search for LinkedIn profiles.")
+    except Exception as e:
+        print(f"\n❌ Error clearing cache: {e}")
+
+
 def _reset_all(engine: ContentEngine) -> None:
     """Reset everything: delete database, all generated images, and all caches."""
     print("\n--- RESET ALL DATA ---")
@@ -4539,6 +4649,17 @@ def _reset_all(engine: ContentEngine) -> None:
 
 def _configure_linkedin_voyager() -> None:
     """Configure LinkedIn Voyager API cookies for reliable profile lookups."""
+    # Check if LinkedIn search is enabled
+    if not Config.LINKEDIN_SEARCH_ENABLED:
+        print("\n" + "=" * 70)
+        print("⚠️  LINKEDIN SEARCH DISABLED")
+        print("=" * 70)
+        print("\nLinkedIn profile searching is currently disabled.")
+        print("Set LINKEDIN_SEARCH_ENABLED=true in .env to enable this feature.")
+        print("\nWARNING: LinkedIn actively detects automation and may restrict")
+        print("or ban accounts. Only enable if you accept the risk.")
+        return
+
     print("\n" + "=" * 70)
     print("LINKEDIN VOYAGER API CONFIGURATION")
     print("=" * 70)
@@ -4704,6 +4825,17 @@ def _save_voyager_cookies_to_env(li_at: str, jsessionid: str) -> None:
 
 def _configure_rapidapi_key() -> None:
     """Configure RapidAPI key for Fresh LinkedIn Profile Data API lookups."""
+    # Check if LinkedIn search is enabled
+    if not Config.LINKEDIN_SEARCH_ENABLED:
+        print("\n" + "=" * 70)
+        print("⚠️  LINKEDIN SEARCH DISABLED")
+        print("=" * 70)
+        print("\nLinkedIn profile searching is currently disabled.")
+        print("Set LINKEDIN_SEARCH_ENABLED=true in .env to enable this feature.")
+        print("\nWARNING: LinkedIn actively detects automation and may restrict")
+        print("or ban accounts. Only enable if you accept the risk.")
+        return
+
     print("\n" + "=" * 70)
     print("RAPIDAPI KEY CONFIGURATION (Fresh LinkedIn Profile Data)")
     print("=" * 70)
@@ -4962,10 +5094,46 @@ def _test_api_keys(engine: ContentEngine) -> None:
     print("Testing configured API connections...\n")
 
     results: list[tuple[str, bool, str]] = []
+    groq_available = False
 
-    # 1. Test Gemini API
+    # 1. Test Groq API FIRST (preferred over Gemini)
+    print("  Testing Groq API...", end=" ", flush=True)
+    if Config.GROQ_API_KEY:
+        try:
+            from groq import Groq
+
+            groq_client = Groq(api_key=Config.GROQ_API_KEY)
+            response = groq_client.chat.completions.create(
+                model=Config.GROQ_MODEL,
+                messages=[
+                    {"role": "user", "content": "Say 'OK' if you can read this."}
+                ],
+                max_tokens=10,
+            )
+            if response.choices and response.choices[0].message.content:
+                results.append(("Groq API", True, f"Model: {Config.GROQ_MODEL}"))
+                print(f"✓ OK (Model: {Config.GROQ_MODEL}) [PREFERRED]")
+                groq_available = True
+            else:
+                results.append(("Groq API", False, "Empty response"))
+                print("✗ FAILED (Empty response)")
+        except ImportError:
+            results.append(("Groq API", False, "groq package not installed"))
+            print("⚠ Install with: pip install groq")
+        except Exception as e:
+            error_msg = str(e)[:50]
+            results.append(("Groq API", False, error_msg))
+            print(f"✗ FAILED ({error_msg})")
+    else:
+        results.append(("Groq API", False, "NOT CONFIGURED"))
+        print("⚠ NOT CONFIGURED (get free key at console.groq.com)")
+
+    # 2. Test Gemini API (skip test if Groq is available - saves quota)
     print("  Testing Gemini API...", end=" ", flush=True)
-    if Config.GEMINI_API_KEY:
+    if groq_available:
+        results.append(("Gemini API", True, "SKIPPED (Groq preferred)"))
+        print("⏭ SKIPPED (Groq is preferred and working)")
+    elif Config.GEMINI_API_KEY:
         try:
             response = api_client.gemini_generate(
                 client=engine.genai_client,
@@ -4988,7 +5156,7 @@ def _test_api_keys(engine: ContentEngine) -> None:
         results.append(("Gemini API", False, "NOT CONFIGURED"))
         print("⚠ NOT CONFIGURED")
 
-    # 2. Test Hugging Face API (if configured)
+    # 3. Test Hugging Face API (if configured)
     print("  Testing Hugging Face API...", end=" ", flush=True)
     if Config.HUGGINGFACE_API_TOKEN:
         try:
@@ -5021,7 +5189,7 @@ def _test_api_keys(engine: ContentEngine) -> None:
         results.append(("Hugging Face API", False, "NOT CONFIGURED (optional)"))
         print("⚠ NOT CONFIGURED (optional)")
 
-    # 3. Test LinkedIn API
+    # 4. Test LinkedIn API
     print("  Testing LinkedIn API...", end=" ", flush=True)
     if Config.LINKEDIN_ACCESS_TOKEN and Config.LINKEDIN_AUTHOR_URN:
         try:
@@ -5058,7 +5226,7 @@ def _test_api_keys(engine: ContentEngine) -> None:
         results.append(("LinkedIn API", False, "NOT CONFIGURED"))
         print("⚠ NOT CONFIGURED")
 
-    # 4. Test Local LLM (LM Studio) if preferred
+    # 5. Test Local LLM (LM Studio) if preferred
     print("  Testing Local LLM (LM Studio)...", end=" ", flush=True)
     if Config.PREFER_LOCAL_LLM:
         try:
@@ -5090,7 +5258,7 @@ def _test_api_keys(engine: ContentEngine) -> None:
         results.append(("Local LLM", False, "DISABLED (PREFER_LOCAL_LLM=False)"))
         print("⚠ DISABLED (PREFER_LOCAL_LLM=False)")
 
-    # 5. Test Imagen API (Gemini image generation)
+    # 6. Test Imagen API (Gemini image generation)
     print("  Testing Imagen API...", end=" ", flush=True)
     if Config.GEMINI_API_KEY:
         try:
@@ -5120,8 +5288,15 @@ def _test_api_keys(engine: ContentEngine) -> None:
     print("\n--- Summary ---")
     passed = sum(1 for _, ok, _ in results if ok)
     total = len(results)
-    required_services = ["Gemini API", "LinkedIn API"]
-    required_ok = all(ok for name, ok, _ in results if name in required_services)
+
+    # Check required services - Groq can substitute for Gemini text generation
+    groq_ok = any(ok for name, ok, _ in results if name == "Groq API")
+    gemini_ok = any(ok for name, ok, _ in results if name == "Gemini API")
+    linkedin_ok = any(ok for name, ok, _ in results if name == "LinkedIn API")
+
+    # Text generation is OK if either Groq or Gemini works
+    text_gen_ok = groq_ok or gemini_ok
+    required_ok = text_gen_ok and linkedin_ok
 
     for name, ok, detail in results:
         status = "✓" if ok else "✗"
@@ -5130,8 +5305,14 @@ def _test_api_keys(engine: ContentEngine) -> None:
     print(f"\n  {passed}/{total} services operational")
     if required_ok:
         print("  ✓ All required services are working")
+        if groq_ok:
+            print("  ℹ Using Groq for text generation (preferred)")
     else:
         print("  ⚠ Some required services need attention")
+        if not text_gen_ok:
+            print("  ⚠ No text generation available (need Groq or Gemini)")
+        if not linkedin_ok:
+            print("  ⚠ LinkedIn API not working")
 
 
 def main() -> int:

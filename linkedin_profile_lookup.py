@@ -39,7 +39,7 @@ from entity_constants import (
 logger = logging.getLogger(__name__)
 
 # === Browser Backend Detection ===
-# Try nodriver first (recommended), fall back to undetected-chromedriver
+# Try to import both browser backends so we can fall back if one fails
 
 nodriver: Any = None
 NODRIVER_AVAILABLE = False
@@ -55,22 +55,25 @@ try:
     NODRIVER_AVAILABLE = True
     logger.debug("nodriver available for browser automation")
 except ImportError:
-    logger.debug("nodriver not installed - trying undetected-chromedriver")
+    logger.debug("nodriver not installed")
 
-# Fall back to undetected-chromedriver if nodriver not available
-if not NODRIVER_AVAILABLE:
-    try:
-        import undetected_chromedriver as _uc
-        from selenium.webdriver.common.by import By as _By
+# Also try undetected-chromedriver as fallback (import regardless of nodriver availability)
+try:
+    import undetected_chromedriver as _uc
+    from selenium.webdriver.common.by import By as _By
 
-        uc = _uc
-        By = _By
-        UC_AVAILABLE = True
-        logger.debug("undetected-chromedriver available for browser automation")
-    except ImportError:
-        logger.warning(
-            "No browser automation available - pip install nodriver (recommended) or undetected-chromedriver"
-        )
+    uc = _uc
+    By = _By
+    UC_AVAILABLE = True
+    logger.debug("undetected-chromedriver available for browser automation")
+except ImportError:
+    logger.debug("undetected-chromedriver not installed")
+
+# Warn if neither is available
+if not NODRIVER_AVAILABLE and not UC_AVAILABLE:
+    logger.warning(
+        "No browser automation available - pip install nodriver (recommended) or undetected-chromedriver"
+    )
 
 
 # Determine which backend to use based on config and availability
@@ -610,6 +613,9 @@ class LinkedInCompanyLookup:
     _shared_linkedin_login_verified: bool = False
     _shared_driver_lock = None  # Will be initialized on first use (threading.Lock)
     _shared_browser_backend: str = ""  # "nodriver" or "uc"
+    _shared_nodriver_failed: bool = (
+        False  # Track if nodriver creation failed this session
+    )
 
     # === ORGANIZATION NAME ALIASES (imported from organization_aliases module) ===
     # See module-level import: from organization_aliases import ORG_ALIASES as _ORG_ALIASES
@@ -1377,12 +1383,55 @@ class LinkedInCompanyLookup:
             os.makedirs(automation_profile, exist_ok=True)
             logger.debug(f"Using nodriver profile at {automation_profile}")
 
+            # Kill any orphan Chrome processes that might be using this profile
+            # This prevents "Failed to connect to browser" errors
+            try:
+                # Check for Chrome processes with our user-data-dir
+                # On Windows, we can't easily filter by command line, so just check if the profile is locked
+                lock_file = os.path.join(automation_profile, "SingletonLock")
+                if os.path.exists(lock_file):
+                    logger.debug("Profile appears locked, attempting cleanup...")
+                    # Try to delete the lock file (may fail if Chrome is running)
+                    try:
+                        os.remove(lock_file)
+                        logger.debug("Removed stale lock file")
+                    except PermissionError:
+                        # Chrome is actually running - this is expected on retry
+                        logger.debug("Lock file in use - Chrome may be running")
+
+                # Clean up session restore files to prevent "Restore pages?" popup
+                # These files are in the Default profile directory
+                default_profile = os.path.join(automation_profile, "Default")
+                if os.path.exists(default_profile):
+                    session_files = [
+                        "Current Session",
+                        "Current Tabs",
+                        "Last Session",
+                        "Last Tabs",
+                    ]
+                    for session_file in session_files:
+                        session_path = os.path.join(default_profile, session_file)
+                        if os.path.exists(session_path):
+                            try:
+                                os.remove(session_path)
+                                logger.debug(f"Removed session file: {session_file}")
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
             # Start browser with optimal settings for anti-detection
             LinkedInCompanyLookup._shared_nodriver_browser = await nodriver.start(
                 headless=False,  # Must be False for anti-detection
                 sandbox=False,
                 lang="en-US",
                 user_data_dir=automation_profile,  # Persist profile for login retention
+                browser_args=[
+                    "--disable-session-crashed-bubble",  # Prevent "Restore pages?" popup
+                    "--hide-crash-restore-bubble",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                ],
             )
 
             # Get the initial tab
@@ -1407,7 +1456,12 @@ class LinkedInCompanyLookup:
         Returns a NodriverWrapper that provides a Selenium-like interface.
         """
         if not NODRIVER_AVAILABLE:
-            logger.warning("nodriver not installed - pip install nodriver")
+            logger.debug("nodriver not installed - pip install nodriver")
+            return None
+
+        # Skip if nodriver creation already failed this session
+        if LinkedInCompanyLookup._shared_nodriver_failed:
+            logger.debug("Skipping nodriver - creation failed earlier this session")
             return None
 
         # Check if browser exists and is valid
@@ -1428,8 +1482,15 @@ class LinkedInCompanyLookup:
             success = self._run_async(self._create_nodriver_browser_async())
             if success:
                 return NodriverWrapper(self)
+            else:
+                # Mark nodriver as failed so we don't retry this session
+                LinkedInCompanyLookup._shared_nodriver_failed = True
+                logger.info(
+                    "nodriver creation failed - will use UC Chrome for remaining searches"
+                )
         except Exception as e:
             logger.error(f"Failed to create nodriver browser: {e}")
+            LinkedInCompanyLookup._shared_nodriver_failed = True
 
         return None
 
@@ -1571,6 +1632,11 @@ class LinkedInCompanyLookup:
             options.add_argument("--disable-software-rasterizer")
             options.add_argument("--no-first-run")
             options.add_argument("--no-default-browser-check")
+
+            # === DISABLE SESSION RESTORE DIALOGS ===
+            # Prevents "Chrome didn't shut down correctly" / "Restore pages?" popup
+            options.add_argument("--disable-session-crashed-bubble")
+            options.add_argument("--hide-crash-restore-bubble")
 
             # === ANTI-DETECTION: Disable automation flags (ancestry approach) ===
             options.add_argument("--disable-blink-features=AutomationControlled")
@@ -2201,6 +2267,7 @@ class LinkedInCompanyLookup:
         cls._shared_driver_search_count = 0
         cls._shared_linkedin_login_verified = False
         cls._shared_browser_backend = ""
+        cls._shared_nodriver_failed = False  # Reset so next session can retry nodriver
 
     def send_connection_via_browser(
         self,
@@ -2219,6 +2286,16 @@ class LinkedInCompanyLookup:
         Returns:
             Tuple of (success: bool, message: str describing result)
         """
+        # === Master switch check ===
+        if not Config.LINKEDIN_SEARCH_ENABLED:
+            logger.warning(
+                "LinkedIn connections disabled (LINKEDIN_SEARCH_ENABLED=false)"
+            )
+            return (
+                False,
+                "LinkedIn search/connect disabled - set LINKEDIN_SEARCH_ENABLED=true in .env",
+            )
+
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support.ui import WebDriverWait
         from selenium.webdriver.support import expected_conditions as EC
@@ -2795,6 +2872,11 @@ NOT_FOUND"""
         Returns:
             Tuple of (linkedin_url, organization_slug) if found, (None, None) otherwise
         """
+        # === Master switch check ===
+        if not Config.LINKEDIN_SEARCH_ENABLED:
+            logger.debug("LinkedIn search disabled (LINKEDIN_SEARCH_ENABLED=false)")
+            return (None, None)
+
         if not self.client:
             logger.warning("Cannot search - Gemini client not initialized")
             return (None, None)
@@ -3160,6 +3242,11 @@ NOT_FOUND"""
         Returns:
             LinkedIn profile URL if found, None otherwise
         """
+        # === Master switch check ===
+        if not Config.LINKEDIN_SEARCH_ENABLED:
+            logger.debug("LinkedIn search disabled (LINKEDIN_SEARCH_ENABLED=false)")
+            return None
+
         if not name or not company:
             return None
 
@@ -3502,6 +3589,9 @@ NOT_FOUND"""
             company_words = [w for w in company_lower.split() if len(w) > 2]
 
             result_items = driver.find_elements(By.CSS_SELECTOR, ".b_algo")
+            logger.info(
+                f"Company search: Found {len(result_items)} Bing results for '{company_name}'"
+            )
             for item in result_items:
                 try:
                     heading = item.find_element(By.CSS_SELECTOR, "h2")
@@ -3512,6 +3602,9 @@ NOT_FOUND"""
                     # Decode Bing redirect URL
                     u_match = re.search(r"[&?]u=a1([^&]+)", href)
                     if not u_match:
+                        logger.debug(
+                            f"Company search: No Bing redirect in '{title[:50]}' href"
+                        )
                         continue
 
                     try:
@@ -3523,11 +3616,16 @@ NOT_FOUND"""
                     except Exception:
                         continue
 
+                    logger.info(f"Company search: Decoded URL = {decoded_url[:80]}")
+
                     # Check if it's a LinkedIn company or school page
                     if (
                         "linkedin.com/company/" not in decoded_url
                         and "linkedin.com/school/" not in decoded_url
                     ):
+                        logger.debug(
+                            f"Company search: Not a company/school URL: {decoded_url[:50]}"
+                        )
                         continue
 
                     # Verify company name appears in title or URL
@@ -3536,6 +3634,9 @@ NOT_FOUND"""
                         1
                         for word in company_words
                         if word in title or word in url_lower
+                    )
+                    logger.info(
+                        f"Company search: '{title[:40]}' matches={matches}/{len(company_words)} (need {len(company_words) * 0.5:.0f})"
                     )
                     if matches < len(company_words) * 0.5:
                         logger.debug(f"Skipping '{title[:40]}' - name mismatch")
@@ -3562,7 +3663,73 @@ NOT_FOUND"""
                     logger.debug(f"Error processing result item: {e}")
                     continue
 
-            logger.debug("No matching LinkedIn company found via UC Chrome")
+            # Fallback: Try extracting LinkedIn company/school URLs directly from page source
+            # This handles cases where Bing's HTML structure has changed
+            logger.debug("Trying fallback: extract LinkedIn URLs from page source")
+            page_source = driver.page_source
+
+            # Pattern to find company/school URLs in Bing's redirect format or direct links
+            # Bing uses base64 encoded URLs in a1... format
+            bing_encoded = re.findall(r"a1(aHR0c[A-Za-z0-9_-]+)", page_source)
+            for encoded in bing_encoded[:10]:  # Check first 10 matches
+                try:
+                    padding = 4 - len(encoded) % 4
+                    if padding != 4:
+                        encoded += "=" * padding
+                    decoded = base64.urlsafe_b64decode(encoded).decode(
+                        "utf-8", errors="ignore"
+                    )
+                    if (
+                        "linkedin.com/company/" in decoded
+                        or "linkedin.com/school/" in decoded
+                    ):
+                        match = re.search(
+                            r"linkedin\.com/(company|school)/([\w\-]+)", decoded
+                        )
+                        if match:
+                            page_type = match.group(1)
+                            slug = match.group(2)
+                            result_url = f"https://www.linkedin.com/{page_type}/{slug}"
+                            if result_url in validated_urls:
+                                continue
+                            # Verify name match in slug or decoded URL
+                            slug_lower = slug.lower()
+                            decoded_lower = decoded.lower()
+                            word_matches = sum(
+                                1
+                                for w in company_words
+                                if w in slug_lower or w in decoded_lower
+                            )
+                            if (
+                                word_matches >= len(company_words) * 0.3
+                            ):  # Looser threshold for fallback
+                                logger.info(
+                                    f"Found company via fallback extraction: {result_url}"
+                                )
+                                return result_url
+                except Exception:
+                    continue
+
+            # Also try direct URL pattern (not encoded)
+            direct_urls = re.findall(
+                r"https://(?:www\.)?linkedin\.com/(company|school)/([\w\-]+)",
+                page_source,
+            )
+            for page_type, slug in direct_urls[:10]:
+                result_url = f"https://www.linkedin.com/{page_type}/{slug}"
+                if result_url in validated_urls:
+                    continue
+                slug_lower = slug.lower()
+                word_matches = sum(1 for w in company_words if w in slug_lower)
+                if word_matches >= 1:  # At least one word matches
+                    logger.info(
+                        f"Found company via direct URL extraction: {result_url}"
+                    )
+                    return result_url
+
+            logger.info(
+                f"No matching LinkedIn company found via UC Chrome for '{company_name}'"
+            )
 
         except Exception as e:
             logger.exception(
@@ -3611,7 +3778,7 @@ NOT_FOUND"""
             # Check if LinkedIn requires login (authwall)
             current_url = driver.current_url.lower()
             if "/login" in current_url or "/authwall" in current_url:
-                logger.debug(f"LinkedIn login required to view profile: {profile_url}")
+                logger.info(f"LinkedIn login required to view profile: {profile_url}")
                 if self._ensure_linkedin_login(driver):
                     # Retry loading the profile after login
                     driver.get(profile_url)
@@ -3645,8 +3812,13 @@ NOT_FOUND"""
             name_text = profile_name if profile_name else page_title
 
             if not name_text:
-                logger.debug(f"Could not extract name from profile page: {profile_url}")
+                logger.info(f"Could not extract name from profile page: {profile_url}")
                 return False
+
+            # Log what we're comparing at INFO level for visibility
+            logger.info(
+                f"Profile name on page: '{name_text[:60]}' | Looking for: '{first_name} {last_name}'"
+            )
 
             # Get full page text for context matching (for single-name searches)
             page_text = ""
@@ -3659,9 +3831,29 @@ NOT_FOUND"""
             # Validate: BOTH first and last name must appear in the profile name
             # Use word boundary matching, and allow nickname/prefix variants for first name
             if first_name and last_name:
-                # Check last name (should be exact)
-                last_pattern = rf"\b{re.escape(last_name)}\b"
-                last_match = bool(re.search(last_pattern, name_text))
+                # Check last name - handle hyphenated names and compound names
+                last_match = False
+
+                # For hyphenated names like "Guyot-Sionnest", check if any part matches
+                if "-" in last_name:
+                    # Try exact match first
+                    last_pattern = rf"\b{re.escape(last_name)}\b"
+                    last_match = bool(re.search(last_pattern, name_text))
+
+                    # If no exact match, try each part of the hyphenated name
+                    if not last_match:
+                        last_name_parts = last_name.split("-")
+                        for part in last_name_parts:
+                            if len(part) >= 3:  # Skip very short parts
+                                if re.search(rf"\b{re.escape(part)}\b", name_text):
+                                    last_match = True
+                                    logger.debug(
+                                        f"Last name matched via hyphen part: {last_name} -> {part}"
+                                    )
+                                    break
+                else:
+                    last_pattern = rf"\b{re.escape(last_name)}\b"
+                    last_match = bool(re.search(last_pattern, name_text))
 
                 # Check first name - use general names_could_match for flexibility
                 first_match = bool(
@@ -3722,15 +3914,25 @@ NOT_FOUND"""
                                     )
 
                         if not company_match:
-                            logger.debug(
-                                f"Profile company mismatch: expected '{company}' (words: {company_words}) not found on profile"
+                            logger.info(
+                                f"  -> Company mismatch: '{company}' (words: {company_words}) not found on profile"
                             )
                             return False
                     return True
                 else:
-                    logger.debug(
-                        f"Profile name mismatch: expected '{first_name} {last_name}', found '{name_text[:50]}'"
-                    )
+                    # Log which name part failed - use INFO for visibility
+                    if not first_match and not last_match:
+                        logger.info(
+                            f"  -> Name mismatch: neither '{first_name}' nor '{last_name}' found in '{name_text[:60]}'"
+                        )
+                    elif not first_match:
+                        logger.info(
+                            f"  -> Name mismatch: first '{first_name}' not in '{name_text[:60]}' (last matched)"
+                        )
+                    else:
+                        logger.info(
+                            f"  -> Name mismatch: last '{last_name}' not in '{name_text[:60]}' (first matched)"
+                        )
                     return False
             elif first_name:
                 # Single-name search - check with variants, and require company
@@ -3775,7 +3977,7 @@ NOT_FOUND"""
                 return True
 
         except Exception as e:
-            logger.debug(f"Error validating profile name for {profile_url}: {e}")
+            logger.info(f"  -> Validation error for {profile_url}: {e}")
             return False
 
     def _extract_experience_section(self, driver: Any) -> str:
@@ -3887,16 +4089,19 @@ NOT_FOUND"""
             f"https://www.linkedin.com/search/results/people/?keywords={encoded_query}"
         )
 
-        logger.debug(f"LinkedIn direct search: {search_query}")
+        logger.info(f"LinkedIn direct search URL: {linkedin_search_url}")
 
         try:
+            logger.debug("LinkedIn direct: Navigating to search page...")
             driver.get(linkedin_search_url)
+            logger.debug("LinkedIn direct: Navigation complete, waiting for results...")
             time.sleep(3 + random.random() * 2)  # Wait for results to load
 
             # Check if we need to log in
             current_url = driver.current_url.lower()
+            logger.debug(f"LinkedIn direct: Current URL = {current_url[:100]}...")
             if "/login" in current_url or "/authwall" in current_url:
-                logger.debug("LinkedIn login required for direct search")
+                logger.info("LinkedIn login required for direct search")
                 if not self._ensure_linkedin_login(driver):
                     return None
                 # Retry the search after login
@@ -3911,6 +4116,7 @@ NOT_FOUND"""
                 pass
 
             page_source = driver.page_source
+            logger.info(f"LinkedIn direct: Got page source, length={len(page_source)}")
 
             # Extract profile URLs from LinkedIn search results
             # LinkedIn search results have links like /in/username in the result cards
@@ -3919,31 +4125,80 @@ NOT_FOUND"""
             # Pattern 1: Direct profile links in search results
             # LinkedIn uses different formats, try multiple patterns
             patterns = [
-                r'href="(/in/[\w\-]+)"',  # Relative URL
-                r'href="(https://www\.linkedin\.com/in/[\w\-]+)"',  # Absolute URL
-                r'href="(https://[a-z]{2}\.linkedin\.com/in/[\w\-]+)"',  # Country-specific
+                (r'href="(/in/[\w\-]+)"', "relative /in/"),
+                (r'href="(https://www\.linkedin\.com/in/[\w\-]+)"', "absolute www"),
+                (
+                    r'href="(https://[a-z]{2}\.linkedin\.com/in/[\w\-]+)"',
+                    "country-specific",
+                ),
+                # LinkedIn sometimes uses encoded profile IDs like ACoAAB...
+                (r'href="(/in/ACoAA[^"]+)"', "encoded ACoAA"),
+                (
+                    r'href="(https://www\.linkedin\.com/in/ACoAA[^"]+)"',
+                    "absolute ACoAA",
+                ),
             ]
 
-            for pattern in patterns:
+            for pattern, pattern_name in patterns:
                 matches = re.findall(pattern, page_source)
+                if matches:
+                    logger.info(
+                        f"LinkedIn direct: Pattern '{pattern_name}' found {len(matches)} matches"
+                    )
                 for match in matches:
                     if match.startswith("/in/"):
                         url = f"https://www.linkedin.com{match}"
                     else:
                         url = match
-                    # Clean the URL
+                    # Clean the URL - remove query params but keep the profile ID
                     url = url.split("?")[0].rstrip("/")
                     if url not in profile_urls:
                         profile_urls.append(url)
+                        slug = url.split("/in/")[-1] if "/in/" in url else url
+                        logger.info(f"    -> {slug[:50]}")
+
+            # Also try to find profile links via data attributes or other patterns
+            # LinkedIn may use data-control-id or other attributes
+            if not profile_urls:
+                # Try broader pattern - any /in/ followed by characters
+                broad_matches = re.findall(r"/in/([\w\-]+)", page_source)
+                unique_slugs = list(
+                    dict.fromkeys(broad_matches)
+                )  # Dedupe while preserving order
+                # Filter out common non-profile slugs
+                excluded = {
+                    "share",
+                    "messaging",
+                    "notifications",
+                    "jobs",
+                    "feed",
+                    "mynetwork",
+                }
+                for slug in unique_slugs[:20]:
+                    if slug.lower() not in excluded and len(slug) > 2:
+                        url = f"https://www.linkedin.com/in/{slug}"
+                        if url not in profile_urls:
+                            profile_urls.append(url)
+                if profile_urls:
+                    logger.info(
+                        f"LinkedIn direct: Broad pattern found {len(profile_urls)} profiles"
+                    )
+                    for url in profile_urls[:5]:
+                        slug = url.split("/in/")[-1]
+                        logger.info(f"    -> {slug[:50]}")
 
             if not profile_urls:
-                logger.debug(
+                logger.info(
                     f"LinkedIn direct search: no profile URLs found for '{name}'"
+                )
+                # Log a sample of the page source to help debug
+                logger.debug(
+                    f"Page source sample (first 2000 chars): {page_source[:2000]}"
                 )
                 return None
 
-            logger.debug(
-                f"LinkedIn direct search: found {len(profile_urls)} profile URLs"
+            logger.info(
+                f"LinkedIn direct search: found {len(profile_urls)} unique profile URLs"
             )
 
             # For single-name searches, use original first name for validation
@@ -3954,20 +4209,45 @@ NOT_FOUND"""
                 validation_last = first_name  # The search term is the last name
 
             # Validate each profile until we find a match
-            for profile_url in profile_urls[:5]:  # Check up to 5 results
+            # Prioritize profiles with name in URL, but validate ALL search results
+            # because vanity URLs may not contain the person's name
+            name_in_url_candidates = []
+            other_candidates = []
+
+            for profile_url in profile_urls[:10]:  # Check up to 10 results
                 # Skip if URL doesn't look like a real profile
                 if "/in/ANON" in profile_url or "/in/headless" in profile_url:
+                    logger.debug(f"Skipping anonymous profile: {profile_url}")
                     continue
 
-                # Check if name appears in URL (quick pre-filter)
+                # Check if name appears in URL (for prioritization, not filtering)
                 url_slug = profile_url.split("/in/")[-1].lower()
                 url_parts = url_slug.replace("-", " ").split()
 
-                # Must have at least last name in URL
-                if validation_last and validation_last not in url_parts:
-                    # Also check if last name is a substring (for concatenated names)
-                    if validation_last not in url_slug:
-                        continue
+                # Check for last name in URL (substring or word match)
+                name_in_url = False
+                if validation_last:
+                    if validation_last in url_parts or validation_last in url_slug:
+                        name_in_url = True
+                # Also check first name
+                if validation_first:
+                    if validation_first in url_parts or validation_first in url_slug:
+                        name_in_url = True
+
+                if name_in_url:
+                    name_in_url_candidates.append(profile_url)
+                else:
+                    other_candidates.append(profile_url)
+
+            # Try name-in-URL candidates first, then others
+            all_candidates = name_in_url_candidates + other_candidates
+            logger.debug(
+                f"LinkedIn direct search: {len(name_in_url_candidates)} candidates with name in URL, "
+                f"{len(other_candidates)} other candidates"
+            )
+
+            for profile_url in all_candidates[:5]:  # Validate up to 5 results
+                logger.debug(f"LinkedIn direct search: validating {profile_url}")
 
                 # Full validation on profile page
                 validation_company = company if company else None
@@ -3992,7 +4272,10 @@ NOT_FOUND"""
             return None
 
         except Exception as e:
-            logger.debug(f"LinkedIn direct search error: {e}")
+            logger.warning(f"LinkedIn direct search error: {e}")
+            import traceback
+
+            logger.debug(f"LinkedIn direct search traceback: {traceback.format_exc()}")
             return None
 
     def _search_person_playwright(
@@ -4347,9 +4630,15 @@ NOT_FOUND"""
                     r"https://(?:www\.)?linkedin\.com/in/[\w\-]+/?", page_source
                 )
                 linkedin_urls.extend(direct_urls)
-                logger.debug(
-                    f"{used_engine}: Pattern 1 (direct URLs) found {len(direct_urls)} URLs"
-                )
+                if direct_urls:
+                    logger.info(
+                        f"{used_engine}: Pattern 1 (direct URLs) found {len(direct_urls)} URLs"
+                    )
+                    for url in direct_urls[:3]:
+                        slug = (
+                            url.split("/in/")[-1].rstrip("/") if "/in/" in url else url
+                        )
+                        logger.info(f"    -> {slug}")
 
                 # Pattern 2: URL-encoded redirects (for Bing click-tracking)
                 encoded_urls = re.findall(
@@ -4360,9 +4649,12 @@ NOT_FOUND"""
                     url = f"https://www.linkedin.com/in/{slug}"
                     if url not in linkedin_urls:
                         linkedin_urls.append(url)
-                logger.debug(
-                    f"{used_engine}: Pattern 2 (encoded URLs) found {len(encoded_urls)} additional slugs"
-                )
+                if encoded_urls:
+                    logger.info(
+                        f"{used_engine}: Pattern 2 (encoded URLs) found {len(encoded_urls)} slugs"
+                    )
+                    for slug in encoded_urls[:3]:
+                        logger.info(f"    -> {slug}")
 
                 # Pattern 3: Bing wraps URLs in their redirect format
                 # e.g., href="https://www.bing.com/ck/a?...&u=a1aHR0cHM6Ly93d3cubGlua2VkaW4uY29tL2luL3VzZXJuYW1l..."
@@ -4370,6 +4662,7 @@ NOT_FOUND"""
                     r"a1aHR0c[A-Za-z0-9+/=]+",
                     page_source,  # Base64-encoded https://
                 )
+                bing_found = []
                 for b64 in bing_redirect_urls:
                     try:
                         import base64
@@ -4384,15 +4677,50 @@ NOT_FOUND"""
                             )
                             if match and match.group(0) not in linkedin_urls:
                                 linkedin_urls.append(match.group(0))
+                                bing_found.append(match.group(0))
                     except Exception:
                         pass
-                logger.debug(
-                    f"{used_engine}: Pattern 3 (Bing base64) found additional URLs, total now {len(linkedin_urls)}"
+                if bing_found:
+                    logger.info(
+                        f"{used_engine}: Pattern 3 (Bing base64) found {len(bing_found)} URLs"
+                    )
+                    for url in bing_found[:3]:
+                        slug = url.split("/in/")[-1] if "/in/" in url else url
+                        logger.info(f"    -> {slug}")
+
+                # Pattern 4: DuckDuckGo wraps URLs in redirect format
+                # e.g., uddg=https%3A%2F%2Fwww.linkedin.com%2Fin%2Fphillip-savage-131a8184
+                ddg_redirect_urls = re.findall(
+                    r'uddg=([^&"]+linkedin\.com[^&"]+)', page_source
+                )
+                ddg_found = []
+                for encoded in ddg_redirect_urls:
+                    try:
+                        decoded = urllib.parse.unquote(encoded)
+                        match = re.search(
+                            r"https://(?:www\.)?linkedin\.com/in/[\w\-]+", decoded
+                        )
+                        if match and match.group(0) not in linkedin_urls:
+                            linkedin_urls.append(match.group(0))
+                            ddg_found.append(match.group(0))
+                    except Exception:
+                        pass
+                if ddg_found:
+                    logger.info(
+                        f"{used_engine}: Pattern 4 (DDG uddg) found {len(ddg_found)} URLs"
+                    )
+                    for url in ddg_found[:3]:
+                        slug = url.split("/in/")[-1] if "/in/" in url else url
+                        logger.info(f"    -> {slug}")
+
+                # Log summary of all patterns
+                logger.info(
+                    f"{used_engine}: Total URLs found: {len(linkedin_urls)} (P1:{len(direct_urls)} P2:{len(encoded_urls)} P3:{len(bing_found) if 'bing_found' in dir() else 0} P4:{len(ddg_found) if 'ddg_found' in dir() else 0})"
                 )
 
-                # Debug: log how many URLs found
+                # Log how many URLs found (INFO level for visibility)
                 if not linkedin_urls:
-                    logger.debug(
+                    logger.info(
                         f"No LinkedIn URLs found in search results for '{name}'"
                     )
                     # Check if page has any content
@@ -4403,9 +4731,13 @@ NOT_FOUND"""
                     # Log a snippet of the page source for debugging
                     logger.debug(f"Page source snippet: {page_source[:500]}...")
                 else:
-                    logger.debug(
-                        f"Found {len(linkedin_urls)} LinkedIn URLs in search results"
+                    # Log at INFO level to see what profiles are found
+                    logger.info(
+                        f"Found {len(linkedin_urls)} LinkedIn URLs in search results for '{name}'"
                     )
+                    for idx, url in enumerate(linkedin_urls[:5], 1):
+                        slug = url.split("/in/")[-1] if "/in/" in url else url
+                        logger.info(f"  [{idx}] {slug}")
 
                 # Deduplicate while preserving order
                 seen = set()
@@ -4462,6 +4794,8 @@ NOT_FOUND"""
                         )
                         url_text = url_slug.replace("-", " ").lower()
                         url_parts = url_text.split()
+                        # Also keep the raw slug for substring matching (handles concatenated names like 'charlescai')
+                        url_slug_lower = url_slug.lower()
 
                         # === IMPROVED NAME VALIDATION WITH FUZZY MATCHING ===
                         # Check if name appears in URL, but allow for nicknames and variations
@@ -4470,14 +4804,18 @@ NOT_FOUND"""
                         first_name_exact = False  # Track if first name match is exact
 
                         if first_name and last_name:
-                            # Check for exact first name match (word boundary)
-                            first_in_url = first_name in url_parts
-                            first_name_exact = first_in_url  # Exact word match in URL
+                            # Check for exact first name match (word boundary OR substring in concatenated slug)
+                            first_in_url = (
+                                first_name in url_parts or first_name in url_slug_lower
+                            )
+                            first_name_exact = (
+                                first_name in url_parts
+                            )  # Only word match is "exact"
 
                             # If not exact, check for nickname/variant match
                             if not first_in_url and first_name_variants:
                                 first_in_url = any(
-                                    variant in url_parts
+                                    variant in url_parts or variant in url_slug_lower
                                     for variant in first_name_variants
                                 )
                                 if first_in_url:
@@ -4487,8 +4825,11 @@ NOT_FOUND"""
                                     # Variant matches are still considered strong but not exact
                                     first_name_exact = False
 
-                            # Check for last name match (should be exact word match)
-                            last_in_url = last_name in url_parts
+                            # Check for last name match (word boundary OR substring in concatenated slug)
+                            # This handles vanity URLs like 'charlescai', 'caicharles', 'charlesmcai'
+                            last_in_url = (
+                                last_name in url_parts or last_name in url_slug_lower
+                            )
 
                             # Also check presence in result text using word boundaries
                             # Use regex to avoid substring matches like "lee" in "jiholee"
@@ -4504,15 +4845,25 @@ NOT_FOUND"""
 
                             # Require last name somewhere (URL or text) as word boundary match
                             if not (last_in_url or last_in_text):
-                                logger.debug(
-                                    f"Skipping '{linkedin_url}' - last name '{last_name}' missing in URL/text"
+                                slug = (
+                                    linkedin_url.split("/in/")[-1]
+                                    if "/in/" in linkedin_url
+                                    else linkedin_url
+                                )
+                                logger.info(
+                                    f"Skipping {slug} - last name '{last_name}' missing in URL ({url_text}) and text"
                                 )
                                 continue
 
                             # Require first name (or variant) somewhere (URL or text)
                             if not (first_in_url or first_in_text):
-                                logger.debug(
-                                    f"Skipping '{linkedin_url}' - first name missing in URL/text"
+                                slug = (
+                                    linkedin_url.split("/in/")[-1]
+                                    if "/in/" in linkedin_url
+                                    else linkedin_url
+                                )
+                                logger.info(
+                                    f"Skipping {slug} - first name '{first_name}' missing in URL ({url_text}) and text"
                                 )
                                 continue
 
@@ -4546,11 +4897,13 @@ NOT_FOUND"""
                                 name_match_score = 1
 
                         elif first_name:
-                            # Single word name - check with variants
-                            first_in_url = first_name in url_parts
+                            # Single word name - check with variants (word boundary or substring)
+                            first_in_url = (
+                                first_name in url_parts or first_name in url_slug_lower
+                            )
                             if not first_in_url and first_name_variants:
                                 first_in_url = any(
-                                    variant in url_parts
+                                    variant in url_parts or variant in url_slug_lower
                                     for variant in first_name_variants
                                 )
                             if not first_in_url:
@@ -4772,22 +5125,24 @@ NOT_FOUND"""
                 # Sort candidates by score (highest first)
                 candidates.sort(key=lambda x: x[0], reverse=True)
 
-                # Log candidates - concise at INFO, details at DEBUG
+                # Log candidates at INFO level for visibility
                 if candidates:
-                    top_url = (
-                        candidates[0][1].split("/in/")[-1].split("/")[0]
-                        if "/in/" in candidates[0][1]
-                        else candidates[0][1]
+                    logger.info(
+                        f"Found {len(candidates)} candidates for '{name}' ({query_type} query)"
                     )
-                    logger.debug(
-                        f"Found {len(candidates)} candidates for '{name}' ({query_type}), top: {top_url} (score={candidates[0][0]})"
-                    )
-                    for i, (score, url, kws) in enumerate(
-                        candidates[:5]
-                    ):  # Top 5 at DEBUG
-                        logger.debug(
-                            f"  #{i + 1}: {url} (score={score}, keywords={kws})"
+                    for i, (score, url, kws) in enumerate(candidates[:5]):
+                        slug = (
+                            url.split("/in/")[-1].split("/")[0]
+                            if "/in/" in url
+                            else url
                         )
+                        logger.info(
+                            f"  [{i + 1}] {slug} (score={score}, matched: {kws})"
+                        )
+                else:
+                    logger.info(
+                        f"No candidates passed filtering for '{name}' ({query_type} query)"
+                    )
 
                 # IMPROVED THRESHOLD: Lower thresholds but rely more on final page validation
                 # Score breakdown:
@@ -4841,6 +5196,15 @@ NOT_FOUND"""
                     validation_company = (
                         company if is_single_name or candidate_score < 4 else None
                     )
+                    # Log validation attempt at INFO level
+                    slug = (
+                        candidate_url.split("/in/")[-1].split("/")[0]
+                        if "/in/" in candidate_url
+                        else candidate_url
+                    )
+                    logger.info(
+                        f"Validating candidate: {slug} (looking for '{validation_first_name} {validation_last_name}')"
+                    )
                     # Use validation_first_name/validation_last_name which may differ from search terms
                     # e.g., for surname-only search "choi", we validate "kyoung-ho choi"
                     if self._validate_profile_name(
@@ -4851,13 +5215,11 @@ NOT_FOUND"""
                         validation_company,
                         first_name_variants,
                     ):
-                        logger.info(
-                            f"Found profile via UC Chrome ({query_type} query): {candidate_url} (score={candidate_score}, threshold={threshold})"
-                        )
+                        logger.info(f"✓ Profile validated: {candidate_url}")
                         return candidate_url
                     else:
-                        logger.debug(
-                            f"Rejecting candidate: {candidate_url} (name/company mismatch)"
+                        logger.info(
+                            f"✗ Validation failed for {slug} - name/company mismatch"
                         )
                         # Record rejected URL for this name to avoid re-validating this session
                         if name_key:

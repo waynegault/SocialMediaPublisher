@@ -4,6 +4,12 @@ from linkedin_profile_lookup import LinkedInCompanyLookup
 from config import Config
 import time
 
+# Check master switch first
+if not Config.LINKEDIN_SEARCH_ENABLED:
+    print("✗ LinkedIn searching is disabled (LINKEDIN_SEARCH_ENABLED=false in .env)")
+    print("  Set LINKEDIN_SEARCH_ENABLED=true to enable LinkedIn profile search.")
+    exit(1)
+
 lookup = LinkedInCompanyLookup()
 
 # Connection message using discipline from config

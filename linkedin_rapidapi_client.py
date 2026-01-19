@@ -201,6 +201,11 @@ class FreshLinkedInAPIClient:
         Returns:
             LinkedInProfile if found, None otherwise
         """
+        # Check master switch - LinkedIn searching is disabled
+        if not Config.LINKEDIN_SEARCH_ENABLED:
+            logger.info("LinkedIn search disabled (LINKEDIN_SEARCH_ENABLED=false)")
+            return None
+
         if not self.api_key:
             logger.error("No RapidAPI key configured. Cannot search.")
             return None
