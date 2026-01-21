@@ -179,8 +179,31 @@ class LinkedInPublisher:
             )
 
             if response.status_code != 200:
-                logger.error(f"Image registration failed: {response.text}")
+                response_text = response.text
+                if response_text.strip().startswith(
+                    "<!"
+                ) or response_text.strip().startswith("<html"):
+                    logger.error(
+                        f"LinkedIn returned HTML instead of JSON (status {response.status_code}). "
+                        "Access token may be expired."
+                    )
+                    raise ValueError(
+                        "LinkedIn access token expired or invalid. Please re-authenticate."
+                    )
+                logger.error(f"Image registration failed: {response_text[:500]}")
                 return None
+
+            # Check for HTML in response before parsing JSON
+            response_text = response.text
+            if response_text.strip().startswith(
+                "<!"
+            ) or response_text.strip().startswith("<html"):
+                logger.error(
+                    "LinkedIn returned HTML instead of JSON. Access token may be expired."
+                )
+                raise ValueError(
+                    "LinkedIn access token expired or invalid. Please re-authenticate."
+                )
 
             upload_data = response.json()
             upload_url = upload_data["value"]["uploadMechanism"][
@@ -246,9 +269,28 @@ class LinkedInPublisher:
                 post_id = response.headers.get("X-RestLi-Id", "")
                 return post_id
             else:
-                logger.error(f"Post creation failed: {response.text}")
+                # Check if we got HTML instead of JSON (usually means auth error)
+                response_text = response.text
+                if response_text.strip().startswith(
+                    "<!"
+                ) or response_text.strip().startswith("<html"):
+                    logger.error(
+                        f"LinkedIn returned HTML instead of JSON (status {response.status_code}). "
+                        "This usually means the access token is expired or invalid. "
+                        "Please refresh your LinkedIn token."
+                    )
+                    raise ValueError(
+                        "LinkedIn access token expired or invalid. Please re-authenticate with LinkedIn."
+                    )
+                else:
+                    logger.error(
+                        f"Post creation failed (status {response.status_code}): {response_text[:500]}"
+                    )
                 return None
 
+        except ValueError:
+            # Re-raise auth errors with clear message
+            raise
         except Exception as e:
             logger.error(f"Post creation exception: {e}")
             return None

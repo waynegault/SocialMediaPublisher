@@ -42,6 +42,7 @@ class ImageModel(Enum):
     OPENAI_DALLE3 = "openai_dalle3"
     HUGGINGFACE_FLUX = "huggingface_flux"
     HUGGINGFACE_SDXL = "huggingface_sdxl"
+    POLLINATIONS = "pollinations"  # Free, no API key required
     LOCAL = "local"
 
 
@@ -91,10 +92,17 @@ MODEL_CONFIGS: dict[ImageModel, ModelConfig] = {
         requires_api_key="HUGGINGFACE_API_TOKEN",
         best_for=["artistic", "stylized"],
     ),
+    ImageModel.POLLINATIONS: ModelConfig(
+        model_id=ImageModel.POLLINATIONS,
+        display_name="Pollinations.ai (Free)",
+        priority=5,
+        requires_api_key="",  # Completely free, no key needed
+        best_for=["general", "free", "fallback"],
+    ),
     ImageModel.LOCAL: ModelConfig(
         model_id=ImageModel.LOCAL,
         display_name="Local Model",
-        priority=5,
+        priority=6,
         best_for=["testing", "offline"],
     ),
 }
@@ -357,7 +365,7 @@ class ImageGenerator:
                 # Use adaptive rate limiter to manage request timing
                 wait_time = self._rate_limiter.wait(endpoint="imagen")
                 if wait_time > 0.5:
-                    logger.info(f"Rate limiter: waited {wait_time:.1f}s before request")
+                    logger.info(f"⏳ Pacing requests... waited {wait_time:.1f}s")
 
                 logger.info(
                     f"[{i + 1}/{len(stories)}] Generating image for: {story.title}"
@@ -389,12 +397,13 @@ class ImageGenerator:
                 logger.error(f"✗ Failed to generate image for story {story.id}: {e}")
                 continue
 
-        # Log rate limiter metrics
+        # Log rate limiter metrics (only if there were issues)
         metrics = self._rate_limiter.get_metrics()
-        logger.info(
-            f"Rate limiter stats: {metrics.total_requests} requests, "
-            f"{metrics.error_429_count} 429s, current rate: {metrics.current_fill_rate:.2f} req/s"
-        )
+        if metrics.error_429_count > 0:
+            logger.info(
+                f"📊 API throttling: {metrics.error_429_count} rate limits hit, "
+                f"adjusted to {metrics.current_fill_rate:.2f} req/s"
+            )
 
         logger.info(f"Successfully generated {success_count}/{len(stories)} images")
         return success_count
@@ -460,10 +469,10 @@ class ImageGenerator:
                     alt_text = self._generate_alt_text(story, prompt)
                     return (image_path, alt_text)
                 # HuggingFace failed, fall back to Imagen
-                logger.info("HuggingFace unavailable, falling back to Google Imagen...")
+                logger.info("🔄 HuggingFace unavailable, trying Google Imagen...")
 
             # Use Imagen model for image generation with retry on safety filter blocks
-            logger.info(f"Using Imagen model: {Config.MODEL_IMAGE}")
+            logger.info(f"🎨 Trying Google Imagen ({Config.MODEL_IMAGE})...")
             logger.debug(f"Prompt ({len(prompt.split())} words): {prompt[:200]}...")
 
             max_retries = 3
@@ -536,23 +545,58 @@ class ImageGenerator:
             if "billed users" in error_msg.lower():
                 print("\n" + "-" * 60)
                 print("Notice: Google's Imagen API requires a billed account.")
+
+                # Try HuggingFace first (if available and not exhausted)
                 hf_token = Config.get_settings().effective_huggingface_token
-                if hf_token:
+                if hf_token and not ImageGenerator._huggingface_unavailable:
                     print("I'll try Hugging Face Inference instead...")
                     hf_result = self._generate_huggingface_image(story, prompt)
                     if hf_result:
                         image_path, _ = hf_result
                         alt_text = self._generate_alt_text(story, prompt)
+                        print("-" * 60 + "\n")
                         return (image_path, alt_text)
+
+                # Try DALL-E 3 if OpenAI API key is configured
+                openai_key = (
+                    getattr(Config, "OPENAI_API_KEY", None)
+                    or Config.get_settings().openai_api_key
+                )
+                if openai_key:
+                    print("I'll try OpenAI DALL-E 3 instead...")
+                    dalle_result = self._generate_dalle3_image(story, prompt)
+                    if dalle_result:
+                        image_path, _ = dalle_result
+                        alt_text = self._generate_alt_text(story, prompt)
+                        print("-" * 60 + "\n")
+                        return (image_path, alt_text)
+
+                # Try Pollinations.ai - FREE, no API key needed!
+                print("I'll try Pollinations.ai (free, no API key)...")
+                pollinations_result = self._generate_pollinations_image(story, prompt)
+                if pollinations_result:
+                    image_path, _ = pollinations_result
+                    alt_text = self._generate_alt_text(story, prompt)
+                    print("-" * 60 + "\n")
+                    return (image_path, alt_text)
+
+                # Try local fallback as last resort
                 print("I'll try to use your local LLM/Image generator instead...")
                 print("-" * 60 + "\n")
 
-                # Try local fallback
                 local_result = self._generate_local_image(story, prompt)
                 if local_result:
                     image_path, _ = local_result
                     alt_text = self._generate_alt_text(story, prompt)
                     return (image_path, alt_text)
+
+                # All fallbacks failed - provide helpful guidance
+                print("\n" + "=" * 60)
+                print("IMAGE GENERATION: All providers unavailable")
+                print("=" * 60)
+                print("Note: Pollinations.ai should always work (it's free).")
+                print("If it failed, check your internet connection.")
+                print("=" * 60 + "\n")
                 return None
 
             if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
@@ -579,7 +623,7 @@ class ImageGenerator:
         # Use the configured model or default to the free FLUX.1-schnell
         model = Config.HF_TTI_MODEL or "black-forest-labs/FLUX.1-schnell"
 
-        logger.info(f"Attempting Hugging Face image generation via model '{model}'")
+        logger.info(f"🎨 Trying HuggingFace ({model.split('/')[-1]})...")
 
         try:
             # Initialize InferenceClient - works with or without token for free models
@@ -629,11 +673,90 @@ class ImageGenerator:
             # Handle 402 Payment Required - HuggingFace free tier exhausted
             if "402" in error_str or "Payment Required" in error_str:
                 logger.warning(
-                    "HuggingFace free tier exhausted (402). Disabling for this session."
+                    "⚠️ HuggingFace free credits used up - trying other providers..."
                 )
                 ImageGenerator._huggingface_unavailable = True
             else:
-                logger.warning(f"Hugging Face image generation failed: {e}")
+                logger.warning(f"⚠️ HuggingFace unavailable: {e}")
+            return None
+
+    def _generate_pollinations_image(
+        self, story: Story, prompt: str
+    ) -> tuple[str, str] | None:
+        """Generate an image using Pollinations.ai - completely FREE, no API key needed!
+
+        Pollinations.ai provides free image generation using FLUX and other models.
+        No rate limits, no authentication required.
+
+        Returns (file_path, prompt_used) if successful, or None.
+        """
+        import requests
+        from urllib.parse import quote
+
+        logger.info(f"🎨 Trying Pollinations.ai (free, unlimited)...")
+
+        try:
+            # Pollinations.ai uses a simple URL-based API
+            # URL encode the prompt for safe transmission
+            encoded_prompt = quote(prompt)
+
+            # Log the prompt being sent
+            logger.info(
+                f"📝 Prompt: {prompt[:200]}{'...' if len(prompt) > 200 else ''}"
+            )
+
+            # Build the URL with parameters for best quality
+            # Available models: flux, flux-realism, flux-anime, flux-3d, turbo
+            # Using flux-realism for photorealistic results suited for engineering content
+            url = (
+                f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+                f"?width=1024&height=1024&model=flux-realism&nologo=true"
+            )
+
+            logger.debug(f"Pollinations URL: {url[:100]}...")
+
+            # Make the request with a reasonable timeout
+            response = requests.get(
+                url, timeout=120
+            )  # Images can take time to generate
+
+            if response.status_code == 200 and response.content:
+                from io import BytesIO
+
+                # Load image from response bytes
+                image = Image.open(BytesIO(response.content))
+
+                # Add AI watermark
+                watermarked_image = add_ai_watermark(image)
+
+                # Save the image
+                filename = f"story_{story.id}_{int(time.time())}_pollinations.png"
+                filepath = os.path.join(Config.IMAGE_DIR, filename)
+                watermarked_image.save(filepath)
+
+                # Verify the file was written
+                if os.path.exists(filepath):
+                    file_size = os.path.getsize(filepath)
+                    logger.info(
+                        f"✅ Image created via Pollinations.ai ({file_size // 1024}KB)"
+                    )
+                    return (filepath, prompt)
+                else:
+                    logger.error(
+                        f"Pollinations image file NOT found after save: {filepath}"
+                    )
+                    return None
+            else:
+                logger.warning(
+                    f"Pollinations.ai returned status {response.status_code}"
+                )
+                return None
+
+        except requests.Timeout:
+            logger.warning("Pollinations.ai request timed out (>120s)")
+            return None
+        except Exception as e:
+            logger.warning(f"Pollinations.ai image generation failed: {e}")
             return None
 
     def _generate_local_image(
@@ -699,7 +822,7 @@ class ImageGenerator:
             logger.debug("No OPENAI_API_KEY configured for DALL-E 3")
             return None
 
-        logger.info(f"Attempting DALL-E 3 image generation for story {story.id}...")
+        logger.info(f"🎨 Trying OpenAI DALL-E 3...")
 
         try:
             # Create OpenAI client for DALL-E
@@ -754,7 +877,16 @@ class ImageGenerator:
                 return (filepath, prompt)
 
         except Exception as e:
-            logger.warning(f"DALL-E 3 image generation failed: {e}")
+            # Make error message more user-friendly
+            error_msg = str(e)
+            if "billing_hard_limit_reached" in error_msg:
+                logger.warning(
+                    "⚠️ OpenAI billing limit reached - trying other providers..."
+                )
+            elif "insufficient_quota" in error_msg:
+                logger.warning("⚠️ OpenAI quota exhausted - trying other providers...")
+            else:
+                logger.warning(f"⚠️ DALL-E 3 unavailable: {e}")
 
         return None
 
@@ -799,6 +931,12 @@ class ImageGenerator:
             Config.HF_TTI_MODEL = "stabilityai/stable-diffusion-xl-base-1.0"
             result = self._generate_huggingface_image(story, prompt)
             Config.HF_TTI_MODEL = original_model
+            if result:
+                image_path, _ = result
+                alt_text = self._generate_alt_text(story, prompt)
+                return (image_path, alt_text)
+        elif model == ImageModel.POLLINATIONS:
+            result = self._generate_pollinations_image(story, prompt)
             if result:
                 image_path, _ = result
                 alt_text = self._generate_alt_text(story, prompt)
@@ -923,9 +1061,7 @@ Keep response under 100 words."""
             except Exception as e:
                 # Check for rate limit errors - skip analysis rather than fail
                 if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                    logger.info(
-                        "Skipping image analysis (Gemini rate limited). Image generation will proceed without source image context."
-                    )
+                    logger.info("⏸️ Skipping source image analysis (API rate limited)")
                     return ""
                 raise
 
@@ -1106,10 +1242,12 @@ Keep response under 100 words."""
                 if analysis:
                     result["ai_image_analysis"].append(analysis)
 
-            logger.info(
-                f"Extracted {len(result['text'])} chars, {len(result['images'])} images, "
-                f"{len(result['ai_image_analysis'])} AI analyses from source"
-            )
+            # Only log if we found something useful
+            if result["text"] or result["images"] or result["ai_image_analysis"]:
+                logger.info(
+                    f"📖 Source context: {len(result['text'])} chars, "
+                    f"{len(result['images'])} images found"
+                )
 
         except Exception as e:
             logger.debug(f"Failed to fetch source content: {e}")
@@ -1220,12 +1358,10 @@ Do NOT include: close-up portraits, waist-up shots of individuals, or any person
                 try:
                     if Config.HUMAN_IN_IMAGE:
                         logger.info(
-                            f"Using local LLM to refine image prompt (appearance: {random_appearance[:50]}...)"
+                            f"📝 Refining prompt with local LLM (with person)..."
                         )
                     else:
-                        logger.info(
-                            "Using local LLM to refine image prompt (no central human)"
-                        )
+                        logger.info("📝 Refining prompt with local LLM...")
                     refined = api_client.local_llm_generate(
                         client=self.local_client,
                         messages=[{"role": "user", "content": refinement_prompt}],
@@ -1246,12 +1382,10 @@ Do NOT include: close-up portraits, waist-up shots of individuals, or any person
                     try:
                         if Config.HUMAN_IN_IMAGE:
                             logger.info(
-                                f"Using Groq to refine image prompt (appearance: {random_appearance[:50]}...)"
+                                f"📝 Refining prompt with Groq (with person)..."
                             )
                         else:
-                            logger.info(
-                                "Using Groq to refine image prompt (no central human)"
-                            )
+                            logger.info("📝 Refining prompt with Groq...")
                         refined = api_client.groq_generate(
                             client=groq_client,
                             messages=[{"role": "user", "content": refinement_prompt}],
@@ -1263,13 +1397,9 @@ Do NOT include: close-up portraits, waist-up shots of individuals, or any person
             # Final fallback to Gemini
             if not refined:
                 if Config.HUMAN_IN_IMAGE:
-                    logger.info(
-                        f"Using Gemini to refine image prompt (appearance: {random_appearance[:50]}...)"
-                    )
+                    logger.info(f"📝 Refining prompt with Gemini (with person)...")
                 else:
-                    logger.info(
-                        "Using Gemini to refine image prompt (no central human)"
-                    )
+                    logger.info("📝 Refining prompt with Gemini...")
                 response = api_client.gemini_generate(
                     client=self.client,
                     model=Config.MODEL_TEXT,
@@ -1407,7 +1537,7 @@ Return ONLY the alt text, nothing else."""
                 # Truncate if too long
                 if len(alt_text) > 200:
                     alt_text = alt_text[:197] + "..."
-                logger.info(f"Generated alt text: {alt_text[:60]}...")
+                logger.info(f"📄 Alt text: {alt_text[:60]}...")
                 return alt_text
 
         except Exception as e:
