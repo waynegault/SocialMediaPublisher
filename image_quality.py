@@ -90,13 +90,18 @@ class QualityScore:
 
     @property
     def is_acceptable(self) -> bool:
-        """Return True if image meets minimum quality threshold."""
-        return self.overall_score >= 0.6 and self.artifacts.is_clean
+        """Return True if image meets minimum quality threshold.
+
+        Note: Technical metrics alone cannot detect semantic AI artifacts
+        (distorted faces, wrong anatomy, etc.) - those require LLM vision
+        analysis during verification. This threshold catches technical issues.
+        """
+        return self.overall_score >= 0.75 and self.artifacts.is_clean
 
     @property
     def is_excellent(self) -> bool:
         """Return True if image is high quality."""
-        return self.overall_score >= 0.8 and self.artifacts.is_clean
+        return self.overall_score >= 0.85 and self.artifacts.is_clean
 
     def get_grade(self) -> str:
         """Get letter grade for quality."""

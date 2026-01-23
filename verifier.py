@@ -87,36 +87,49 @@ class ContentVerifier:
                         skipped += 1
                         continue
 
-                # Log LinkedIn profile status
-                linkedin_valid, linkedin_msg = self._validate_linkedin_profiles(story)
-                logger.info(f"  LinkedIn status: {linkedin_msg}")
+                # Log LinkedIn profile status (only enforce if configured)
+                if Config.REQUIRE_LINKEDIN_PROFILES:
+                    linkedin_valid, linkedin_msg = self._validate_linkedin_profiles(
+                        story
+                    )
+                    logger.info(f"  LinkedIn status: {linkedin_msg}")
 
-                # If LinkedIn coverage insufficient and callback available, try to fix it
-                if not linkedin_valid and linkedin_lookup_callback is not None:
-                    logger.info(f"  🔄 Auto-running LinkedIn profile lookup...")
-                    try:
-                        linkedin_lookup_callback([story])
-                        # Refresh the story from database after lookup
-                        if story.id is not None:
-                            refreshed_story = self.db.get_story(story.id)
-                            if refreshed_story:
-                                story = refreshed_story
-                        # Re-validate LinkedIn profiles after lookup
-                        linkedin_valid, linkedin_msg = self._validate_linkedin_profiles(
-                            story
-                        )
-                        logger.info(f"  LinkedIn status (after lookup): {linkedin_msg}")
-                    except Exception as e:
-                        logger.warning(f"  LinkedIn lookup failed: {e}")
+                    # If LinkedIn coverage insufficient and callback available, try to fix it
+                    if not linkedin_valid and linkedin_lookup_callback is not None:
+                        logger.info(f"  🔄 Auto-running LinkedIn profile lookup...")
+                        try:
+                            linkedin_lookup_callback([story])
+                            # Refresh the story from database after lookup
+                            if story.id is not None:
+                                refreshed_story = self.db.get_story(story.id)
+                                if refreshed_story:
+                                    story = refreshed_story
+                            # Re-validate LinkedIn profiles after lookup
+                            linkedin_valid, linkedin_msg = (
+                                self._validate_linkedin_profiles(story)
+                            )
+                            logger.info(
+                                f"  LinkedIn status (after lookup): {linkedin_msg}"
+                            )
+                        except Exception as e:
+                            logger.warning(f"  LinkedIn lookup failed: {e}")
 
-                # Reject stories without sufficient LinkedIn profile coverage
-                if not linkedin_valid:
-                    story.verification_status = "rejected"
-                    story.verification_reason = linkedin_msg
-                    rejected += 1
-                    logger.warning(f"  ✗ REJECTED: {linkedin_msg}")
-                    self.db.update_story(story)
-                    continue
+                    # Reject stories without sufficient LinkedIn profile coverage
+                    if not linkedin_valid:
+                        story.verification_status = "rejected"
+                        story.verification_reason = linkedin_msg
+                        rejected += 1
+                        logger.warning(f"  ✗ REJECTED: {linkedin_msg}")
+                        self.db.update_story(story)
+                        continue
+                else:
+                    # LinkedIn profiles not required - just log status for info
+                    all_people = (story.direct_people or []) + (
+                        story.indirect_people or []
+                    )
+                    logger.debug(
+                        f"  LinkedIn check skipped (REQUIRE_LINKEDIN_PROFILES=False), {len(all_people)} people identified"
+                    )
 
                 is_approved, reason = self._verify_story(story)
 
@@ -192,6 +205,26 @@ class ContentVerifier:
             except Exception as e:
                 logger.warning(f"  Originality check error (continuing): {e}")
 
+        # Check summary length (must be at least 80% of target)
+        summary_word_count = len(story.summary.split())
+        min_summary_words = int(Config.SUMMARY_WORD_COUNT * 0.8)
+        if summary_word_count < min_summary_words:
+            reason = (
+                f"Summary too short: {summary_word_count} words "
+                f"(minimum {min_summary_words}, target {Config.SUMMARY_WORD_COUNT})"
+            )
+            logger.warning(f"  Summary length check failed: {reason}")
+            return (False, reason)
+
+        # Check quality justification exists
+        if (
+            not story.quality_justification
+            or len(story.quality_justification.strip()) < 10
+        ):
+            reason = "No quality justification provided - indicates poor curation"
+            logger.warning(f"  Quality justification check failed: {reason}")
+            return (False, reason)
+
         # Build verification prompt
         prompt = self._build_verification_prompt(story)
 
@@ -218,6 +251,20 @@ class ContentVerifier:
         """Verify story content with its associated image.
         Returns tuple of (is_approved, reason).
         """
+        # Enhance prompt to include image quality verification
+        image_prompt = prompt + (
+            "\n\nIMAGE VERIFICATION (CRITICAL):\n"
+            "Carefully examine the attached AI-generated image for:\n"
+            "1. DISTORTED FEATURES: Check for warped/melted faces, wrong number of fingers, "
+            "extra limbs, distorted body proportions, or unnatural anatomy\n"
+            "2. TEXT ARTIFACTS: Any garbled, misspelled, or nonsensical text in the image\n"
+            "3. VISUAL COHERENCE: Does the image make logical sense? Are objects properly formed?\n"
+            "4. PROFESSIONALISM: Is the image appropriate for LinkedIn business content?\n"
+            "5. RELEVANCE: Does the image relate to the story topic?\n\n"
+            "If the image has ANY significant visual defects (distorted faces, wrong anatomy, "
+            "text artifacts, bizarre compositions), respond REJECTED with the specific issue.\n"
+            "A professional LinkedIn post CANNOT have a visually defective image."
+        )
         try:
             if not story.image_path:
                 return self._verify_text_only(prompt)
@@ -241,7 +288,7 @@ class ContentVerifier:
                             {
                                 "role": "user",
                                 "content": [
-                                    {"type": "text", "text": prompt},
+                                    {"type": "text", "text": image_prompt},
                                     {
                                         "type": "image_url",
                                         "image_url": {
@@ -268,7 +315,7 @@ class ContentVerifier:
             response = api_client.gemini_generate(
                 client=self.client,
                 model=Config.MODEL_VERIFICATION,
-                contents=[prompt, image],
+                contents=[image_prompt, image],
                 endpoint="image_verify",
             )
             if not response.text:
@@ -348,6 +395,9 @@ class ContentVerifier:
             story.promotion if story.promotion else "(No promotion message assigned)"
         )
 
+        summary_word_count = len(story.summary.split())
+        min_summary_words = int(Config.SUMMARY_WORD_COUNT * 0.8)
+
         return Config.VERIFICATION_PROMPT.format(
             search_prompt=Config.SEARCH_PROMPT,
             story_title=story.title,
@@ -356,6 +406,9 @@ class ContentVerifier:
             people_count=people_count,
             linkedin_profiles_found=linkedin_profiles_found,
             summary_word_limit=Config.SUMMARY_WORD_COUNT,
+            summary_word_count=summary_word_count,
+            min_summary_words=min_summary_words,
+            quality_justification=story.quality_justification or "(none provided)",
             promotion_message=promotion_message,
             discipline=Config.DISCIPLINE,
         )
@@ -382,9 +435,8 @@ class ContentVerifier:
             )
 
         # Validation rules for sufficient people and LinkedIn profile coverage
-        # Note: We prioritize having SOME profiles over a strict percentage threshold
-        # Having 3+ LinkedIn profiles is considered sufficient for engagement
-        min_profiles_for_engagement = 3
+        # Use configurable minimum (default: 1)
+        min_profiles_for_engagement = Config.MIN_LINKEDIN_PROFILES
 
         if relevant_count == 0:
             return (
@@ -412,10 +464,10 @@ class ContentVerifier:
         lines = response_text.strip().split("\n")
         first_line = lines[0].strip().upper()
 
-        # Extract reason from second line onwards
+        # Extract reason from second line only (prompt requests single-line reason)
         reason = ""
         if len(lines) > 1:
-            reason = " ".join(line.strip() for line in lines[1:] if line.strip())
+            reason = lines[1].strip()
 
         if "APPROVED" in first_line:
             return (True, reason)

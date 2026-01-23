@@ -1580,7 +1580,60 @@ EXTRACTION RULES:
                 return [], list(story.organizations)
 
             response_text = strip_markdown_code_block(response_text)
-            data = json.loads(response_text)
+
+            # Robust JSON parsing with multiple fallback strategies
+            data = None
+            parse_error = None
+
+            # Strategy 1: Direct parse
+            try:
+                data = json.loads(response_text)
+            except json.JSONDecodeError as e:
+                parse_error = e
+                logger.debug(f"Direct JSON parse failed: {e}")
+
+            # Strategy 2: Find JSON object in text
+            if data is None:
+                import re
+
+                json_match = re.search(
+                    r'\{[^{}]*"(?:direct_people|organizations)"[^{}]*\}',
+                    response_text,
+                    re.DOTALL,
+                )
+                if not json_match:
+                    # Try to find any JSON object
+                    json_match = re.search(r"\{[\s\S]*\}", response_text)
+                if json_match:
+                    try:
+                        data = json.loads(json_match.group())
+                        logger.debug("JSON extracted via regex")
+                    except json.JSONDecodeError:
+                        pass
+
+            # Strategy 3: Try to fix common JSON issues
+            if data is None:
+                # Fix unquoted keys, trailing commas, etc.
+                fixed_text = response_text
+                # Remove trailing commas before closing brackets
+                fixed_text = re.sub(r",\s*([}\]])", r"\1", fixed_text)
+                # Try to find and parse the JSON portion
+                start_idx = fixed_text.find("{")
+                end_idx = fixed_text.rfind("}")
+                if start_idx != -1 and end_idx > start_idx:
+                    try:
+                        data = json.loads(fixed_text[start_idx : end_idx + 1])
+                        logger.debug("JSON parsed after cleanup")
+                    except json.JSONDecodeError:
+                        pass
+
+            # Strategy 4: Return empty if all parsing failed
+            if data is None:
+                logger.warning(
+                    f"Failed to parse enrichment JSON for story {story.id}: {parse_error}"
+                )
+                logger.debug(f"Raw response (first 500 chars): {response_text[:500]}")
+                return [], list(story.organizations)
 
             direct_people_raw = data.get("direct_people") or data.get("people") or []
             organizations = data.get("organizations", []) or []
@@ -1590,7 +1643,7 @@ EXTRACTION RULES:
             )
             return direct_people, organizations
         except Exception as e:
-            logger.debug(f"Direct extraction fallback for story {story.id}: {e}")
+            logger.warning(f"Direct extraction error for story {story.id}: {e}")
             return [], list(story.organizations)
 
     def _filter_valid_organizations(self, organizations: set[str]) -> set[str]:

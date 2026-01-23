@@ -26,6 +26,7 @@ from PIL import Image, ImageDraw, ImageFont
 from api_client import api_client
 from config import Config
 from database import Database, Story
+from image_quality import ImageQualityAssessor, QualityScore
 from rate_limiter import AdaptiveRateLimiter
 from url_utils import resolve_relative_url
 
@@ -328,6 +329,15 @@ class ImageGenerator:
     # This persists across all instances to avoid repeated failed calls
     _huggingface_unavailable: bool = False
 
+    # Image quality assessor (shared across instances)
+    _quality_assessor: ImageQualityAssessor | None = None
+
+    # Minimum acceptable quality score for generated images
+    # Note: Technical metrics alone can't detect "ludicrous" AI artifacts like
+    # distorted faces/hands - those are caught by LLM verification later.
+    # This threshold catches obvious technical issues (blur, noise, banding).
+    MIN_IMAGE_QUALITY_SCORE = 0.65
+
     def __init__(
         self,
         database: Database,
@@ -340,9 +350,53 @@ class ImageGenerator:
         self.local_client = local_client
         self._ensure_image_directory()
 
+        # Initialize quality assessor if not already done
+        if ImageGenerator._quality_assessor is None:
+            ImageGenerator._quality_assessor = ImageQualityAssessor()
+
     def _ensure_image_directory(self) -> None:
         """Ensure the image directory exists."""
         Path(Config.IMAGE_DIR).mkdir(parents=True, exist_ok=True)
+
+    def _validate_image_quality(self, filepath: str) -> tuple[bool, QualityScore]:
+        """Validate the quality of a generated image.
+
+        Args:
+            filepath: Path to the generated image
+
+        Returns:
+            Tuple of (is_acceptable, quality_score)
+        """
+        if self._quality_assessor is None:
+            # No assessor available, accept by default
+            return (
+                True,
+                QualityScore(
+                    overall_score=0.7,
+                    metrics=None,  # type: ignore
+                    artifacts=None,  # type: ignore
+                ),
+            )
+
+        score = self._quality_assessor.assess_image(filepath)
+
+        # Log quality assessment
+        if score.overall_score < self.MIN_IMAGE_QUALITY_SCORE:
+            logger.warning(
+                f"⚠️ Image quality below threshold: {score.overall_score:.2f} < {self.MIN_IMAGE_QUALITY_SCORE}"
+            )
+            if score.issues:
+                logger.warning(f"   Issues: {', '.join(score.issues[:3])}")
+            if score.artifacts and not score.artifacts.is_clean:
+                logger.warning(
+                    f"   Artifacts: {', '.join(score.artifacts.artifact_descriptions[:3])}"
+                )
+        else:
+            logger.info(
+                f"✓ Image quality acceptable: {score.overall_score:.2f} (grade: {score.get_grade()})"
+            )
+
+        return (score.is_acceptable, score)
 
     def generate_images_for_stories(self) -> int:
         """
@@ -533,6 +587,20 @@ class ImageGenerator:
                     logger.error(f"Image file NOT found after save: {filepath}")
                     return None
 
+                # Validate image quality
+                is_acceptable, quality_score = self._validate_image_quality(filepath)
+                if not is_acceptable:
+                    logger.warning(
+                        f"⚠️ Google Imagen image rejected due to low quality (score: {quality_score.overall_score:.2f}). "
+                        f"Will try another provider..."
+                    )
+                    # Delete the low-quality image
+                    try:
+                        os.remove(filepath)
+                    except OSError:
+                        pass
+                    return None
+
                 logger.debug(f"Saved watermarked image to {filepath}")
                 alt_text = self._generate_alt_text(story, prompt)
                 return (filepath, alt_text)
@@ -665,6 +733,20 @@ class ImageGenerator:
                 logger.error(f"HF image file NOT found after save: {filepath}")
                 return None
 
+            # Validate image quality
+            is_acceptable, quality_score = self._validate_image_quality(filepath)
+            if not is_acceptable:
+                logger.warning(
+                    f"⚠️ HuggingFace image rejected due to low quality (score: {quality_score.overall_score:.2f}). "
+                    f"Will try another provider..."
+                )
+                # Delete the low-quality image
+                try:
+                    os.remove(filepath)
+                except OSError:
+                    pass
+                return None
+
             logger.info(f"Successfully generated HF image: {filepath}")
             return (filepath, prompt)
 
@@ -740,6 +822,22 @@ class ImageGenerator:
                     logger.info(
                         f"✅ Image created via Pollinations.ai ({file_size // 1024}KB)"
                     )
+
+                    # Validate image quality
+                    is_acceptable, quality_score = self._validate_image_quality(
+                        filepath
+                    )
+                    if not is_acceptable:
+                        logger.warning(
+                            f"⚠️ Pollinations image rejected due to low quality (score: {quality_score.overall_score:.2f})"
+                        )
+                        # Delete the low-quality image
+                        try:
+                            os.remove(filepath)
+                        except OSError:
+                            pass
+                        return None
+
                     return (filepath, prompt)
                 else:
                     logger.error(
