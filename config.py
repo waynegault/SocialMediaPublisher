@@ -423,8 +423,8 @@ class SettingsModel(BaseSettings):
             "LinkedIn profiles found: {linkedin_profiles_found}\n"
             "Search criteria: {search_prompt}\n\n"
             "STRICT REJECTION CRITERIA (reject if ANY apply):\n"
-            "1. SUMMARY LENGTH: Summary must be at least 80% of target word count ({min_summary_words}+ words). "
-            "A 30-word summary for a 250-word target is UNACCEPTABLE.\n"
+            "1. SUMMARY LENGTH: Summary must be 80%-130% of target word count ({min_summary_words}-{summary_word_limit}+ words). "
+            "Too short (<80%) = lacks depth. Slightly over target (up to 130%) is ACCEPTABLE.\n"
             "2. RELEVANCE: Story must be DIRECTLY relevant to {discipline} work - not tangentially related. "
             "A story about shipbuilding is NOT relevant to chemical engineering even if ships carry chemicals.\n"
             "3. SUBSTANCE: Summary must provide insight, analysis, or professional value - not just restate the headline.\n"
@@ -437,7 +437,7 @@ class SettingsModel(BaseSettings):
             "Strong technical content directly relevant to chemical engineering with good depth.\n\n"
             "REJECTED\n"
             "Summary only 30 words, needs 160+ words minimum.\n\n"
-            "Be STRICT - reject marginal content rather than publish poor quality."
+            "Be STRICT on relevance and substance - but accept summaries within 80-130% of target."
         ),
         alias="VERIFICATION_PROMPT",
     )

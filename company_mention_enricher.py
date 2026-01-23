@@ -1635,6 +1635,13 @@ EXTRACTION RULES:
                 logger.debug(f"Raw response (first 500 chars): {response_text[:500]}")
                 return [], list(story.organizations)
 
+            # Validate data is a dict (LLM might return a string or list)
+            if not isinstance(data, dict):
+                logger.warning(
+                    f"Expected dict, got {type(data).__name__} for story {story.id}"
+                )
+                return [], list(story.organizations)
+
             direct_people_raw = data.get("direct_people") or data.get("people") or []
             organizations = data.get("organizations", []) or []
 
@@ -2197,6 +2204,12 @@ Return ONLY valid JSON, no explanation."""
             response_text = strip_markdown_code_block(response.text)
 
             data = json.loads(response_text)
+
+            # Validate data is a dict (LLM might return a string or list)
+            if not isinstance(data, dict):
+                logger.debug(f"Expected dict, got {type(data).__name__}, falling back")
+                return self._extract_orgs_and_people_fallback(story)
+
             orgs = data.get("organizations", [])
             people = data.get("direct_people", [])
 
@@ -2263,6 +2276,12 @@ Return ONLY valid JSON, no explanation."""
                     response_text = json_match.group(0)
 
             data = json.loads(response_text)
+
+            # Validate data is a dict (LLM might return a string or list)
+            if not isinstance(data, dict):
+                logger.debug(f"Expected dict, got {type(data).__name__} in fallback")
+                return None
+
             orgs = data.get("organizations", [])
             people = data.get("direct_people", [])
 
