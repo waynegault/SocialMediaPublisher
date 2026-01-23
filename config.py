@@ -306,6 +306,17 @@ class SettingsModel(BaseSettings):
         default=True, alias="SOURCE_VERIFICATION_ENABLED"
     )
 
+    # --- LinkedIn Profile Requirement ---
+    # When True, stories require identified people with LinkedIn profiles to pass verification
+    # When False, stories can pass verification without any identified people
+    require_linkedin_profiles: bool = Field(
+        default=False, alias="REQUIRE_LINKEDIN_PROFILES"
+    )
+    # Minimum number of LinkedIn profiles required (only applies when require_linkedin_profiles=True)
+    min_linkedin_profiles: int = Field(
+        default=1, ge=0, le=10, alias="MIN_LINKEDIN_PROFILES"
+    )
+
     # --- URL Archiving ---
     archive_source_urls: bool = Field(default=False, alias="ARCHIVE_SOURCE_URLS")
 
@@ -371,24 +382,62 @@ class SettingsModel(BaseSettings):
         alias="IMAGE_FALLBACK_PROMPT",
     )
     search_instruction_prompt: str = Field(
-        default="", alias="SEARCH_INSTRUCTION_PROMPT"
+        default=(
+            "You are an expert {discipline_title} news curator with HIGH editorial standards.\n\n"
+            "TASK: Find up to {max_stories} groundbreaking stories matching: {search_prompt}\n\n"
+            "STRICT REQUIREMENTS:\n"
+            "1. Stories must be DIRECTLY relevant to {discipline} professional work\n"
+            "2. Must be from reputable sources (major publications, research institutions, industry news)\n"
+            "3. Must have verifiable facts and specific technical details\n"
+            "4. No speculation, opinion pieces, or tangentially related content\n"
+            "5. Must be published after {since_date}\n\n"
+            "For EACH story, provide:\n"
+            "- title: Clear, engaging headline\n"
+            "- summary: EXACTLY {summary_words} words, first-person narrative starting with 'I', "
+            "providing professional insight and analysis (NOT just restating the headline)\n"
+            "- sources: Array of source article URLs\n"
+            "- quality_score: 1-10 rating (be harsh: 7=decent, 8=good, 9=excellent, 10=exceptional)\n"
+            "- quality_justification: 1-2 sentences explaining WHY this score and relevance (REQUIRED)\n"
+            "- category: One of [Research, Industry, Career, Technology, Policy]\n"
+            "- direct_people: Array of people mentioned with name, position, company\n\n"
+            "QUALITY STANDARDS:\n"
+            "- Only include stories you would score 7+\n"
+            "- A 9/10 story must have exceptional relevance and depth\n"
+            "- Reject tangentially related content (e.g., shipping for chemical engineering)\n\n"
+            "Return ONLY valid JSON array, no markdown or explanation."
+        ),
+        alias="SEARCH_INSTRUCTION_PROMPT",
     )
     verification_prompt: str = Field(
         default=(
-            "You are verifying content for LinkedIn publication.\n\n"
+            "You are a strict quality gatekeeper verifying content for LinkedIn publication.\n\n"
             "STORY TO EVALUATE:\n"
             "Title: {story_title}\n"
             "Summary: {story_summary}\n"
+            "Summary word count: {summary_word_count} (target: {summary_word_limit})\n"
+            "Quality justification provided: {quality_justification}\n"
             "Sources: {story_sources}\n"
             "Discipline: {discipline}\n"
             "Promotion: {promotion_message}\n"
             "People identified: {people_count}\n"
             "LinkedIn profiles found: {linkedin_profiles_found}\n"
-            "Word limit: {summary_word_limit}\n"
             "Search criteria: {search_prompt}\n\n"
-            "Respond with APPROVED or REJECTED followed by a brief reason.\n"
-            "APPROVED: Content is professional and suitable.\n"
-            "REJECTED: Content has issues."
+            "STRICT REJECTION CRITERIA (reject if ANY apply):\n"
+            "1. SUMMARY LENGTH: Summary must be at least 80% of target word count ({min_summary_words}+ words). "
+            "A 30-word summary for a 250-word target is UNACCEPTABLE.\n"
+            "2. RELEVANCE: Story must be DIRECTLY relevant to {discipline} work - not tangentially related. "
+            "A story about shipbuilding is NOT relevant to chemical engineering even if ships carry chemicals.\n"
+            "3. SUBSTANCE: Summary must provide insight, analysis, or professional value - not just restate the headline.\n"
+            "4. QUALITY JUSTIFICATION: If no quality justification was provided by the search, this indicates low-quality curation.\n\n"
+            "RESPONSE FORMAT:\n"
+            "Line 1: APPROVED or REJECTED\n"
+            "Line 2: Brief reason (MAX 20 words) citing which criteria failed or why approved.\n\n"
+            "Example responses:\n"
+            "APPROVED\n"
+            "Strong technical content directly relevant to chemical engineering with good depth.\n\n"
+            "REJECTED\n"
+            "Summary only 30 words, needs 160+ words minimum.\n\n"
+            "Be STRICT - reject marginal content rather than publish poor quality."
         ),
         alias="VERIFICATION_PROMPT",
     )
@@ -402,17 +451,22 @@ class SettingsModel(BaseSettings):
     )
     local_llm_search_prompt: str = Field(
         default=(
-            "You are a news curator for a {discipline} professional. Analyze these search results and extract relevant stories.\n\n"
+            "You are a strict news curator for a {discipline} professional. Analyze these search results and extract ONLY highly relevant stories.\n\n"
             "SEARCH RESULTS:\n{search_results}\n\n"
-            "TASK: Select up to {max_stories} stories most relevant to a {discipline} professional for LinkedIn publication.\n\n"
+            "TASK: Select up to {max_stories} stories that are DIRECTLY relevant to {discipline} professional work for LinkedIn publication.\n\n"
+            "RELEVANCE CRITERIA (be strict):\n"
+            "- Story must be about {discipline} processes, techniques, research, or industry developments\n"
+            "- Tangentially related stories (e.g., logistics, shipping, business deals) should be scored LOW or excluded\n"
+            "- Prefer stories with technical depth, research findings, or professional insights\n\n"
             "For each story, provide:\n"
             "- title: Clear, engaging headline\n"
-            "- summary: {summary_words}-word first-person summary starting with 'I' (e.g., 'I came across...', 'I was excited to see...')\n"
+            "- summary: EXACTLY {summary_words} words, first-person narrative starting with 'I' providing professional insight and analysis, NOT just restating the headline\n"
             "- source_links: Array of source URLs\n"
-            "- quality_score: 1-10 rating for professional relevance\n"
+            "- quality_score: 1-10 rating (be harsh: 7-8 = good, 9-10 = exceptional only)\n"
+            "- quality_justification: 1-2 sentences explaining WHY this score (REQUIRED)\n"
             "- category: One of [Research, Industry, Career, Technology, Policy]\n\n"
             "Return ONLY a valid JSON array, no markdown or explanation:\n"
-            '[{{"title": "...", "summary": "...", "source_links": ["..."], "quality_score": 8, "category": "Research"}}]'
+            '[{{"title": "...", "summary": "...", "source_links": ["..."], "quality_score": 7, "quality_justification": "Directly relevant to {discipline} because...", "category": "Research"}}]'
         ),
         alias="LOCAL_LLM_SEARCH_PROMPT",
     )

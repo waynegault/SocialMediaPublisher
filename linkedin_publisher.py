@@ -779,13 +779,29 @@ class LinkedInPublisher:
         return result
 
     def _extract_urn_id(self, urn: str) -> Optional[str]:
-        """Extract the numeric ID from a LinkedIn URN."""
+        """Extract the ID from a LinkedIn URN.
+
+        LinkedIn URNs can have different ID formats:
+        - Numeric: urn:li:person:123456789
+        - Alphanumeric: urn:li:person:j1j3gunsBl
+        - Short format: person:12345
+
+        The API may also return just the bare ID (e.g., 'j1j3gunsBl').
+        """
         if not urn:
             return None
-        # Match patterns like: urn:li:person:12345 or person:12345
-        match = re.search(r"(?:urn:li:)?(?:person|organization):(\d+)", urn)
+
+        # Match patterns like: urn:li:person:12345 or person:12345 or urn:li:organization:ABC123
+        # ID can be numeric or alphanumeric
+        match = re.search(r"(?:urn:li:)?(?:person|organization):([a-zA-Z0-9_-]+)", urn)
         if match:
             return match.group(1)
+
+        # If no URN pattern matched, check if it's already a bare ID (alphanumeric string)
+        # This handles cases where the API returns just the ID without the URN prefix
+        if re.match(r"^[a-zA-Z0-9_-]+$", urn):
+            return urn
+
         return None
 
     def _extract_public_id(self, linkedin_url: str) -> Optional[str]:

@@ -56,8 +56,9 @@ def validate_url_accessible(
         use_get_fallback: If True, fall back to GET when HEAD returns 405
 
     Returns:
-        True if URL is accessible or times out (site might be slow),
-        False on connection errors or 4xx/5xx status codes
+        True if URL is accessible, times out (site might be slow),
+             or returns 429 (rate limited - assume URL exists)
+        False on connection errors or 4xx/5xx status codes (except 429)
     """
     if not validate_url_format(url):
         return False
@@ -80,6 +81,11 @@ def validate_url_accessible(
                 allow_redirects=True,
                 endpoint="url_validation",
             )
+
+        # 429 = rate limited, but URL likely exists - accept it
+        if response.status_code == 429:
+            logger.debug(f"URL rate limited (accepting anyway): {url}")
+            return True
 
         if response.status_code >= 400:
             logger.debug(f"URL returned {response.status_code}: {url}")

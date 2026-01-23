@@ -492,10 +492,34 @@ def create_stories_api_blueprint(db: Database) -> Blueprint:
             logger.exception(f"Failed to reject story {story_id}")
             return jsonify({"error": str(e)}), 500
 
+    @bp.route("/<int:story_id>/validate-publish", methods=["POST"])
+    def validate_publish(story_id: int):
+        """Validate a story before publishing (pre-flight check)."""
+        logger.info(f"Validate-publish request for story {story_id}")
+        try:
+            story = db.get_story(story_id)
+            if not story:
+                logger.warning(f"Story {story_id} not found")
+                return jsonify({"error": "Story not found"}), 404
+
+            from linkedin_publisher import LinkedInPublisher
+
+            logger.info("Creating LinkedInPublisher...")
+            publisher = LinkedInPublisher(db)
+            logger.info("Running validate_before_publish...")
+            validation = publisher.validate_before_publish(story)
+            logger.info(f"Validation complete: is_valid={validation.is_valid}")
+
+            return jsonify(validation.to_dict())
+
+        except Exception as e:
+            logger.exception(f"Failed to validate story {story_id}")
+            return jsonify({"error": str(e)}), 500
+
     @bp.route("/<int:story_id>/publish", methods=["POST"])
     def publish_story(story_id: int):
         """Publish or schedule a story to LinkedIn.
-        
+
         If the story has a scheduled_time in the future, it will be scheduled.
         Otherwise, it will be published immediately.
         """

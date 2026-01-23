@@ -676,8 +676,8 @@ Social Media Publisher - Debug Menu
 
         try:
             input("\nPress Enter to continue...")
-        except EOFError:
-            pass  # Gracefully handle piped input
+        except (EOFError, KeyboardInterrupt):
+            pass  # Gracefully handle piped input or Ctrl+C
 
 
 def _test_search(engine: ContentEngine) -> None:
@@ -5389,9 +5389,16 @@ def main() -> int:
         return 0
 
     # Default: run interactive menu
-    interactive_menu(engine)
+    try:
+        interactive_menu(engine)
+    except KeyboardInterrupt:
+        print("\n\nExiting...")
     return 0
 
 
 if __name__ == "__main__":
-    exit(main())
+    try:
+        exit(main())
+    except KeyboardInterrupt:
+        print("\nExiting...")
+        exit(0)

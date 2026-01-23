@@ -1582,7 +1582,16 @@ HTML_TEMPLATE = """
                     headers: { 'Content-Type': 'application/json' }
                 });
 
-                const validation = await validateResponse.json();
+                // Check content type before parsing
+                const valContentType = validateResponse.headers.get('content-type') || '';
+                let validation;
+                if (valContentType.includes('application/json')) {
+                    validation = await validateResponse.json();
+                } else {
+                    const text = await validateResponse.text();
+                    console.error('Validation returned non-JSON:', text.substring(0, 500));
+                    throw new Error('Server returned an unexpected response during validation.');
+                }
 
                 if (!validateResponse.ok) {
                     showToast(validation.error || 'Validation failed', 'error');
@@ -1655,7 +1664,20 @@ HTML_TEMPLATE = """
                     headers: { 'Content-Type': 'application/json' }
                 });
 
-                const data = await response.json();
+                // Check content type before parsing - handle HTML error pages
+                const contentType = response.headers.get('content-type') || '';
+                let data;
+                if (contentType.includes('application/json')) {
+                    data = await response.json();
+                } else {
+                    // Server returned non-JSON (likely HTML error page)
+                    const text = await response.text();
+                    console.error('Non-JSON response:', text.substring(0, 500));
+                    if (text.includes('expired') || text.includes('invalid') || text.includes('<!doctype')) {
+                        throw new Error('LinkedIn access token may be expired. Please refresh your token in Settings.');
+                    }
+                    throw new Error('Server returned an unexpected response. Check the terminal for details.');
+                }
 
                 if (response.ok) {
                 if (data.scheduled) {
@@ -1772,6 +1794,28 @@ class ValidationServer:
         self.author_initial = self.author_name[0].upper() if self.author_name else "A"
 
         self._setup_routes()
+        self._setup_error_handlers()
+
+    def _setup_error_handlers(self):
+        """Set up global error handlers to ensure JSON responses."""
+
+        @self.app.errorhandler(Exception)
+        def handle_exception(e):
+            """Return JSON for any unhandled exception."""
+            logger.exception(f"Unhandled exception: {e}")
+            return jsonify({"error": str(e)}), 500
+
+        @self.app.errorhandler(500)
+        def handle_500(e):
+            """Return JSON for 500 errors."""
+            return jsonify({"error": "Internal server error"}), 500
+
+        @self.app.errorhandler(404)
+        def handle_404(e):
+            """Return JSON for 404 errors on API routes."""
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Not found"}), 404
+            return e  # Let Flask handle non-API 404s normally
 
     def _setup_routes(self):
         """Set up Flask routes."""
@@ -1894,16 +1938,21 @@ class ValidationServer:
         )
         def validate_publish(story_id: int):
             """Validate a story before publishing (pre-flight check)."""
+            logger.info(f"Validate-publish request for story {story_id}")
             try:
                 story = self.db.get_story(story_id)
                 if not story:
+                    logger.warning(f"Story {story_id} not found")
                     return jsonify({"error": "Story not found"}), 404
 
                 # Import and use linkedin_publisher
                 from linkedin_publisher import LinkedInPublisher
 
+                logger.info("Creating LinkedInPublisher...")
                 publisher = LinkedInPublisher(self.db)
+                logger.info("Running validate_before_publish...")
                 validation = publisher.validate_before_publish(story)
+                logger.info(f"Validation complete: is_valid={validation.is_valid}")
 
                 return jsonify(validation.to_dict())
 
@@ -1918,9 +1967,11 @@ class ValidationServer:
             If the story has a scheduled_time in the future, it will be scheduled.
             Otherwise, it will be published immediately.
             """
+            logger.info(f"Publish request received for story {story_id}")
             try:
                 story = self.db.get_story(story_id)
                 if not story:
+                    logger.warning(f"Story {story_id} not found")
                     return jsonify({"error": "Story not found"}), 404
 
                 # Verify story is human-approved (not just AI-approved)

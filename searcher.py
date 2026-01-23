@@ -737,6 +737,9 @@ class StorySearcher:
 
         logger.info("Distilling conversational prompt into search keywords...")
 
+        # Include current year to avoid LLM hallucinating outdated years
+        current_year = datetime.now().year
+
         messages = [
             {
                 "role": "system",
@@ -744,7 +747,7 @@ class StorySearcher:
             },
             {
                 "role": "user",
-                "content": f"Extract search keywords from: {search_prompt}",
+                "content": f"The current year is {current_year}. Extract search keywords from: {search_prompt}",
             },
         ]
 
@@ -1263,6 +1266,31 @@ class StorySearcher:
 
                 # Create new story with all fields
                 quality_score = data.get("quality_score", 5)
+                quality_justification = data.get("quality_justification", "")
+                summary = data.get("summary", "")
+
+                # QUALITY GATE 1: Penalize stories without justification
+                # If LLM didn't provide justification, cap score at 5 (mediocre)
+                if not quality_justification or len(quality_justification.strip()) < 10:
+                    if quality_score > 5:
+                        logger.warning(
+                            f"Capping quality score from {quality_score} to 5 - no justification provided for: {title[:50]}"
+                        )
+                        quality_score = 5
+                    quality_justification = "(No justification provided by LLM)"
+
+                # QUALITY GATE 2: Penalize stories with short summaries
+                # If summary is less than 50% of target, cap score at 4
+                summary_word_count = len(summary.split())
+                min_acceptable_words = int(Config.SUMMARY_WORD_COUNT * 0.5)
+                if summary_word_count < min_acceptable_words:
+                    if quality_score > 4:
+                        logger.warning(
+                            f"Capping quality score from {quality_score} to 4 - summary too short "
+                            f"({summary_word_count} words, need {min_acceptable_words}+) for: {title[:50]}"
+                        )
+                        quality_score = 4
+
                 # Apply quality score calibration based on configured weights
                 quality_score = calibrate_quality_score(
                     base_score=quality_score,
@@ -1271,7 +1299,6 @@ class StorySearcher:
                     acquire_date=datetime.now(),
                 )
                 category = data.get("category", "Other")
-                quality_justification = data.get("quality_justification", "")
                 # Extract hashtags (limit to 3)
                 hashtags = data.get("hashtags", [])
                 if isinstance(hashtags, list):
