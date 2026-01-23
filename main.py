@@ -1929,14 +1929,16 @@ def log_story_details(
         if story_ids:
             placeholders = ",".join("?" * len(story_ids))
             cursor.execute(
-                f"""SELECT id, title, summary, direct_people, indirect_people, organizations
+                f"""SELECT id, title, summary, direct_people, indirect_people, organizations,
+                           quality_score, quality_justification
                    FROM stories WHERE id IN ({placeholders}) ORDER BY id""",
                 story_ids,
             )
         else:
             # Get most recent stories
             cursor.execute("""
-                SELECT id, title, summary, direct_people, indirect_people, organizations
+                SELECT id, title, summary, direct_people, indirect_people, organizations,
+                       quality_score, quality_justification
                 FROM stories ORDER BY id DESC LIMIT 10
             """)
 
@@ -1946,6 +1948,8 @@ def log_story_details(
         story_id = row["id"]
         title = row["title"] or "Untitled"
         summary = row["summary"] or "No summary"
+        quality_score = row["quality_score"] or 0
+        quality_justification = row["quality_justification"] or "No justification"
         direct_people = (
             json_module.loads(row["direct_people"]) if row["direct_people"] else []
         )
@@ -1959,7 +1963,9 @@ def log_story_details(
         print(f"\n{'=' * 70}")
         print(f"STORY [{story_id}]: {title}")
         print(f"{'=' * 70}")
-        print(f"\nSUMMARY:\n{summary[:500]}{'...' if len(summary) > 500 else ''}")
+        print(f"\nQUALITY SCORE: {quality_score}/10")
+        print(f"QUALITY JUSTIFICATION: {quality_justification}")
+        print(f"\nSUMMARY ({len(summary.split())} words):\n{summary}")
 
         # Direct people (mentioned in the story)
         print(f"\nDIRECT PEOPLE ({len(direct_people)}):")
