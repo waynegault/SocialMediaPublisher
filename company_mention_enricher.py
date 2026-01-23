@@ -2007,11 +2007,22 @@ EXTRACTION RULES:
                             "  Extracting direct people from story text for enrichment..."
                         )
                         self._metrics.gemini_calls += 1
-                        llm_people, extracted_orgs = (
-                            self._extract_direct_people_from_story(story)
-                        )
-                        orgs.update(extracted_orgs)
-                        direct_people.extend(llm_people)
+                        try:
+                            llm_people, extracted_orgs = (
+                                self._extract_direct_people_from_story(story)
+                            )
+                            logger.debug(
+                                f"  Extracted: {len(llm_people)} people, {len(extracted_orgs) if isinstance(extracted_orgs, (list, set)) else 'N/A'} orgs"
+                            )
+                            orgs.update(extracted_orgs)
+                            direct_people.extend(llm_people)
+                        except Exception as extract_err:
+                            logger.error(
+                                f"  Direct people extraction failed: {type(extract_err).__name__}: {extract_err}"
+                            )
+                            import traceback
+
+                            logger.debug(f"  Traceback: {traceback.format_exc()}")
 
                     if not direct_people:
                         # Legacy fallback using existing extraction prompt
@@ -2537,6 +2548,14 @@ Return ONLY valid JSON, no explanation."""
                     return []
 
             data = json.loads(response_text)
+
+            # Validate data is a dict (LLM might return a string or list)
+            if not isinstance(data, dict):
+                logger.warning(
+                    f"Expected dict for indirect people, got {type(data).__name__}: {str(data)[:100]}"
+                )
+                return []
+
             leaders = data.get("leaders", [])
 
             # Validate and filter each leader - filter out AI explanation text
