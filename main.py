@@ -5153,6 +5153,17 @@ def _get_provider_model_options(provider: str) -> list[tuple[str, str]]:
             ("Deliberate", "Deliberate - photorealistic style"),
             ("Anything Diffusion", "Anything Diffusion - versatile"),
         ]
+    elif provider == "google_imagen":
+        return [
+            ("imagen-4.0-generate-001", "Imagen 4.0 - Latest, highest quality"),
+            ("imagen-3.0-generate-002", "Imagen 3.0 - Stable, recommended"),
+            ("imagen-3.0-generate-001", "Imagen 3.0 - Previous version"),
+        ]
+    elif provider == "openai_dalle":
+        return [
+            ("dall-e-3", "DALL-E 3 - Highest quality, follows prompts closely"),
+            ("dall-e-2", "DALL-E 2 - Faster, lower cost"),
+        ]
     return []
 
 
