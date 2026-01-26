@@ -504,7 +504,7 @@ def interactive_menu(engine: ContentEngine) -> None:
     # Build menu as a single string to avoid any output interleaving issues
     menu_text = """
 ============================================================
-Social Media Publisher - Debug Menu
+Social Media Publisher - Menu
 ============================================================
 
   Pipeline:
@@ -512,56 +512,57 @@ Social Media Publisher - Debug Menu
 
   Configuration:
     2. Show Configuration
-    3. View All Prompts (full text)
+    3. View All Prompts
     4. Show Full Status
-    5. Install Dependencies (requirements.txt)
+    5. Configure Image Provider
+    6. Configure LinkedIn Voyager API Cookies
+    7. Configure RapidAPI Key (LinkedIn Lookups)
+    8. Install Dependencies (requirements.txt)
 
-  Database Operations:
-    6. View Database Statistics
-    7. List All Stories
-    8. List Pending Stories
-    9. List Scheduled Stories
-   10. List Human Approved Stories (not published)
-   11. Cleanup Old Stories
-   12. Backup Database
-   13. Restore Database from Backup
-   14. Verify Database Integrity
-   15. Retry Rejected Stories (regenerate image + re-verify)
+  Database:
+    10. View Database Statistics
+    11. List All Stories
+    12. List Pending Stories
+    13. List Scheduled Stories
+    14. List Human Approved Stories (not published)
+    15. Backup Database
+    16. Restore Database from Backup
+    17. Verify Database Integrity
 
-  Component Testing:
-   16. Search, Enrich & Assign Promotions
-   17. Test Image Generation
-   18. Test Content Verification
-   19. Test Scheduling
-   20. Human Validation (Web GUI)
-   21. Test LinkedIn Connection
-   23. Test LinkedIn Publish (due stories)
-   24. Publish One Scheduled Story Now
-   25. Run Unit Tests
+  Content Pipeline:
+    20. Search, Enrich & Assign Promotions
+    21. Test Image Generation
+    22. Test Content Verification
+    23. Test Scheduling
+    24. Human Validation (Web GUI)
+    25. Retry Rejected Stories (regenerate image + re-verify)
 
-  Analytics:
-   26. View LinkedIn Analytics
-   27. Refresh All Analytics
+  LinkedIn:
+    30. Test LinkedIn Connection
+    31. Test LinkedIn Publish (due stories)
+    32. Publish One Scheduled Story Now
+    33. Process Connection Queue (send queued requests)
+    34. View Connection Tracking Dashboard
+    35. Clear LinkedIn Profile Cache (retry failed lookups)
 
-  Advanced Tools:
-   29. Launch Dashboard (Web GUI)
-   30. View A/B Tests
-   31. Analyze Post Optimization
-   32. Check Story Originality
-   33. View Source Credibility
-   34. Analyze Trends & Freshness
-   35. Analyze Intent Classification
-   36. Test Notifications
+  Analytics & Tools:
+    40. View LinkedIn Analytics
+    41. Refresh All Analytics
+    42. Launch Dashboard (Web GUI)
+    43. View A/B Tests
+    44. Analyze Post Optimization
+    45. Check Story Originality
+    46. View Source Credibility
+    47. Analyze Trends & Freshness
+    48. Analyze Intent Classification
+    49. Test Notifications
+
+  Maintenance:
+    50. Cleanup Old Stories
+    51. Run Unit Tests
 
   Danger Zone:
-   37. Reset (delete database and images)
-   38. Configure LinkedIn Voyager API Cookies
-   39. Configure RapidAPI Key (LinkedIn Lookups)
-
-  Connection Management:
-   40. Process Connection Queue (send queued requests)
-   41. View Connection Tracking Dashboard
-   42. Clear LinkedIn Profile Cache (retry failed lookups)
+    99. Reset (delete database and images)
 
    0. Exit
 ============================================================
@@ -595,82 +596,85 @@ Social Media Publisher - Debug Menu
         elif choice == "4":
             engine.status()
         elif choice == "5":
-            _install_dependencies()
-        # Database Operations
+            _configure_image_provider()
         elif choice == "6":
-            _show_database_stats(engine)
-        elif choice == "7":
-            _list_all_stories(engine)
-        elif choice == "8":
-            _list_pending_stories(engine)
-        elif choice == "9":
-            _list_scheduled_stories(engine)
-        elif choice == "10":
-            _list_human_approved_stories(engine)
-        elif choice == "11":
-            _cleanup_old_stories(engine)
-        elif choice == "12":
-            _backup_database(engine)
-        elif choice == "13":
-            _restore_database(engine)
-        elif choice == "14":
-            _verify_database(engine)
-        elif choice == "15":
-            _retry_rejected_stories(engine)
-        # Component Testing
-        elif choice == "16":
-            _test_search(engine)
-        elif choice == "17":
-            _test_image_generation(engine)
-        elif choice == "18":
-            _test_verification(engine)
-        elif choice == "19":
-            _test_scheduling(engine)
-        elif choice == "20":
-            _human_validation(engine)
-        elif choice == "21":
-            _test_linkedin_connection(engine)
-        elif choice == "23":
-            _test_linkedin_publish(engine)
-        elif choice == "24":
-            _test_publish_one_story(engine)
-        elif choice == "25":
-            _run_unit_tests()
-        # Analytics
-        elif choice == "26":
-            _view_linkedin_analytics(engine)
-        elif choice == "27":
-            _refresh_linkedin_analytics(engine)
-        # Advanced Tools
-        elif choice == "29":
-            _launch_dashboard(engine)
-        elif choice == "30":
-            _view_ab_tests(engine)
-        elif choice == "31":
-            _analyze_post_optimization(engine)
-        elif choice == "32":
-            _check_story_originality(engine)
-        elif choice == "33":
-            _view_source_credibility(engine)
-        elif choice == "34":
-            _analyze_trends(engine)
-        elif choice == "35":
-            _analyze_intent_classification(engine)
-        elif choice == "36":
-            _test_notifications(engine)
-        # Danger Zone
-        elif choice == "37":
-            _reset_all(engine)
-        elif choice == "38":
             _configure_linkedin_voyager()
-        elif choice == "39":
+        elif choice == "7":
             _configure_rapidapi_key()
-        elif choice == "40":
+        elif choice == "8":
+            _install_dependencies()
+        # Database
+        elif choice == "10":
+            _show_database_stats(engine)
+        elif choice == "11":
+            _list_all_stories(engine)
+        elif choice == "12":
+            _list_pending_stories(engine)
+        elif choice == "13":
+            _list_scheduled_stories(engine)
+        elif choice == "14":
+            _list_human_approved_stories(engine)
+        elif choice == "15":
+            _backup_database(engine)
+        elif choice == "16":
+            _restore_database(engine)
+        elif choice == "17":
+            _verify_database(engine)
+        # Content Pipeline
+        elif choice == "20":
+            _test_search(engine)
+        elif choice == "21":
+            _test_image_generation(engine)
+        elif choice == "22":
+            _test_verification(engine)
+        elif choice == "23":
+            _test_scheduling(engine)
+        elif choice == "24":
+            _human_validation(engine)
+        elif choice == "25":
+            _retry_rejected_stories(engine)
+        # LinkedIn
+        elif choice == "30":
+            _test_linkedin_connection(engine)
+        elif choice == "31":
+            _test_linkedin_publish(engine)
+        elif choice == "32":
+            _test_publish_one_story(engine)
+        elif choice == "33":
             _process_connection_queue(engine)
-        elif choice == "41":
+        elif choice == "34":
             _view_connection_dashboard(engine)
-        elif choice == "42":
+        elif choice == "35":
             _clear_linkedin_profile_cache()
+        # Analytics & Tools
+        elif choice == "40":
+            _view_linkedin_analytics(engine)
+        elif choice == "41":
+            _refresh_linkedin_analytics(engine)
+        elif choice == "42":
+            _launch_dashboard(engine)
+        elif choice == "43":
+            _view_ab_tests(engine)
+        elif choice == "44":
+            _analyze_post_optimization(engine)
+        elif choice == "45":
+            _check_story_originality(engine)
+        elif choice == "46":
+            _view_source_credibility(engine)
+        elif choice == "47":
+            _analyze_trends(engine)
+        elif choice == "48":
+            _analyze_intent_classification(engine)
+        elif choice == "49":
+            _test_notifications(engine)
+        # Maintenance
+        elif choice == "50":
+            _cleanup_old_stories(engine)
+        elif choice == "51":
+            _run_unit_tests()
+        # Danger Zone
+        elif choice == "99":
+            _reset_all(engine)
         else:
             print("Invalid choice. Please try again.")
 
@@ -4973,6 +4977,257 @@ def _save_rapidapi_key_to_env(api_key: str) -> None:
 
     print(f"\n✓ Saved API key to {env_file}")
     print("  Restart the application for changes to take effect.")
+
+
+def _configure_image_provider() -> None:
+    """Configure image generation provider and model."""
+    from image_providers.factory import (
+        PROVIDERS,
+        DEFAULT_MODELS,
+        list_available_providers,
+    )
+
+    print("\n" + "=" * 70)
+    print("IMAGE PROVIDER CONFIGURATION")
+    print("=" * 70)
+    print("""
+Select an image generation provider. Different providers offer varying
+quality, speed, and cost trade-offs. Your choice is saved to .env.
+""")
+
+    # Get current configuration
+    current_provider = Config.IMAGE_PROVIDER
+    current_model = Config.IMAGE_MODEL
+
+    print(f"Current provider: {current_provider}")
+    print(f"Current model:    {current_model}")
+    print("-" * 70)
+
+    # Get available providers and their status
+    provider_status = list_available_providers()
+
+    print("\nAvailable Providers:")
+    print()
+
+    providers_list = list(PROVIDERS.keys())
+    for i, name in enumerate(providers_list, 1):
+        status = provider_status[name]
+        configured = "✓" if status["configured"] else "✗"
+        requires = (
+            ", ".join(status["requires"]) if status["requires"] else "No API key needed"
+        )
+        default_model = status["default_model"]
+
+        # Mark current provider
+        current_marker = " (CURRENT)" if name == current_provider else ""
+
+        print(f"  {i}. {name}{current_marker}")
+        print(f"     Status: [{configured}] {requires}")
+        print(f"     Default model: {default_model}")
+        print()
+
+    print("  0. Cancel")
+    print("-" * 70)
+
+    choice = input("\nSelect provider (1-5, or 0 to cancel): ").strip()
+
+    if choice == "0":
+        print("Cancelled.")
+        return
+
+    try:
+        provider_idx = int(choice) - 1
+        if provider_idx < 0 or provider_idx >= len(providers_list):
+            print("Invalid choice.")
+            return
+    except ValueError:
+        print("Invalid choice.")
+        return
+
+    selected_provider = providers_list[provider_idx]
+    status = provider_status[selected_provider]
+
+    # Check if provider is configured
+    if not status["configured"]:
+        print(f"\n⚠️  {selected_provider} requires additional configuration:")
+        for req in status["requires"]:
+            print(f"   - {req}")
+        print("\nPlease set these values in your .env file first.")
+
+        proceed = input("\nProceed anyway? (y/N): ").strip().lower()
+        if proceed != "y":
+            print("Cancelled.")
+            return
+
+    # Ask for model
+    default_model = DEFAULT_MODELS.get(selected_provider, "")
+    print(f"\nDefault model for {selected_provider}: {default_model}")
+
+    # Provider-specific model options
+    model_options = _get_provider_model_options(selected_provider)
+    if model_options:
+        print("\nAvailable models:")
+        for i, (model_id, description) in enumerate(model_options, 1):
+            current = " (CURRENT)" if model_id == current_model else ""
+            print(f"  {i}. {model_id}{current}")
+            print(f"     {description}")
+
+        model_choice = input(
+            f"\nSelect model (1-{len(model_options)}, or Enter for default): "
+        ).strip()
+
+        if model_choice:
+            try:
+                model_idx = int(model_choice) - 1
+                if 0 <= model_idx < len(model_options):
+                    selected_model = model_options[model_idx][0]
+                else:
+                    selected_model = default_model
+            except ValueError:
+                selected_model = default_model
+        else:
+            selected_model = default_model
+    else:
+        custom_model = input(
+            f"\nEnter model name (or Enter for default [{default_model}]): "
+        ).strip()
+        selected_model = custom_model if custom_model else default_model
+
+    # Confirm and save
+    print("\n" + "-" * 70)
+    print("Configuration to save:")
+    print(f"  IMAGE_PROVIDER = {selected_provider}")
+    print(f"  IMAGE_MODEL    = {selected_model}")
+    print("-" * 70)
+
+    confirm = input("\nSave this configuration? (Y/n): ").strip().lower()
+    if confirm == "n":
+        print("Cancelled.")
+        return
+
+    # Save to .env
+    _save_image_provider_to_env(selected_provider, selected_model)
+
+    # Test the provider
+    test = input("\nTest the new configuration? (Y/n): ").strip().lower()
+    if test != "n":
+        _test_image_provider(selected_provider, selected_model)
+
+
+def _get_provider_model_options(provider: str) -> list[tuple[str, str]]:
+    """Get available model options for a provider."""
+    if provider == "pollinations":
+        return [
+            ("flux", "Standard FLUX model - good general quality"),
+            ("flux-realism", "FLUX Realism - photorealistic images (recommended)"),
+            ("flux-anime", "FLUX Anime - anime/manga style"),
+            ("flux-3d", "FLUX 3D - 3D rendered style"),
+            ("turbo", "Turbo - faster but lower quality"),
+        ]
+    elif provider == "huggingface":
+        return [
+            (
+                "black-forest-labs/FLUX.1-schnell",
+                "FLUX.1 Schnell - fast, free, good quality",
+            ),
+            (
+                "black-forest-labs/FLUX.1-dev",
+                "FLUX.1 Dev - higher quality, may require token",
+            ),
+            (
+                "stabilityai/stable-diffusion-xl-base-1.0",
+                "SDXL 1.0 - Stable Diffusion XL",
+            ),
+            ("runwayml/stable-diffusion-v1-5", "SD 1.5 - Classic Stable Diffusion"),
+        ]
+    elif provider == "cloudflare":
+        return [
+            ("@cf/stabilityai/stable-diffusion-xl-base-1.0", "SDXL 1.0 - high quality"),
+            ("@cf/bytedance/stable-diffusion-xl-lightning", "SDXL Lightning - faster"),
+            ("@cf/lykon/dreamshaper-8-lcm", "DreamShaper 8 LCM - artistic"),
+        ]
+    elif provider == "ai_horde":
+        return [
+            ("SDXL 1.0", "Stable Diffusion XL 1.0"),
+            ("stable_diffusion", "Stable Diffusion (various versions)"),
+            ("Deliberate", "Deliberate - photorealistic style"),
+            ("Anything Diffusion", "Anything Diffusion - versatile"),
+        ]
+    return []
+
+
+def _save_image_provider_to_env(provider: str, model: str) -> None:
+    """Save image provider settings to .env file."""
+    env_file = Path(".env")
+
+    # Read existing .env content
+    existing_lines = []
+    if env_file.exists():
+        with open(env_file, "r", encoding="utf-8") as f:
+            existing_lines = f.readlines()
+
+    # Track which settings we've updated
+    updated_provider = False
+    updated_model = False
+
+    new_lines = []
+    for line in existing_lines:
+        if line.startswith("IMAGE_PROVIDER="):
+            new_lines.append(f"IMAGE_PROVIDER={provider}\n")
+            updated_provider = True
+        elif line.startswith("IMAGE_MODEL="):
+            new_lines.append(f"IMAGE_MODEL={model}\n")
+            updated_model = True
+        else:
+            new_lines.append(line)
+
+    # Add if not found
+    if not updated_provider:
+        new_lines.append(f"IMAGE_PROVIDER={provider}\n")
+    if not updated_model:
+        new_lines.append(f"IMAGE_MODEL={model}\n")
+
+    # Write back
+    with open(env_file, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+    print(f"\n✓ Saved image provider configuration to {env_file}")
+    print("  Settings will be used on next image generation.")
+
+    # Also update the runtime config
+    import os
+
+    os.environ["IMAGE_PROVIDER"] = provider
+    os.environ["IMAGE_MODEL"] = model
+
+
+def _test_image_provider(provider: str, model: str) -> None:
+    """Test the image provider with a simple generation."""
+    print(f"\nTesting {provider} with model {model}...")
+
+    try:
+        from image_providers import get_image_provider
+
+        # Get provider with specified settings
+        p = get_image_provider(provider_name=provider, model=model)
+        print(f"✓ Provider initialized: {p.name}")
+
+        print("Generating test image (simple blue circle)...")
+        image_bytes = p.generate(
+            "A simple blue circle on a white background, minimalist"
+        )
+
+        if len(image_bytes) > 1000:
+            print(f"✓ Generated {len(image_bytes) // 1024}KB image successfully!")
+            print(f"\n✓ {provider} is working correctly!")
+        else:
+            print("✗ Generated image seems too small, may be invalid.")
+
+    except Exception as e:
+        print(f"✗ Test failed: {e}")
+        import traceback
+
+        traceback.print_exc()
 
 
 def _show_all_prompts() -> None:
