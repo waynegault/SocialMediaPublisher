@@ -213,6 +213,22 @@ class SettingsModel(BaseSettings):
         alias="IMAGE_NEGATIVE_PROMPT",
     )
 
+    # --- Extensible Image Provider Settings ---
+    # Switch provider via IMAGE_PROVIDER - no code changes required
+    # Supported: cloudflare, ai_horde, pollinations, huggingface
+    image_provider: str = Field(default="pollinations", alias="IMAGE_PROVIDER")
+    image_model: str = Field(default="flux-realism", alias="IMAGE_MODEL")
+    image_timeout_seconds: int = Field(
+        default=120, ge=10, alias="IMAGE_TIMEOUT_SECONDS"
+    )
+
+    # Cloudflare Workers AI
+    cloudflare_account_id: str = Field(default="", alias="CLOUDFLARE_ACCOUNT_ID")
+    cloudflare_api_token: str = Field(default="", alias="CLOUDFLARE_API_TOKEN")
+
+    # AI Horde (community-run, free with anonymous access)
+    ai_horde_api_key: str = Field(default="anonymous", alias="AI_HORDE_API_KEY")
+
     # --- Search Settings ---
     search_prompt: str = Field(
         default=(

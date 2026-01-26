@@ -45,6 +45,8 @@ class ImageModel(Enum):
     HUGGINGFACE_SDXL = "huggingface_sdxl"
     POLLINATIONS = "pollinations"  # Free, no API key required
     LOCAL = "local"
+    # Extensible provider - uses IMAGE_PROVIDER from .env
+    EXTENSIBLE_PROVIDER = "extensible_provider"
 
 
 @dataclass
@@ -105,6 +107,13 @@ MODEL_CONFIGS: dict[ImageModel, ModelConfig] = {
         display_name="Local Model",
         priority=6,
         best_for=["testing", "offline"],
+    ),
+    ImageModel.EXTENSIBLE_PROVIDER: ModelConfig(
+        model_id=ImageModel.EXTENSIBLE_PROVIDER,
+        display_name="Extensible Provider (via IMAGE_PROVIDER env)",
+        priority=0,  # Highest priority when IMAGE_PROVIDER is set
+        requires_api_key="",  # Varies by provider
+        best_for=["configurable", "switchable"],
     ),
 }
 
@@ -906,6 +915,85 @@ class ImageGenerator:
 
         return None
 
+    def _generate_extensible_provider_image(
+        self, story: Story, prompt: str
+    ) -> tuple[str, str] | None:
+        """Generate an image using the extensible provider system.
+
+        Uses IMAGE_PROVIDER from environment to select the backend.
+        Switch providers by changing .env - no code changes required.
+
+        Returns (file_path, prompt_used) if successful, or None.
+        """
+        from io import BytesIO
+
+        try:
+            from image_providers import get_image_provider, ImageProviderError
+        except ImportError as e:
+            logger.warning(f"⚠️ Extensible provider not available: {e}")
+            return None
+
+        try:
+            provider = get_image_provider()
+            logger.info(f"🎨 Trying {provider.name} ({provider.model})...")
+
+            # Log the prompt being sent
+            logger.info(
+                f"📝 Prompt: {prompt[:200]}{'...' if len(prompt) > 200 else ''}"
+            )
+
+            # Generate the image
+            image_bytes = provider.generate(prompt)
+
+            # Load image from bytes
+            image = Image.open(BytesIO(image_bytes))
+
+            # Add AI watermark
+            watermarked_image = add_ai_watermark(image)
+
+            # Save the image
+            provider_name = Config.IMAGE_PROVIDER.lower().replace(" ", "_")
+            filename = f"story_{story.id}_{int(time.time())}_{provider_name}.png"
+            filepath = os.path.join(Config.IMAGE_DIR, filename)
+            watermarked_image.save(filepath)
+
+            # Verify the file was written
+            if os.path.exists(filepath):
+                file_size = os.path.getsize(filepath)
+                logger.info(
+                    f"✅ Image created via {provider.name} ({file_size // 1024}KB)"
+                )
+
+                # Validate image quality
+                is_acceptable, quality_score = self._validate_image_quality(filepath)
+                if not is_acceptable:
+                    logger.warning(
+                        f"⚠️ {provider.name} image rejected due to low quality "
+                        f"(score: {quality_score.overall_score:.2f})"
+                    )
+                    # Delete the low-quality image
+                    try:
+                        os.remove(filepath)
+                    except OSError:
+                        pass
+                    return None
+
+                return (filepath, prompt)
+            else:
+                logger.error(
+                    f"{provider.name} image file NOT found after save: {filepath}"
+                )
+                return None
+
+        except ImageProviderError as e:
+            logger.warning(f"⚠️ {e.provider} error: {e}")
+            if e.retryable:
+                logger.info("   (This error may be transient, consider retrying)")
+            return None
+        except Exception as e:
+            logger.warning(f"⚠️ Extensible provider failed: {e}")
+            return None
+
     def _generate_dalle3_image(
         self, story: Story, prompt: str
     ) -> tuple[str, str] | None:
@@ -1041,6 +1129,12 @@ class ImageGenerator:
                 return (image_path, alt_text)
         elif model == ImageModel.LOCAL:
             result = self._generate_local_image(story, prompt)
+            if result:
+                image_path, _ = result
+                alt_text = self._generate_alt_text(story, prompt)
+                return (image_path, alt_text)
+        elif model == ImageModel.EXTENSIBLE_PROVIDER:
+            result = self._generate_extensible_provider_image(story, prompt)
             if result:
                 image_path, _ = result
                 alt_text = self._generate_alt_text(story, prompt)
