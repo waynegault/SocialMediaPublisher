@@ -515,176 +515,86 @@ class ImageGenerator:
         return None
 
     def _generate_image_for_story(self, story: Story) -> tuple[str, str] | None:
-        """Generate an image for a single story. Returns (file_path, alt_text) if successful."""
+        """Generate an image for a single story. Returns (file_path, alt_text) if successful.
+
+        Uses the IMAGE_PROVIDER setting from Config to determine which provider to use.
+        Falls back to other providers if the configured one fails.
+        """
         prompt = self._build_image_prompt(story)
 
-        try:
-            # Provider selection diagnostics - use effective token which checks both TOKEN and KEY
-            hf_token = Config.get_settings().effective_huggingface_token
-            logger.debug(
-                f"HF token present={bool(hf_token)}, prefer_hf={Config.HF_PREFER_IF_CONFIGURED}"
-            )
-            # If a Hugging Face token is configured and preferred, try it first
-            if hf_token and Config.HF_PREFER_IF_CONFIGURED:
-                hf_result = self._generate_huggingface_image(story, prompt)
-                if hf_result:
-                    image_path, _ = hf_result
+        # Get the configured provider
+        configured_provider = Config.IMAGE_PROVIDER.lower().strip()
+        logger.info(f"🎨 Using configured provider: {configured_provider}")
+
+        # Known providers handled by the extensible system
+        extensible_providers = {
+            "cloudflare",
+            "ai_horde",
+            "pollinations",
+            "huggingface",
+            "google_imagen",
+            "openai_dalle",
+        }
+
+        # Try the configured provider first via the extensible provider system
+        if configured_provider in extensible_providers:
+            try:
+                result = self._generate_extensible_provider_image(story, prompt)
+                if result:
+                    image_path, _ = result
                     alt_text = self._generate_alt_text(story, prompt)
                     return (image_path, alt_text)
-                # HuggingFace failed, fall back to Imagen
-                logger.info("🔄 HuggingFace unavailable, trying Google Imagen...")
-
-            # Use Imagen model for image generation with retry on safety filter blocks
-            logger.info(f"🎨 Trying Google Imagen ({Config.MODEL_IMAGE})...")
-            logger.debug(f"Prompt ({len(prompt.split())} words): {prompt[:200]}...")
-
-            max_retries = 3
-            response = None
-            for attempt in range(max_retries):
-                response = api_client.imagen_generate(
-                    client=self.client,
-                    model=Config.MODEL_IMAGE,
-                    prompt=prompt,
-                    config=types.GenerateImagesConfig(
-                        number_of_images=1,  # pyright: ignore[reportCallIssue]
-                        # API requires "block_low_and_above"
-                        safety_filter_level=types.SafetyFilterLevel.BLOCK_LOW_AND_ABOVE,  # pyright: ignore[reportCallIssue]
-                        person_generation=types.PersonGeneration.ALLOW_ADULT,  # pyright: ignore[reportCallIssue]
-                        aspect_ratio=Config.IMAGE_ASPECT_RATIO,  # pyright: ignore[reportCallIssue]
-                        image_size=Config.IMAGE_SIZE,  # pyright: ignore[reportCallIssue] - "2K" for higher quality
-                        # Note: negative_prompt is NOT supported by Imagen API (only works with HuggingFace)
-                    ),
-                )
-
-                if response.generated_images and response.generated_images[0].image:
-                    break  # Success, exit retry loop
-
-                if attempt < max_retries - 1:
-                    logger.warning(
-                        f"No image generated for story {story.id} (attempt {attempt + 1}/{max_retries}) - "
-                        f"Google's safety filters may have blocked. Retrying..."
-                    )
-                    time.sleep(1)  # Brief pause before retry
+                logger.warning(f"⚠️ {configured_provider} failed, trying fallbacks...")
+            except Exception as e:
+                error_msg = str(e).lower()
+                # Check for billing/configuration errors that should trigger fallbacks
+                if any(x in error_msg for x in ["billed", "billing", "quota", "429"]):
+                    logger.warning(f"⚠️ {configured_provider} unavailable: {e}")
                 else:
-                    logger.warning(
-                        f"No image generated for story {story.id} after {max_retries} attempts - "
-                        f"Google's safety filters blocked the request. "
-                        f"Prompt was: {prompt[:150]}..."
-                    )
-                    return None
+                    logger.error(f"❌ {configured_provider} error: {e}")
 
-            # Get image data and apply watermark
-            if response is None or not response.generated_images:
-                return None
-            image_data = response.generated_images[0].image.image_bytes
-            if image_data:
-                from io import BytesIO
+        # Fallback chain - try other providers if configured one failed
+        # Order: Pollinations (free) -> HuggingFace (free) -> Google Imagen -> DALL-E
+        fallback_providers = [
+            "pollinations",
+            "huggingface",
+            "google_imagen",
+            "openai_dalle",
+        ]
 
-                # Load image from bytes, add watermark, and save
-                image = Image.open(BytesIO(image_data))
-                watermarked_image = add_ai_watermark(image)
+        # Remove the configured provider from fallbacks (already tried)
+        fallback_providers = [p for p in fallback_providers if p != configured_provider]
 
-                filename = f"story_{story.id}_{int(time.time())}.png"
-                filepath = os.path.join(Config.IMAGE_DIR, filename)
-                watermarked_image.save(filepath)
-
-                # Verify the file was actually written
-                if os.path.exists(filepath):
-                    file_size = os.path.getsize(filepath)
-                    logger.info(f"Verified image saved: {filepath} ({file_size} bytes)")
-                else:
-                    logger.error(f"Image file NOT found after save: {filepath}")
-                    return None
-
-                # Validate image quality
-                is_acceptable, quality_score = self._validate_image_quality(filepath)
-                if not is_acceptable:
-                    logger.warning(
-                        f"⚠️ Google Imagen image rejected due to low quality (score: {quality_score.overall_score:.2f}). "
-                        f"Will try another provider..."
-                    )
-                    # Delete the low-quality image
-                    try:
-                        os.remove(filepath)
-                    except OSError:
-                        pass
-                    return None
-
-                logger.debug(f"Saved watermarked image to {filepath}")
-                alt_text = self._generate_alt_text(story, prompt)
-                return (filepath, alt_text)
-            else:
-                logger.warning(f"No image bytes for story {story.id}")
-                return None
-
-        except Exception as e:
-            error_msg = str(e)
-            if "billed users" in error_msg.lower():
-                print("\n" + "-" * 60)
-                print("Notice: Google's Imagen API requires a billed account.")
-
-                # Try HuggingFace first (if available and not exhausted)
-                hf_token = Config.get_settings().effective_huggingface_token
-                if hf_token and not ImageGenerator._huggingface_unavailable:
-                    print("I'll try Hugging Face Inference instead...")
-                    hf_result = self._generate_huggingface_image(story, prompt)
-                    if hf_result:
-                        image_path, _ = hf_result
+        for fallback_provider in fallback_providers:
+            logger.info(f"🔄 Trying fallback provider: {fallback_provider}...")
+            try:
+                # Temporarily override IMAGE_PROVIDER for the fallback
+                original_provider = os.environ.get("IMAGE_PROVIDER", "")
+                os.environ["IMAGE_PROVIDER"] = fallback_provider
+                try:
+                    result = self._generate_extensible_provider_image(story, prompt)
+                    if result:
+                        image_path, _ = result
                         alt_text = self._generate_alt_text(story, prompt)
-                        print("-" * 60 + "\n")
                         return (image_path, alt_text)
+                finally:
+                    # Restore original provider
+                    if original_provider:
+                        os.environ["IMAGE_PROVIDER"] = original_provider
+                    elif "IMAGE_PROVIDER" in os.environ:
+                        del os.environ["IMAGE_PROVIDER"]
+            except Exception as e:
+                logger.warning(f"⚠️ Fallback {fallback_provider} failed: {e}")
+                continue
 
-                # Try DALL-E 3 if OpenAI API key is configured
-                openai_key = (
-                    getattr(Config, "OPENAI_API_KEY", None)
-                    or Config.get_settings().openai_api_key
-                )
-                if openai_key:
-                    print("I'll try OpenAI DALL-E 3 instead...")
-                    dalle_result = self._generate_dalle3_image(story, prompt)
-                    if dalle_result:
-                        image_path, _ = dalle_result
-                        alt_text = self._generate_alt_text(story, prompt)
-                        print("-" * 60 + "\n")
-                        return (image_path, alt_text)
-
-                # Try Pollinations.ai - FREE, no API key needed!
-                print("I'll try Pollinations.ai (free, no API key)...")
-                pollinations_result = self._generate_pollinations_image(story, prompt)
-                if pollinations_result:
-                    image_path, _ = pollinations_result
-                    alt_text = self._generate_alt_text(story, prompt)
-                    print("-" * 60 + "\n")
-                    return (image_path, alt_text)
-
-                # Try local fallback as last resort
-                print("I'll try to use your local LLM/Image generator instead...")
-                print("-" * 60 + "\n")
-
-                local_result = self._generate_local_image(story, prompt)
-                if local_result:
-                    image_path, _ = local_result
-                    alt_text = self._generate_alt_text(story, prompt)
-                    return (image_path, alt_text)
-
-                # All fallbacks failed - provide helpful guidance
-                print("\n" + "=" * 60)
-                print("IMAGE GENERATION: All providers unavailable")
-                print("=" * 60)
-                print("Note: Pollinations.ai should always work (it's free).")
-                print("If it failed, check your internet connection.")
-                print("=" * 60 + "\n")
-                return None
-
-            if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-                logger.error(
-                    "Image generation failed: API quota exceeded (429 RESOURCE_EXHAUSTED)"
-                )
-                raise RuntimeError(
-                    "API quota exceeded during image generation. Please try again later."
-                ) from e
-            logger.error(f"Image generation error for story {story.id}: {e}")
-            return None
+        # All providers failed
+        print("\n" + "=" * 60)
+        print("IMAGE GENERATION: All providers unavailable")
+        print("=" * 60)
+        print("Note: Pollinations.ai should always work (it's free).")
+        print("If it failed, check your internet connection.")
+        print("=" * 60 + "\n")
+        return None
 
     def _generate_huggingface_image(
         self, story: Story, prompt: str

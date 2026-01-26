@@ -26,6 +26,8 @@ PROVIDERS = {
     "ai_horde": "AIHordeProvider",
     "pollinations": "PollinationsProvider",
     "huggingface": "HuggingFaceProvider",
+    "google_imagen": "GoogleImagenProvider",
+    "openai_dalle": "OpenAIDalleProvider",
 }
 
 # Default models for each provider
@@ -34,6 +36,8 @@ DEFAULT_MODELS = {
     "ai_horde": "SDXL 1.0",
     "pollinations": "turbo",
     "huggingface": "black-forest-labs/FLUX.1-schnell",
+    "google_imagen": "imagen-4.0-generate-001",
+    "openai_dalle": "dall-e-3",
 }
 
 # Model patterns that indicate compatibility with each provider
@@ -53,6 +57,8 @@ MODEL_PATTERNS = {
     "ai_horde": ["SDXL", "stable_diffusion", "Deliberate", "Anything"],
     "pollinations": ["flux", "turbo"],
     "huggingface": ["/", "black-forest", "stabilityai", "runwayml"],
+    "google_imagen": ["imagen"],
+    "openai_dalle": ["dall-e", "dalle"],
 }
 
 
@@ -190,6 +196,36 @@ def get_image_provider(
             timeout=timeout,
         )
 
+    if provider == "google_imagen":
+        from .google_imagen import GoogleImagenProvider
+
+        api_key = os.getenv("GOOGLE_API_KEY", "")
+        aspect_ratio = os.getenv("IMAGE_ASPECT_RATIO", "1:1")
+
+        return GoogleImagenProvider(
+            model=model,
+            size=size,
+            api_key=api_key,
+            aspect_ratio=aspect_ratio,
+            timeout=timeout,
+        )
+
+    if provider == "openai_dalle":
+        from .openai_dalle import OpenAIDalleProvider
+
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        quality = os.getenv("DALLE_QUALITY", "standard")
+        style = os.getenv("DALLE_STYLE", "natural")
+
+        return OpenAIDalleProvider(
+            model=model,
+            size=size,
+            api_key=api_key,
+            quality=quality,
+            style=style,
+            timeout=timeout,
+        )
+
     # Should never reach here due to provider check above
     raise RuntimeError(f"Provider '{provider}' not implemented")
 
@@ -231,6 +267,12 @@ def list_available_providers() -> dict[str, dict]:
         elif name == "huggingface":
             info["requires"] = []  # Free models work without token
             info["configured"] = True
+        elif name == "google_imagen":
+            info["requires"] = ["GOOGLE_API_KEY"]
+            info["configured"] = bool(os.getenv("GOOGLE_API_KEY"))
+        elif name == "openai_dalle":
+            info["requires"] = ["OPENAI_API_KEY"]
+            info["configured"] = bool(os.getenv("OPENAI_API_KEY"))
 
         status[name] = info
 

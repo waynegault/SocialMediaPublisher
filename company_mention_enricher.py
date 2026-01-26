@@ -1633,25 +1633,41 @@ EXTRACTION RULES:
                     f"Failed to parse enrichment JSON for story {story.id}: {parse_error}"
                 )
                 logger.debug(f"Raw response (first 500 chars): {response_text[:500]}")
-                return [], list(story.organizations)
+                return [], list(story.organizations or [])
 
             # Validate data is a dict (LLM might return a string or list)
             if not isinstance(data, dict):
                 logger.warning(
-                    f"Expected dict, got {type(data).__name__} for story {story.id}"
+                    f"Expected dict, got {type(data).__name__} for story {story.id}: {str(data)[:200]}"
                 )
-                return [], list(story.organizations)
+                return [], list(story.organizations or [])
 
+            # Safely extract data with additional validation
             direct_people_raw = data.get("direct_people") or data.get("people") or []
             organizations = data.get("organizations", []) or []
+
+            # Ensure organizations is a list, not a string or other type
+            if isinstance(organizations, str):
+                logger.warning(
+                    f"Organizations is a string, converting to list: {organizations[:100]}"
+                )
+                organizations = [organizations] if organizations.strip() else []
+            elif not isinstance(organizations, list):
+                logger.warning(
+                    f"Organizations is unexpected type {type(organizations)}, using empty list"
+                )
+                organizations = []
 
             direct_people = self._normalize_people_records(
                 direct_people_raw, source="direct"
             )
             return direct_people, organizations
         except Exception as e:
+            import traceback
+
             logger.warning(f"Direct extraction error for story {story.id}: {e}")
-            return [], list(story.organizations)
+            logger.debug(f"Traceback: {traceback.format_exc()}")
+            return [], list(story.organizations or [])
 
     def _filter_valid_organizations(self, organizations: set[str]) -> set[str]:
         """Pre-filter organizations to skip invalid/generic names before LinkedIn lookups.
@@ -2014,7 +2030,14 @@ EXTRACTION RULES:
                             logger.debug(
                                 f"  Extracted: {len(llm_people)} people, {len(extracted_orgs) if isinstance(extracted_orgs, (list, set)) else 'N/A'} orgs"
                             )
-                            orgs.update(extracted_orgs)
+                            # Ensure extracted_orgs is iterable and contains strings
+                            if isinstance(extracted_orgs, (list, set, tuple)):
+                                orgs.update(str(o) for o in extracted_orgs if o)
+                            elif (
+                                isinstance(extracted_orgs, str)
+                                and extracted_orgs.strip()
+                            ):
+                                orgs.add(extracted_orgs.strip())
                             direct_people.extend(llm_people)
                         except Exception as extract_err:
                             logger.error(
@@ -2029,7 +2052,11 @@ EXTRACTION RULES:
                         self._metrics.gemini_calls += 1
                         result = self._extract_orgs_and_people(story)
                         if result:
-                            orgs.update(result.get("organizations", []))
+                            result_orgs = result.get("organizations", [])
+                            if isinstance(result_orgs, (list, set, tuple)):
+                                orgs.update(str(o) for o in result_orgs if o)
+                            elif isinstance(result_orgs, str) and result_orgs.strip():
+                                orgs.add(result_orgs.strip())
                             direct_people.extend(
                                 self._normalize_people_records(
                                     result.get("direct_people"), source="direct"
@@ -2121,7 +2148,10 @@ EXTRACTION RULES:
                     )
                     break
                 except Exception as e:
+                    import traceback
+
                     logger.error(f"  ! Error: {e}")
+                    logger.error(f"  Traceback: {traceback.format_exc()}")
                     story.enrichment_status = "error"
                     # Phase 4: Track error in enrichment log
                     log = (
@@ -2290,11 +2320,23 @@ Return ONLY valid JSON, no explanation."""
 
             # Validate data is a dict (LLM might return a string or list)
             if not isinstance(data, dict):
-                logger.debug(f"Expected dict, got {type(data).__name__} in fallback")
+                logger.debug(
+                    f"Expected dict, got {type(data).__name__} in fallback: {str(data)[:100]}"
+                )
                 return None
 
             orgs = data.get("organizations", [])
             people = data.get("direct_people", [])
+
+            # Ensure orgs is a list
+            if isinstance(orgs, str):
+                orgs = [orgs] if orgs.strip() else []
+            elif not isinstance(orgs, list):
+                orgs = []
+
+            # Ensure people is a list
+            if not isinstance(people, list):
+                people = []
 
             if orgs or people:
                 logger.info(
