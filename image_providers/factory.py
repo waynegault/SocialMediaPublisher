@@ -150,7 +150,7 @@ def check_z_image_available() -> dict[str, object]:
     # Generate recommendation
     if status["available"]:
         vram = status["gpu_vram_gb"]
-        if vram and vram < 8:
+        if vram is not None and isinstance(vram, (int, float)) and vram < 8:
             status["recommendation"] = (
                 f"Z-Image ready! GPU: {status['gpu_name']} ({vram}GB). "
                 "CPU offload will be auto-enabled for stability."
@@ -198,7 +198,7 @@ def offer_z_image_install(interactive: bool = True) -> bool:
     else:
         print("GPU: No CUDA GPU detected")
 
-    if missing:
+    if missing and isinstance(missing, list):
         print(f"\nMissing components:")
         for item in missing:
             print(f"  • {item}")

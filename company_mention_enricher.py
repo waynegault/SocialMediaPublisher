@@ -26,10 +26,8 @@ from url_utils import validate_linkedin_url
 # Import shared entity validation constants from entity_constants (no optional dependencies)
 from entity_constants import (
     INVALID_ORG_NAMES,
-    INVALID_ORG_PATTERNS,
     VALID_SINGLE_WORD_ORGS,
     INVALID_PERSON_NAMES,
-    INVALID_PERSON_PATTERNS,
     is_invalid_org_name,
     is_invalid_person_name,
 )
@@ -62,7 +60,6 @@ ORG_NAME_PATTERNS: list[str] = [
 
 if TYPE_CHECKING:
     from linkedin_profile_lookup import LinkedInCompanyLookup
-    from linkedin_voyager_client import HybridLinkedInLookup
 
 logger = logging.getLogger(__name__)
 
@@ -1613,10 +1610,12 @@ EXTRACTION RULES:
 
             # Strategy 3: Try to fix common JSON issues
             if data is None:
+                import re as re_module
+
                 # Fix unquoted keys, trailing commas, etc.
                 fixed_text = response_text
                 # Remove trailing commas before closing brackets
-                fixed_text = re.sub(r",\s*([}\]])", r"\1", fixed_text)
+                fixed_text = re_module.sub(r",\s*([}\]])", r"\1", fixed_text)
                 # Try to find and parse the JSON portion
                 start_idx = fixed_text.find("{")
                 end_idx = fixed_text.rfind("}")
@@ -2903,8 +2902,6 @@ Return ONLY valid JSON, no explanation."""
         """
         from profile_matcher import (
             ProfileMatcher,
-            PersonContext,
-            RoleType,
             create_person_context,
         )
 
@@ -3230,8 +3227,6 @@ Return ONLY valid JSON, no explanation."""
         """
         from profile_matcher import (
             ProfileMatcher,
-            PersonContext,
-            RoleType,
             create_person_context,
         )
 
@@ -3391,7 +3386,7 @@ Return ONLY valid JSON, no explanation."""
         except Exception as e:
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                 logger.error(
-                    f"Enrichment failed: API quota exceeded (429 RESOURCE_EXHAUSTED)"
+                    "Enrichment failed: API quota exceeded (429 RESOURCE_EXHAUSTED)"
                 )
                 return ("API quota exceeded", "error")
             logger.error(f"Enrichment error for story {story.id}: {e}")
