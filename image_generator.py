@@ -39,6 +39,7 @@ from url_utils import resolve_relative_url
 class ImageModel(Enum):
     """Available image generation models."""
 
+    Z_IMAGE = "z_image"  # Local high-quality generation (preferred when CUDA available)
     GOOGLE_IMAGEN = "google_imagen"
     OPENAI_DALLE3 = "openai_dalle3"
     HUGGINGFACE_FLUX = "huggingface_flux"
@@ -67,6 +68,13 @@ class ModelConfig:
 
 # Model configurations with priority and capabilities
 MODEL_CONFIGS: dict[ImageModel, ModelConfig] = {
+    ImageModel.Z_IMAGE: ModelConfig(
+        model_id=ImageModel.Z_IMAGE,
+        display_name="Z-Image (Local)",
+        priority=0,  # Highest priority when CUDA available
+        requires_api_key="",  # No API key - runs locally with CUDA
+        best_for=["photorealistic", "artistic", "people", "high-quality", "local"],
+    ),
     ImageModel.GOOGLE_IMAGEN: ModelConfig(
         model_id=ImageModel.GOOGLE_IMAGEN,
         display_name="Google Imagen",
@@ -111,7 +119,7 @@ MODEL_CONFIGS: dict[ImageModel, ModelConfig] = {
     ImageModel.EXTENSIBLE_PROVIDER: ModelConfig(
         model_id=ImageModel.EXTENSIBLE_PROVIDER,
         display_name="Extensible Provider (via IMAGE_PROVIDER env)",
-        priority=0,  # Highest priority when IMAGE_PROVIDER is set
+        priority=7,  # Use explicit provider setting
         requires_api_key="",  # Varies by provider
         best_for=["configurable", "switchable"],
     ),
@@ -121,6 +129,9 @@ MODEL_CONFIGS: dict[ImageModel, ModelConfig] = {
 def select_model_for_prompt(prompt: str, story_category: str = "") -> ImageModel:
     """Select the best model based on prompt content and story category.
 
+    Z-Image is preferred for all content types when CUDA is available,
+    as it excels at both photorealistic and artistic content.
+
     Args:
         prompt: The image generation prompt
         story_category: Category of the story
@@ -128,6 +139,11 @@ def select_model_for_prompt(prompt: str, story_category: str = "") -> ImageModel
     Returns:
         Best model for this prompt
     """
+    # Z-Image is versatile and handles all content types well
+    # Prefer it when available for consistent high quality
+    if _is_model_available(ImageModel.Z_IMAGE):
+        return ImageModel.Z_IMAGE
+
     prompt_lower = prompt.lower()
     category_lower = story_category.lower()
 
@@ -161,7 +177,7 @@ def select_model_for_prompt(prompt: str, story_category: str = "") -> ImageModel
         kw in prompt_lower or kw in category_lower for kw in industrial_keywords
     )
 
-    # Determine best model based on content
+    # Determine best model based on content (fallback when Z-Image not available)
     if has_artistic and not has_industrial:
         # Prefer DALL-E 3 for artistic content
         if _is_model_available(ImageModel.OPENAI_DALLE3):
@@ -182,6 +198,15 @@ def _is_model_available(model: ImageModel) -> bool:
     if not config or not config.enabled:
         return False
 
+    # Special handling for Z-Image - check CUDA availability
+    if model == ImageModel.Z_IMAGE:
+        try:
+            from image_providers import check_z_image_available
+            status = check_z_image_available()
+            return bool(status.get("available", False))
+        except ImportError:
+            return False
+
     if config.requires_api_key:
         api_key = getattr(Config, config.requires_api_key, None)
         return bool(api_key)
@@ -190,11 +215,19 @@ def _is_model_available(model: ImageModel) -> bool:
 
 
 def get_best_available_model() -> ImageModel:
-    """Get the best available model based on priority and configuration."""
+    """Get the best available model based on priority and configuration.
+
+    Z-Image is preferred when CUDA is available for high-quality local generation.
+    """
+    # Check Z-Image first (highest priority when CUDA available)
+    if _is_model_available(ImageModel.Z_IMAGE):
+        logger.info("Z-Image selected as best available model (CUDA detected)")
+        return ImageModel.Z_IMAGE
+
     available = [
         (model, config)
         for model, config in MODEL_CONFIGS.items()
-        if config.enabled and _is_model_available(model)
+        if config.enabled and _is_model_available(model) and model != ImageModel.Z_IMAGE
     ]
 
     if not available:

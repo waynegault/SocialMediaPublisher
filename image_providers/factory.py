@@ -3,8 +3,13 @@
 Reads IMAGE_PROVIDER from environment and returns the appropriate provider.
 Switch providers by changing .env - no code changes required.
 
+Z-Image Auto-Detection:
+    When CUDA is available and Z-Image dependencies are installed,
+    Z-Image will be used as the default provider for high-quality local generation.
+    Set IMAGE_PROVIDER explicitly to override this behavior.
+
 Environment variables:
-    IMAGE_PROVIDER: Provider name (cloudflare, ai_horde, pollinations, huggingface)
+    IMAGE_PROVIDER: Provider name (cloudflare, ai_horde, pollinations, huggingface, z_image)
     IMAGE_MODEL: Model identifier for the selected provider
     IMAGE_SIZE: Output size as 'WIDTHxHEIGHT' (default: 1024x1024)
     IMAGE_TIMEOUT_SECONDS: Request timeout (default: 60)
@@ -14,6 +19,8 @@ Provider-specific variables - see individual provider modules.
 
 import os
 import logging
+import subprocess
+import sys
 from typing import Optional
 
 from .base import ImageProvider
@@ -28,6 +35,7 @@ PROVIDERS = {
     "huggingface": "HuggingFaceProvider",
     "google_imagen": "GoogleImagenProvider",
     "openai_dalle": "OpenAIDalleProvider",
+    "z_image": "ZImageProvider",
 }
 
 # Default models for each provider
@@ -38,6 +46,7 @@ DEFAULT_MODELS = {
     "huggingface": "black-forest-labs/FLUX.1-schnell",
     "google_imagen": "imagen-4.0-generate-001",
     "openai_dalle": "dall-e-3",
+    "z_image": "Tongyi-MAI/Z-Image",
 }
 
 # Model patterns that indicate compatibility with each provider
@@ -59,7 +68,214 @@ MODEL_PATTERNS = {
     "huggingface": ["/", "black-forest", "stabilityai", "runwayml"],
     "google_imagen": ["imagen"],
     "openai_dalle": ["dall-e", "dalle"],
+    "z_image": ["z-image", "Tongyi-MAI", "Z-Image"],
 }
+
+# Cache for Z-Image availability check
+_z_image_status: dict[str, object] = {}
+
+
+def check_z_image_available() -> dict[str, object]:
+    """Check if Z-Image infrastructure is available.
+
+    Returns:
+        Dictionary with status information:
+        {
+            "available": bool,  # True if Z-Image can be used
+            "cuda_available": bool,
+            "diffusers_installed": bool,
+            "z_image_pipeline_available": bool,
+            "gpu_name": str or None,
+            "gpu_vram_gb": float or None,
+            "missing": list[str],  # What's missing
+            "recommendation": str,  # Human-readable recommendation
+        }
+    """
+    global _z_image_status
+    if _z_image_status:
+        return _z_image_status
+
+    status: dict[str, object] = {
+        "available": False,
+        "cuda_available": False,
+        "diffusers_installed": False,
+        "z_image_pipeline_available": False,
+        "gpu_name": None,
+        "gpu_vram_gb": None,
+        "missing": [],
+        "recommendation": "",
+    }
+
+    missing = []
+
+    # Check PyTorch and CUDA
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            status["cuda_available"] = True
+            status["gpu_name"] = torch.cuda.get_device_name(0)
+            status["gpu_vram_gb"] = round(
+                torch.cuda.get_device_properties(0).total_memory / (1024**3), 1
+            )
+        else:
+            missing.append("CUDA GPU (PyTorch installed but CUDA not available)")
+    except ImportError:
+        missing.append("PyTorch with CUDA support")
+
+    # Check diffusers with ZImagePipeline
+    try:
+        from diffusers import ZImagePipeline  # type: ignore[attr-defined]
+
+        status["diffusers_installed"] = True
+        status["z_image_pipeline_available"] = True
+    except ImportError as e:
+        status["diffusers_installed"] = False
+        if "ZImagePipeline" in str(e) or "cannot import name" in str(e):
+            status["diffusers_installed"] = True  # diffusers installed but old version
+            missing.append("diffusers with ZImagePipeline (update required)")
+        else:
+            missing.append("diffusers library")
+
+    # Check other dependencies
+    for dep in ["accelerate", "sentencepiece"]:
+        try:
+            __import__(dep)
+        except ImportError:
+            missing.append(dep)
+
+    status["missing"] = missing
+    status["available"] = len(missing) == 0 and status["cuda_available"]
+
+    # Generate recommendation
+    if status["available"]:
+        vram = status["gpu_vram_gb"]
+        if vram and vram < 8:
+            status["recommendation"] = (
+                f"Z-Image ready! GPU: {status['gpu_name']} ({vram}GB). "
+                "CPU offload will be auto-enabled for stability."
+            )
+        else:
+            status["recommendation"] = (
+                f"Z-Image ready! GPU: {status['gpu_name']} ({vram}GB)"
+            )
+    else:
+        status["recommendation"] = (
+            f"Z-Image not available. Missing: {', '.join(missing)}"
+        )
+
+    _z_image_status = status
+    return status
+
+
+def offer_z_image_install(interactive: bool = True) -> bool:
+    """Check Z-Image availability and offer to install if missing.
+
+    Args:
+        interactive: If True, prompt user for installation. If False, just return status.
+
+    Returns:
+        True if Z-Image is available (or was successfully installed), False otherwise.
+    """
+    status = check_z_image_available()
+
+    if status["available"]:
+        logger.info(f"✓ Z-Image available: {status['recommendation']}")
+        return True
+
+    missing = status["missing"]
+    if not missing:
+        return True
+
+    print("\n" + "=" * 60)
+    print("🎨 Z-Image Local Image Generation")
+    print("=" * 60)
+    print(f"\nZ-Image provides high-quality local image generation.")
+    print(f"Status: {'✓ Available' if status['available'] else '✗ Not configured'}")
+
+    if status["cuda_available"]:
+        print(f"GPU: {status['gpu_name']} ({status['gpu_vram_gb']}GB VRAM)")
+    else:
+        print("GPU: No CUDA GPU detected")
+
+    if missing:
+        print(f"\nMissing components:")
+        for item in missing:
+            print(f"  • {item}")
+
+    if not interactive:
+        return False
+
+    # Offer installation
+    print("\nWould you like to install Z-Image dependencies?")
+    print("This will run: python setup_z_image.py install")
+
+    try:
+        response = input("\nInstall Z-Image? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        response = "n"
+
+    if response in ("y", "yes"):
+        print("\nInstalling Z-Image dependencies...")
+        try:
+            # Run the setup script
+            setup_script = os.path.join(
+                os.path.dirname(__file__), "..", "setup_z_image.py"
+            )
+            if os.path.exists(setup_script):
+                result = subprocess.run(
+                    [sys.executable, setup_script, "install"],
+                    capture_output=False,
+                )
+                if result.returncode == 0:
+                    # Clear cache and re-check
+                    global _z_image_status
+                    _z_image_status = {}
+                    new_status = check_z_image_available()
+                    if new_status["available"]:
+                        print("\n✅ Z-Image installed successfully!")
+                        return True
+            else:
+                # Fallback: install packages directly
+                print("Installing required packages...")
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "pip",
+                        "install",
+                        "git+https://github.com/huggingface/diffusers",
+                        "accelerate",
+                        "sentencepiece",
+                    ]
+                )
+                _z_image_status = {}
+                return check_z_image_available()["available"]  # type: ignore[return-value]
+        except Exception as e:
+            print(f"Installation failed: {e}")
+
+    return False
+
+
+def get_default_provider() -> str:
+    """Get the default image provider, preferring Z-Image if available.
+
+    Returns:
+        Provider name string
+    """
+    # Check if user explicitly set IMAGE_PROVIDER
+    explicit_provider = os.getenv("IMAGE_PROVIDER", "").strip()
+    if explicit_provider:
+        return explicit_provider.lower()
+
+    # Auto-detect: prefer Z-Image if CUDA is available
+    status = check_z_image_available()
+    if status["available"]:
+        logger.info(f"Auto-selected Z-Image: {status['recommendation']}")
+        return "z_image"
+
+    # Fall back to pollinations (free, no API key required)
+    return "pollinations"
 
 
 def _is_model_compatible(provider: str, model: str) -> bool:
@@ -93,15 +309,15 @@ def get_image_provider(
         RuntimeError: If provider is unknown or misconfigured
 
     Example:
-        # Use environment configuration
+        # Use environment configuration (auto-detects Z-Image if CUDA available)
         provider = get_image_provider()
         image_bytes = provider.generate("A sunset over mountains")
 
         # Override specific settings
         provider = get_image_provider(provider_name="pollinations", model="flux-anime")
     """
-    # Read configuration with overrides
-    provider = provider_name or os.getenv("IMAGE_PROVIDER", "pollinations")
+    # Read configuration with overrides - use auto-detection for default
+    provider = provider_name or get_default_provider()
     provider = provider.lower().strip()
 
     # Get model from parameter, env, or use provider's default
@@ -226,6 +442,33 @@ def get_image_provider(
             timeout=timeout,
         )
 
+    if provider == "z_image":
+        from .z_image import ZImageProvider
+
+        num_steps = int(os.getenv("Z_IMAGE_STEPS", "28"))
+        guidance = float(os.getenv("Z_IMAGE_GUIDANCE", "4.0"))
+        device = os.getenv("Z_IMAGE_DEVICE", "cuda")
+        enable_offload = os.getenv("Z_IMAGE_OFFLOAD", "0") == "1"
+        cache_dir = os.getenv("Z_IMAGE_CACHE_DIR", None)
+        negative_prompt = os.getenv(
+            "Z_IMAGE_NEGATIVE_PROMPT",
+            "text, watermark, logo, blurry, low quality, artifacts, jpeg artifacts",
+        )
+        # Local generation can take a while, use longer timeout
+        z_image_timeout = max(timeout, 300)
+
+        return ZImageProvider(
+            model=model,
+            size=size,
+            num_inference_steps=num_steps,
+            guidance_scale=guidance,
+            negative_prompt=negative_prompt,
+            device=device,
+            enable_cpu_offload=enable_offload,
+            cache_dir=cache_dir,
+            timeout=z_image_timeout,
+        )
+
     # Should never reach here due to provider check above
     raise RuntimeError(f"Provider '{provider}' not implemented")
 
@@ -273,6 +516,19 @@ def list_available_providers() -> dict[str, dict]:
         elif name == "openai_dalle":
             info["requires"] = ["OPENAI_API_KEY"]
             info["configured"] = bool(os.getenv("OPENAI_API_KEY"))
+        elif name == "z_image":
+            info["requires"] = []  # No API key - runs locally
+            info["notes"] = "Requires CUDA GPU with 8GB+ VRAM"
+            # Check if torch and CUDA are available
+            try:
+                import torch
+
+                info["configured"] = torch.cuda.is_available()
+                if info["configured"]:
+                    info["gpu"] = torch.cuda.get_device_name(0)
+            except ImportError:
+                info["configured"] = False
+                info["notes"] = "Requires: pip install torch torchvision"
 
         status[name] = info
 

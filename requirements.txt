@@ -52,3 +52,19 @@ brotli>=1.2.0
 
 # spaCy model (install separately if needed)
 # python -m spacy download en_core_web_sm
+
+# =============================================================================
+# Z-Image Local Image Generation (Optional)
+# =============================================================================
+# Requires NVIDIA GPU with CUDA support (8GB+ VRAM recommended)
+# Install with: pip install -r requirements-z-image.txt
+# Or manually:
+#   pip install git+https://github.com/huggingface/diffusers
+#   pip install accelerate sentencepiece
+#   pip install xformers  # Optional, for memory efficiency
+#
+# Configure in .env:
+#   IMAGE_PROVIDER=z_image
+#   Z_IMAGE_STEPS=28
+#   Z_IMAGE_GUIDANCE=4.0
+# =============================================================================

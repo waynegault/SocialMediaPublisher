@@ -1,0 +1,38 @@
+# Z-Image Local Image Generation Requirements
+# =============================================
+# For local text-to-image generation using Tongyi-MAI/Z-Image model
+#
+# Prerequisites:
+#   - NVIDIA GPU with CUDA support
+#   - 8GB+ VRAM (16GB+ recommended for best performance)
+#   - ~10GB disk space for the model
+#
+# Installation:
+#   pip install -r requirements-z-image.txt
+#
+# Configuration (.env):
+#   IMAGE_PROVIDER=z_image
+#   Z_IMAGE_STEPS=28           # 28-50, higher = better quality but slower
+#   Z_IMAGE_GUIDANCE=4.0       # 3.0-5.0 CFG scale
+#   Z_IMAGE_DEVICE=cuda        # or 'cpu' for testing (very slow)
+#   Z_IMAGE_OFFLOAD=0          # Set to 1 for 8-12GB VRAM GPUs
+
+# Diffusers from git (for latest ZImagePipeline support)
+diffusers @ git+https://github.com/huggingface/diffusers
+
+# Core ML dependencies (may already be installed)
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.40.0
+accelerate>=0.25.0
+sentencepiece>=0.2.0
+
+# Memory-efficient attention (optional but recommended)
+# Uncomment if you have xformers compatibility issues
+# xformers>=0.0.22
+
+# Model downloading
+huggingface-hub>=0.20.0
+
+# Note: The model (~10GB) will be downloaded automatically on first use
+# You can pre-download with: python setup_z_image.py download
