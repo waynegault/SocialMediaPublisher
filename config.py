@@ -229,6 +229,18 @@ class SettingsModel(BaseSettings):
     # AI Horde (community-run, free with anonymous access)
     ai_horde_api_key: str = Field(default="anonymous", alias="AI_HORDE_API_KEY")
 
+    # --- Z-Image Local Generation Settings ---
+    z_image_steps: int = Field(default=28, ge=1, le=100, alias="Z_IMAGE_STEPS")
+    z_image_guidance: float = Field(default=4.0, ge=0.0, le=20.0, alias="Z_IMAGE_GUIDANCE")
+    z_image_device: str = Field(default="cuda", alias="Z_IMAGE_DEVICE")
+    z_image_offload: str = Field(default="0", alias="Z_IMAGE_OFFLOAD")
+    z_image_dtype: str = Field(default="bfloat16", alias="Z_IMAGE_DTYPE")
+    z_image_size: str = Field(default="", alias="Z_IMAGE_SIZE")
+    z_image_negative_prompt: str = Field(
+        default="text, watermark, logo, blurry, low quality, artifacts, jpeg artifacts",
+        alias="Z_IMAGE_NEGATIVE_PROMPT",
+    )
+
     # --- Search Settings ---
     search_prompt: str = Field(
         default=(

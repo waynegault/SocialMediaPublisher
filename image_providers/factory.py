@@ -448,12 +448,27 @@ def get_image_provider(
         num_steps = int(os.getenv("Z_IMAGE_STEPS", "28"))
         guidance = float(os.getenv("Z_IMAGE_GUIDANCE", "4.0"))
         device = os.getenv("Z_IMAGE_DEVICE", "cuda")
-        enable_offload = os.getenv("Z_IMAGE_OFFLOAD", "0") == "1"
+        # Support 'none', 'model', 'sequential' (legacy '1'/'0' still works)
+        offload_env = os.getenv("Z_IMAGE_OFFLOAD", "0")
+        if offload_env in ("1", "sequential"):
+            enable_offload = True
+            offload_mode = "sequential"
+        elif offload_env == "model":
+            enable_offload = True
+            offload_mode = "model"
+        else:
+            enable_offload = False
+            offload_mode = "none"
+        dtype = os.getenv("Z_IMAGE_DTYPE", "bfloat16")
         cache_dir = os.getenv("Z_IMAGE_CACHE_DIR", None)
         negative_prompt = os.getenv(
             "Z_IMAGE_NEGATIVE_PROMPT",
             "text, watermark, logo, blurry, low quality, artifacts, jpeg artifacts",
         )
+        # Override size with Z-Image-specific size if set
+        z_image_size = os.getenv("Z_IMAGE_SIZE", "")
+        if z_image_size:
+            size = z_image_size
         # Local generation can take a while, use longer timeout
         z_image_timeout = max(timeout, 300)
 
@@ -465,6 +480,8 @@ def get_image_provider(
             negative_prompt=negative_prompt,
             device=device,
             enable_cpu_offload=enable_offload,
+            offload_mode=offload_mode,
+            dtype=dtype,
             cache_dir=cache_dir,
             timeout=z_image_timeout,
         )

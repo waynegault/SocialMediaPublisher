@@ -1,0 +1,194 @@
+[
+    {
+        "settings": {
+            "size": "512x512",
+            "steps": 12,
+            "guidance": 4.0,
+            "cpu_offload": "sequential",
+            "dtype": "float16"
+        },
+        "time_taken": 216.063978433609,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_183417_512x512_s12_g4.0_co-sequential_dt-float16.png"
+    },
+    {
+        "settings": {
+            "size": "512x512",
+            "steps": 12,
+            "guidance": 4.0,
+            "cpu_offload": "sequential",
+            "dtype": "bfloat16"
+        },
+        "time_taken": 256.39985156059265,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_183754_512x512_s12_g4.0_co-sequential_dt-bfloat16.png"
+    },
+    {
+        "settings": {
+            "size": "512x512",
+            "steps": 12,
+            "guidance": 4.0,
+            "cpu_offload": "model",
+            "dtype": "float16"
+        },
+        "time_taken": 303.918883562088,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_184210_512x512_s12_g4.0_co-model_dt-float16.png"
+    },
+    {
+        "settings": {
+            "size": "512x512",
+            "steps": 12,
+            "guidance": 4.0,
+            "cpu_offload": "model",
+            "dtype": "bfloat16"
+        },
+        "time_taken": 370.88491225242615,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_184714_512x512_s12_g4.0_co-model_dt-bfloat16.png"
+    },
+    {
+        "settings": {
+            "size": "512x512",
+            "steps": 20,
+            "guidance": 4.0,
+            "cpu_offload": "sequential",
+            "dtype": "float16"
+        },
+        "time_taken": 370.7889678478241,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_185325_512x512_s20_g4.0_co-sequential_dt-float16.png"
+    },
+    {
+        "settings": {
+            "size": "512x512",
+            "steps": 20,
+            "guidance": 4.0,
+            "cpu_offload": "sequential",
+            "dtype": "bfloat16"
+        },
+        "time_taken": 363.1351854801178,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_185936_512x512_s20_g4.0_co-sequential_dt-bfloat16.png"
+    },
+    {
+        "settings": {
+            "size": "512x512",
+            "steps": 20,
+            "guidance": 4.0,
+            "cpu_offload": "model",
+            "dtype": "float16"
+        },
+        "time_taken": 370.27903747558594,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_190539_512x512_s20_g4.0_co-model_dt-float16.png"
+    },
+    {
+        "settings": {
+            "size": "512x512",
+            "steps": 20,
+            "guidance": 4.0,
+            "cpu_offload": "model",
+            "dtype": "bfloat16"
+        },
+        "time_taken": 369.70250701904297,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_191149_512x512_s20_g4.0_co-model_dt-bfloat16.png"
+    },
+    {
+        "settings": {
+            "size": "768x512",
+            "steps": 12,
+            "guidance": 4.0,
+            "cpu_offload": "sequential",
+            "dtype": "float16"
+        },
+        "time_taken": 305.85977816581726,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_191759_768x512_s12_g4.0_co-sequential_dt-float16.png"
+    },
+    {
+        "settings": {
+            "size": "768x512",
+            "steps": 12,
+            "guidance": 4.0,
+            "cpu_offload": "sequential",
+            "dtype": "bfloat16"
+        },
+        "time_taken": 308.4198341369629,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_192305_768x512_s12_g4.0_co-sequential_dt-bfloat16.png"
+    },
+    {
+        "settings": {
+            "size": "768x512",
+            "steps": 12,
+            "guidance": 4.0,
+            "cpu_offload": "model",
+            "dtype": "float16"
+        },
+        "time_taken": 310.81426644325256,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_192813_768x512_s12_g4.0_co-model_dt-float16.png"
+    },
+    {
+        "settings": {
+            "size": "768x512",
+            "steps": 12,
+            "guidance": 4.0,
+            "cpu_offload": "model",
+            "dtype": "bfloat16"
+        },
+        "time_taken": 313.9310345649719,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_193324_768x512_s12_g4.0_co-model_dt-bfloat16.png"
+    },
+    {
+        "settings": {
+            "size": "768x512",
+            "steps": 20,
+            "guidance": 4.0,
+            "cpu_offload": "sequential",
+            "dtype": "float16"
+        },
+        "time_taken": 475.3149130344391,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_193838_768x512_s20_g4.0_co-sequential_dt-float16.png"
+    },
+    {
+        "settings": {
+            "size": "768x512",
+            "steps": 20,
+            "guidance": 4.0,
+            "cpu_offload": "sequential",
+            "dtype": "bfloat16"
+        },
+        "time_taken": 473.3994085788727,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_194633_768x512_s20_g4.0_co-sequential_dt-bfloat16.png"
+    },
+    {
+        "settings": {
+            "size": "768x512",
+            "steps": 20,
+            "guidance": 4.0,
+            "cpu_offload": "model",
+            "dtype": "float16"
+        },
+        "time_taken": 480.5409815311432,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_195426_768x512_s20_g4.0_co-model_dt-float16.png"
+    },
+    {
+        "settings": {
+            "size": "768x512",
+            "steps": 20,
+            "guidance": 4.0,
+            "cpu_offload": "model",
+            "dtype": "bfloat16"
+        },
+        "time_taken": 486.2385244369507,
+        "error": null,
+        "output_file": "benchmark_images\\bench_20260207_200227_768x512_s20_g4.0_co-model_dt-bfloat16.png"
+    }
+]

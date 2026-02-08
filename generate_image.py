@@ -29,6 +29,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 @dataclass
 class HardwareSettings:
@@ -54,11 +58,14 @@ class HardwareSettings:
 _hardware_settings_cache: HardwareSettings | None = None
 
 
-def get_optimal_settings(force_refresh: bool = False) -> HardwareSettings:
+def get_optimal_settings(
+    force_refresh: bool = False, args: argparse.Namespace | None = None
+) -> HardwareSettings:
     """Detect hardware and return optimal generation settings.
 
     Args:
         force_refresh: Force re-detection of hardware (default: use cache)
+        args: Optional command-line arguments to override settings.
 
     Returns:
         Hardware settings optimized for the detected GPU
@@ -67,6 +74,9 @@ def get_optimal_settings(force_refresh: bool = False) -> HardwareSettings:
 
     # Return cached settings unless refresh is forced
     if _hardware_settings_cache is not None and not force_refresh:
+        # If args are provided, apply overrides to the cached settings
+        if args:
+            return _apply_cli_overrides(_hardware_settings_cache, args)
         return _hardware_settings_cache
 
     settings = HardwareSettings()
@@ -137,9 +147,43 @@ def get_optimal_settings(force_refresh: bool = False) -> HardwareSettings:
     except ImportError:
         pass
 
+    # Apply overrides from command line if provided
+    if args:
+        settings = _apply_cli_overrides(settings, args)
+
     # Cache the settings
     _hardware_settings_cache = settings
     return settings
+
+
+def _apply_cli_overrides(
+    settings: HardwareSettings, args: argparse.Namespace
+) -> HardwareSettings:
+    """Apply command-line overrides to hardware settings."""
+    if args.dtype:
+        settings.dtype = args.dtype
+    if args.cpu_offload:
+        if args.cpu_offload == "sequential":
+            settings.enable_sequential_cpu_offload = True
+            settings.enable_model_cpu_offload = False
+        elif args.cpu_offload == "model":
+            settings.enable_model_cpu_offload = True
+            settings.enable_sequential_cpu_offload = False
+        else:
+            settings.enable_sequential_cpu_offload = False
+            settings.enable_model_cpu_offload = False
+    if args.no_attention_slicing:
+        settings.enable_attention_slicing = False
+    if args.no_vae_slicing:
+        settings.enable_vae_slicing = False
+    if args.no_tf32:
+        settings.enable_tf32 = False
+        import torch
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+
+    return settings
+
 
 
 def clear_memory(aggressive: bool = False) -> None:
@@ -240,6 +284,7 @@ def generate_image(
     guidance: float = 4.0,
     seed: int | None = None,
     fast_mode: bool = False,
+    args: argparse.Namespace | None = None,
 ) -> str:
     """Generate an image using Z-Image.
 
@@ -247,7 +292,7 @@ def generate_image(
     VAE tiling, etc.) internally — this function only adjusts high-level
     parameters (steps, guidance, size) based on detected hardware.
     """
-    hw_settings = get_optimal_settings()
+    hw_settings = get_optimal_settings(args=args)
 
     try:
         width, height = map(int, size.lower().split("x"))
@@ -496,6 +541,26 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
+    # Read defaults from .env (Z_IMAGE_* vars), falling back to sensible defaults
+    default_size = os.getenv("Z_IMAGE_SIZE", "1024x1024")
+    default_steps = int(os.getenv("Z_IMAGE_STEPS", "28"))
+    default_guidance = float(os.getenv("Z_IMAGE_GUIDANCE", "4.0"))
+    default_dtype = os.getenv("Z_IMAGE_DTYPE", None)
+    default_offload = os.getenv("Z_IMAGE_OFFLOAD", None)
+    # Normalize offload value for CLI default
+    if default_offload in ("1", "sequential"):
+        default_offload = "sequential"
+    elif default_offload == "model":
+        default_offload = "model"
+    else:
+        default_offload = None
+    default_negative = os.getenv(
+        "Z_IMAGE_NEGATIVE_PROMPT",
+        "text, watermark, logo, blurry, low quality, artifacts, "
+        "deformed, disfigured, extra limbs, bad anatomy, jpeg artifacts, "
+        "oversaturated, underexposed, noise, grain",
+    )
+
     parser.add_argument("prompt", nargs="?", help="Text prompt for image generation")
     parser.add_argument(
         "-p", "--prompt", dest="prompt_flag", help="Text prompt (alternative)"
@@ -503,22 +568,19 @@ def main() -> None:
     parser.add_argument(
         "-n",
         "--negative",
-        default=(
-            "text, watermark, logo, blurry, low quality, artifacts, "
-            "deformed, disfigured, extra limbs, bad anatomy, jpeg artifacts, "
-            "oversaturated, underexposed, noise, grain"
-        ),
+        default=default_negative,
         help="Negative prompt",
     )
+
     parser.add_argument("-o", "--output", help="Output file path")
     parser.add_argument(
-        "-s", "--size", default="1024x1024", help="Image size as WIDTHxHEIGHT"
+        "-s", "--size", default=default_size, help=f"Image size as WIDTHxHEIGHT (default: {default_size})"
     )
     parser.add_argument(
-        "--steps", type=int, default=28, help="Inference steps (default: 28)"
+        "--steps", type=int, default=default_steps, help=f"Inference steps (default: {default_steps})"
     )
     parser.add_argument(
-        "--guidance", type=float, default=4.0, help="CFG guidance scale (default: 4.0)"
+        "--guidance", type=float, default=default_guidance, help=f"CFG guidance scale (default: {default_guidance})"
     )
     parser.add_argument("--seed", type=int, help="Random seed for reproducibility")
     parser.add_argument(
@@ -526,6 +588,29 @@ def main() -> None:
     )
     parser.add_argument(
         "-f", "--fast", action="store_true", help="Fast mode for quicker generation"
+    )
+
+    # Hardware-specific overrides (defaults read from .env)
+    parser.add_argument(
+        "--dtype",
+        choices=["float32", "float16", "bfloat16"],
+        default=default_dtype,
+        help="Override data type (e.g., float16 for performance)",
+    )
+    parser.add_argument(
+        "--cpu-offload",
+        choices=["none", "model", "sequential"],
+        default=default_offload,
+        help="CPU offloading strategy",
+    )
+    parser.add_argument(
+        "--no-attention-slicing", action="store_true", help="Disable attention slicing"
+    )
+    parser.add_argument(
+        "--no-vae-slicing", action="store_true", help="Disable VAE slicing"
+    )
+    parser.add_argument(
+        "--no-tf32", action="store_true", help="Disable TF32 for Ampere+ GPUs"
     )
 
     args = parser.parse_args()
@@ -546,6 +631,7 @@ def main() -> None:
                 guidance=args.guidance,
                 seed=args.seed,
                 fast_mode=args.fast,
+                args=args,
             )
 
             if sys.platform == "win32":

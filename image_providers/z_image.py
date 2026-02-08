@@ -64,6 +64,8 @@ class ZImageProvider(ImageProvider):
         negative_prompt: str = "",
         device: str = "cuda",
         enable_cpu_offload: bool = False,
+        offload_mode: str = "none",
+        dtype: str = "bfloat16",
         cache_dir: Optional[str] = None,
         timeout: int = 300,  # Local generation can take a while
     ):
@@ -76,7 +78,9 @@ class ZImageProvider(ImageProvider):
             guidance_scale: CFG scale (3.0-5.0 recommended)
             negative_prompt: Default negative prompt for all generations
             device: Device to run on ('cuda' or 'cpu')
-            enable_cpu_offload: Enable sequential CPU offload for low VRAM
+            enable_cpu_offload: Enable CPU offload for low VRAM
+            offload_mode: CPU offload strategy ('none', 'model', 'sequential')
+            dtype: Data type for model weights ('float16', 'bfloat16', 'float32')
             cache_dir: Directory to cache the downloaded model
             timeout: Timeout in seconds (mainly for download)
         """
@@ -86,6 +90,8 @@ class ZImageProvider(ImageProvider):
         self.default_negative_prompt = negative_prompt
         self.device = device
         self.enable_cpu_offload = enable_cpu_offload
+        self.offload_mode = offload_mode
+        self.dtype = dtype
         self.cache_dir = cache_dir
         self._pipe = None
 
@@ -211,7 +217,7 @@ class ZImageProvider(ImageProvider):
         """Load or retrieve cached pipeline."""
         global _pipeline_cache
 
-        cache_key = f"{self.model}_{self.device}_{self.enable_cpu_offload}"
+        cache_key = f"{self.model}_{self.device}_{self.enable_cpu_offload}_{self.offload_mode}_{self.dtype}"
 
         if cache_key in _pipeline_cache:
             logger.debug("Using cached Z-Image pipeline")
@@ -285,19 +291,23 @@ class ZImageProvider(ImageProvider):
                 self._use_vae_tiling = False
 
         try:
-            # Z-Image REQUIRES bfloat16 per official HuggingFace usage.
-            # float16 causes NaN overflow → black images.
-            # Ampere+ GPUs (compute 8.0+) have native bf16 hardware support.
-            # Older GPUs will emulate bf16 (slower but still correct).
+            # Select dtype based on configuration.
+            # float16 is fastest on most GPUs; bfloat16 has native Ampere+ support.
+            # The dtype can be configured via Z_IMAGE_DTYPE env var.
             if self.device == "cuda":
-                dtype = torch.bfloat16
+                dtype_map = {
+                    "float16": torch.float16,
+                    "bfloat16": torch.bfloat16,
+                    "float32": torch.float32,
+                }
+                dtype = dtype_map.get(self.dtype, torch.bfloat16)
                 if is_ampere_or_newer:
                     # TF32 gives ~10-15% speedup on matmul/conv ops
                     torch.backends.cuda.matmul.allow_tf32 = True
                     torch.backends.cudnn.allow_tf32 = True
-                    logger.debug(f"Using bfloat16 + TF32 on Ampere+ GPU (compute {compute_cap[0]}.{compute_cap[1]})")
+                    logger.debug(f"Using {self.dtype} + TF32 on Ampere+ GPU (compute {compute_cap[0]}.{compute_cap[1]})")
                 else:
-                    logger.debug("Using bfloat16 on pre-Ampere GPU (emulated)")
+                    logger.debug(f"Using {self.dtype} on pre-Ampere GPU")
             else:
                 dtype = torch.float32  # CPU fallback
 
@@ -312,17 +322,14 @@ class ZImageProvider(ImageProvider):
             # Note: Do NOT call .eval() on pipeline modules — Z-Image's custom
             # architecture handles inference mode internally
 
-            # Apply memory optimizations based on VRAM
+            # Apply memory optimizations based on VRAM and configured offload mode
             if self.enable_cpu_offload and self.device == "cuda":
-                # For 4GB: Use SEQUENTIAL offload (most memory efficient)
-                if getattr(self, "_use_sequential_offload", False):
+                # Use configured offload mode, or auto-detect from VRAM
+                if self.offload_mode == "sequential" or getattr(self, "_use_sequential_offload", False):
                     pipe.enable_sequential_cpu_offload()
                     logger.info("Z-Image loaded with SEQUENTIAL CPU offload (max memory savings)")
 
                     # Pin offloaded weights in page-locked RAM for faster CPU→GPU DMA transfers.
-                    # Sequential offload stores weights in a dict that gets transferred to GPU
-                    # per-layer during each step. Pinned memory enables direct DMA bypass,
-                    # measured ~20% per-step speedup (6.3s→5.0s/step at 512x512).
                     self._pin_offload_weights(pipe)
                 else:
                     # Model CPU offload for 6-12GB
