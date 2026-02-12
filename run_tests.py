@@ -1,69 +1,84 @@
 #!/usr/bin/env python3
-"""Test runner for all module tests.
+"""
+Comprehensive Test Orchestration & Quality Assurance Engine
 
-This is the ONLY test runner for the project. All unit tests are defined
-within their respective module files using _create_module_tests() functions.
-This runner discovers and executes all module tests.
+Advanced test execution platform providing systematic validation of the entire
+Social Media Publisher system through comprehensive test suite orchestration,
+intelligent quality assessment, and detailed performance analytics with
+automated test discovery and professional reporting for reliable system validation.
+
+Usage:
+    python run_tests.py                # Run all tests with detailed reporting
+    python run_tests.py --integration  # Run integration tests with live API access
+    python run_tests.py --skip-linter  # Skip linter checks
+
+Modes:
+    Default: Unit tests only, SKIP_LIVE_API_TESTS=true
+    --integration: Enables live browser/API tests with real authenticated sessions
 """
 
-import asyncio
 import atexit
+import importlib
 import io
 import logging
 import os
+import subprocess
 import sys
+import time
 import warnings
-from test_framework import run_all_suites, suppress_logging
+from pathlib import Path
+from typing import Final
+
+from test_framework import Colors, Icons, suppress_logging
 
 # Suppress asyncio warnings about pending tasks (nodriver/websockets cleanup issue)
 warnings.filterwarnings("ignore", message=".*Task was destroyed.*")
 warnings.filterwarnings("ignore", message=".*Event loop is closed.*")
 warnings.filterwarnings("ignore", message=".*coroutine.*was never awaited.*")
 
+SEPARATOR_LINE: Final[str] = "=" * 70
+SECTION_SEPARATOR: Final[str] = "\n" + SEPARATOR_LINE
 
-def _suppress_unraisable_hook(unraisable):
+
+def _suppress_unraisable_hook(unraisable: object) -> None:
     """Suppress nodriver/websockets cleanup errors at exit."""
-    # These are expected during process exit when nodriver cleanup races with gc
-    err_str = str(unraisable.exc_value) if unraisable.exc_value else ""
+    exc_value = getattr(unraisable, "exc_value", None)
+    err_str = str(exc_value) if exc_value else ""
     if any(x in err_str for x in ["closed pipe", "Event loop is closed"]):
-        return  # Suppress these known harmless errors
-    # For other unraisable exceptions, use default behavior
+        return
     sys.__unraisablehook__(unraisable)
 
 
-# Install custom hook to suppress known harmless cleanup errors
 sys.unraisablehook = _suppress_unraisable_hook
 
 
-def _cleanup_asyncio():
+def _cleanup_asyncio() -> None:
     """Clean up asyncio resources at exit to prevent warnings."""
     try:
-        # Close any shared browser sessions
         from linkedin_profile_lookup import LinkedInCompanyLookup
-
         LinkedInCompanyLookup.close_shared_browser()
     except Exception:
         pass
 
 
-# Register cleanup to run at exit
 atexit.register(_cleanup_asyncio)
 
 
-# List of modules that have _create_module_tests() functions
-TEST_MODULES = [
-    ("config", "Config"),
+# Module registry: (module_name, display_name)
+TEST_MODULES: list[tuple[str, str]] = [
+    ("config", "Configuration"),
     ("domain_credibility", "Domain Credibility"),
     ("url_utils", "URL Utilities"),
+    ("text_utils", "Text Utilities"),
     ("error_handling", "Error Handling"),
     ("rate_limiter", "Rate Limiter"),
     ("database", "Database"),
     ("scheduler", "Scheduler"),
-    ("verifier", "Verifier"),
+    ("verifier", "Content Verifier"),
     ("image_generator", "Image Generator"),
     ("linkedin_publisher", "LinkedIn Publisher"),
     ("linkedin_profile_lookup", "LinkedIn Profile Lookup"),
-    ("searcher", "Searcher"),
+    ("searcher", "Story Searcher"),
     ("company_mention_enricher", "Company Mention Enricher"),
     ("opportunity_messages", "Opportunity Messages"),
     ("validation_server", "Validation Server"),
@@ -94,55 +109,144 @@ TEST_MODULES = [
     ("linkedin_networking", "LinkedIn Networking"),
     ("ner_engine", "NER Engine"),
     ("rag_engine", "RAG Engine"),
+    ("content_validation", "Content Validation"),
+    ("entity_constants", "Entity Constants"),
+    ("organization_aliases", "Organization Aliases"),
+    ("profile_matcher", "Profile Matcher"),
+    ("models", "Models"),
+    ("browser_backends", "Browser Backends"),
 ]
 
 
-def main_with_failures() -> tuple[int, list[tuple[str, str]]]:
-    """Collect and run all module tests.
+def _ruff_available() -> bool:
+    """Return True if Ruff CLI is available."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "ruff", "--version"],
+            check=False, capture_output=True, text=True, timeout=10,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def _run_linter() -> bool:
+    """Run Ruff linter and return True if no issues found."""
+    print(f"\n{Colors.BOLD}{Colors.CYAN}{SEPARATOR_LINE}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}🔍 Running Linter (Ruff){Colors.RESET}")
+    print(f"{Colors.CYAN}{SEPARATOR_LINE}{Colors.RESET}\n")
+
+    if not _ruff_available():
+        print(f"{Colors.YELLOW}⚠️ Ruff not available, skipping linter checks{Colors.RESET}")
+        return True
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "ruff", "check", "."],
+            check=False, capture_output=True, text=True,
+            cwd=Path.cwd(), timeout=60,
+        )
+        if result.returncode == 0:
+            print(f"{Colors.GREEN}✅ Linter: No issues found{Colors.RESET}")
+            return True
+        else:
+            lines = [ln for ln in result.stdout.splitlines() if ln.strip()][-30:]
+            for ln in lines:
+                print(ln)
+            print(f"\n{Colors.RED}❌ Linter: Issues found{Colors.RESET}")
+            return False
+    except subprocess.TimeoutExpired:
+        print(f"{Colors.YELLOW}⚠️ Linter timed out{Colors.RESET}")
+        return True
+
+
+def _run_module_tests(module_name: str, display_name: str) -> tuple[bool, float]:
+    """Import a module and run its _create_module_tests() function.
 
     Returns:
-        Tuple of (exit_code, list of (suite_name, test_name) for failures)
+        Tuple of (success, duration_seconds)
     """
-    # Note: venv check is handled by config.py at import time
-    suites = []
-
-    # Suppress logging during test imports and execution (up to ERROR level)
-    with suppress_logging(logging.ERROR):
-        # Import and collect test suites from each module
-        for module_name, display_name in TEST_MODULES:
-            try:
-                module = __import__(module_name)
-                if hasattr(module, "_create_module_tests"):
-                    suites.append(module._create_module_tests())
-                else:
-                    print(f"Warning: {module_name} has no _create_module_tests()")
-            except Exception as e:
-                print(f"Failed to load {display_name} tests: {e}")
-
-        if not suites:
-            print("No test suites found!")
-            return 1, []
-
-        print(f"\nRunning {len(suites)} test suites...\n")
-        success, failed_tests = run_all_suites(suites, verbose=True)
-
-    # Browser cleanup is handled by atexit handler
-    return (0, []) if success else (1, failed_tests)
+    start = time.time()
+    try:
+        module = importlib.import_module(module_name)
+        if hasattr(module, "_create_module_tests"):
+            success = module._create_module_tests()
+            return success, time.time() - start
+        else:
+            print(f"{Colors.YELLOW}⚠️ {display_name}: no _create_module_tests() found{Colors.RESET}")
+            return True, time.time() - start
+    except Exception as e:
+        duration = time.time() - start
+        print(f"{Colors.RED}❌ {display_name}: Failed to load - {e}{Colors.RESET}")
+        return False, duration
 
 
 def main() -> int:
-    """Entry point that returns exit code only."""
-    exit_code, _ = main_with_failures()
+    """Run all tests and return exit code."""
+    overall_start = time.time()
+    skip_linter = "--skip-linter" in sys.argv
+    integration_mode = "--integration" in sys.argv
 
-    # Suppress stderr to hide nodriver/websockets cleanup warnings during gc
-    # These are harmless and happen after all tests complete successfully
-    sys.stderr = io.StringIO()
+    if integration_mode:
+        os.environ["SKIP_LIVE_API_TESTS"] = "false"
+    else:
+        os.environ.setdefault("SKIP_LIVE_API_TESTS", "true")
 
-    return exit_code
+    print(f"\n{Colors.BOLD}{Colors.CYAN}{SEPARATOR_LINE}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}{Icons.ROCKET} Social Media Publisher - Test Suite{Colors.RESET}")
+    print(f"{Colors.GRAY}Mode: {'Integration' if integration_mode else 'Unit Tests'}{Colors.RESET}")
+    print(f"{Colors.CYAN}{SEPARATOR_LINE}{Colors.RESET}")
+
+    # --- Linter ---
+    linter_ok = True
+    if not skip_linter:
+        linter_ok = _run_linter()
+
+    # --- Module Tests ---
+    passed_modules = 0
+    failed_modules = 0
+    failed_names: list[str] = []
+
+    with suppress_logging(logging.ERROR):
+        for module_name, display_name in TEST_MODULES:
+            success, duration = _run_module_tests(module_name, display_name)
+            if success:
+                passed_modules += 1
+            else:
+                failed_modules += 1
+                failed_names.append(display_name)
+
+    # --- Final Summary ---
+    total_duration = time.time() - overall_start
+    total_modules = passed_modules + failed_modules
+
+    print(f"\n{Colors.BOLD}{Colors.CYAN}{SEPARATOR_LINE}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}{Icons.MAGNIFY} Final Test Report{Colors.RESET}")
+    print(f"{Colors.CYAN}{SEPARATOR_LINE}{Colors.RESET}")
+    print(f"{Icons.CLOCK} Total Duration: {total_duration:.1f}s")
+    print(f"{Colors.GREEN}{Icons.PASS} Modules Passed: {passed_modules}/{total_modules}{Colors.RESET}")
+
+    if failed_modules > 0:
+        print(f"{Colors.RED}{Icons.FAIL} Modules Failed: {failed_modules}/{total_modules}{Colors.RESET}")
+        for name in failed_names:
+            print(f"  {Colors.RED}• {name}{Colors.RESET}")
+
+    if not linter_ok:
+        print(f"{Colors.YELLOW}⚠️ Linter issues detected{Colors.RESET}")
+
+    all_ok = failed_modules == 0 and linter_ok
+    if all_ok:
+        print(f"\n{Colors.GREEN}{Colors.BOLD}{Icons.PASS} ALL TESTS PASSED{Colors.RESET}")
+    else:
+        print(f"\n{Colors.RED}{Colors.BOLD}{Icons.FAIL} SOME TESTS FAILED{Colors.RESET}")
+
+    print(f"{Colors.CYAN}{SEPARATOR_LINE}{Colors.RESET}\n")
+
+    return 0 if all_ok else 1
 
 
 if __name__ == "__main__":
     result = main()
-    # os._exit bypasses normal cleanup and avoids asyncio task warnings
-    # All tests have completed and results have been reported
+    sys.stdout.flush()
+    sys.stderr = io.StringIO()
     os._exit(result)

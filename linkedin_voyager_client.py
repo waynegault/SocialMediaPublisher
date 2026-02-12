@@ -20,7 +20,7 @@ import os
 import random
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import quote
 
 import requests
@@ -685,9 +685,6 @@ class LinkedInVoyagerClient:
         - Title match
         - Location match
         """
-        first_lower = first_name.lower()
-        last_lower = last_name.lower()
-
         scored_candidates: list[tuple[float, LinkedInProfile]] = []
 
         for candidate in candidates:

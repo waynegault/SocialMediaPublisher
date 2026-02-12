@@ -5,7 +5,6 @@ import json
 import time
 import re
 import base64
-from typing import Any, Optional
 
 # Import UC Chrome availability from centralized browser module
 # This also applies Windows error suppression for cleanup
@@ -234,7 +233,7 @@ def search_indirect_people_uc(org: str, roles: list[str]) -> list[dict]:
                             found = True
                             break
 
-                except Exception as e:
+                except Exception:
                     continue
 
             if not found:
@@ -306,7 +305,7 @@ def main():
 
     with open("indirect_people_profiles.json", "w") as f:
         json_mod.dump(all_results, f, indent=2)
-    print(f"\nResults saved to indirect_people_profiles.json")
+    print("\nResults saved to indirect_people_profiles.json")
 
 
 if __name__ == "__main__":
@@ -316,11 +315,12 @@ if __name__ == "__main__":
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for find_indirect_people module."""
-    from test_framework import TestSuite
+    from test_framework import TestSuite, patch
 
-    suite = TestSuite("Find Indirect People Tests")
+    suite = TestSuite("Find Indirect People Tests", "find_indirect_people.py")
+    suite.start_suite()
 
     def test_is_university_true():
         assert is_university("University of Cambridge") is True
@@ -348,9 +348,29 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert "Dean" in UNIVERSITY_ROLES
 
     def test_get_organizations_from_db_returns_list():
-        # This should work even with empty db (returns empty list)
-        result = get_organizations_from_db()
-        assert isinstance(result, list)
+        # Create a temporary database with the expected schema
+        import tempfile
+        import os
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        try:
+            conn = sqlite3.connect(tmp.name)
+            conn.execute(
+                "CREATE TABLE stories (direct_people TEXT, indirect_people TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO stories VALUES (?, ?)",
+                (json.dumps([{"name": "Alice", "company": "Acme"}]), None),
+            )
+            conn.commit()
+            conn.close()
+            # Patch sqlite3.connect to use our temp DB
+            with patch("find_indirect_people.sqlite3.connect", return_value=sqlite3.connect(tmp.name)):
+                result = get_organizations_from_db()
+            assert isinstance(result, list)
+            assert "Acme" in result
+        finally:
+            os.unlink(tmp.name)
 
     def test_main_function_exists():
         assert callable(main)
@@ -358,22 +378,54 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     def test_search_indirect_people_uc_exists():
         assert callable(search_indirect_people_uc)
 
-    suite.add_test(
-        "is_university returns True for universities", test_is_university_true
+    suite.run_test(
+        test_name="is_university returns True for universities",
+        test_func=test_is_university_true,
+        test_summary="Tests is university returns True for universities functionality",
+        method_description="Calls is university and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test(
-        "is_university returns False for companies", test_is_university_false
+    suite.run_test(
+        test_name="is_university returns False for companies",
+        test_func=test_is_university_false,
+        test_summary="Tests is university returns False for companies functionality",
+        method_description="Calls is university and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test("COMPANY_ROLES list is defined", test_company_roles_defined)
-    suite.add_test("UNIVERSITY_ROLES list is defined", test_university_roles_defined)
-    suite.add_test(
-        "get_organizations_from_db returns list",
-        test_get_organizations_from_db_returns_list,
+    suite.run_test(
+        test_name="COMPANY_ROLES list is defined",
+        test_func=test_company_roles_defined,
+        test_summary="Tests COMPANY ROLES list is defined functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function correctly processes multiple items",
     )
-    suite.add_test("main function exists", test_main_function_exists)
-    suite.add_test(
-        "search_indirect_people_uc function exists",
-        test_search_indirect_people_uc_exists,
+    suite.run_test(
+        test_name="UNIVERSITY_ROLES list is defined",
+        test_func=test_university_roles_defined,
+        test_summary="Tests UNIVERSITY ROLES list is defined functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function correctly processes multiple items",
+    )
+    suite.run_test(
+        test_name="get_organizations_from_db returns list",
+        test_func=test_get_organizations_from_db_returns_list,
+        test_summary="Tests get organizations from db returns list functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function correctly processes multiple items",
+    )
+    suite.run_test(
+        test_name="main function exists",
+        test_func=test_main_function_exists,
+        test_summary="Tests main function exists functionality",
+        method_description="Calls callable and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="search_indirect_people_uc function exists",
+        test_func=test_search_indirect_people_uc_exists,
+        test_summary="Tests search indirect people uc function exists functionality",
+        method_description="Calls callable and verifies the result",
+        expected_outcome="Function finds and returns the expected results",
     )
 
-    return suite
+    return suite.finish_suite()

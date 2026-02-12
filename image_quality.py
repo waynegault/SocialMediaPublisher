@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from PIL import Image
-    from test_framework import TestSuite
 
 
 # =============================================================================
@@ -172,7 +171,9 @@ class ImageQualityAssessor:
     def _check_pillow(self) -> bool:
         """Check if PIL/Pillow is available."""
         try:
-            from PIL import Image  # noqa: F401
+            from PIL import Image
+
+            _ = Image  # Verify import succeeded
 
             return True
         except ImportError:
@@ -807,14 +808,13 @@ def filter_quality_images(
 # =============================================================================
 
 
-def _create_module_tests() -> "TestSuite":
+def _create_module_tests() -> bool:
     """Create unit tests for this module."""
-    import sys
 
-    sys.path.insert(0, str(Path(__file__).parent))
     from test_framework import TestSuite
 
-    suite = TestSuite("Image Quality Tests")
+    suite = TestSuite("Image Quality Tests", "image_quality.py")
+    suite.start_suite()
 
     def test_quality_metrics_average():
         metrics = QualityMetrics(
@@ -949,33 +949,113 @@ def _create_module_tests() -> "TestSuite":
         assert "0.75" in report
         assert "Test issue" in report
 
-    suite.add_test("Quality metrics average", test_quality_metrics_average)
-    suite.add_test("Artifact detection clean", test_artifact_detection_clean)
-    suite.add_test(
-        "Artifact detection with issues", test_artifact_detection_with_issues
+    suite.run_test(
+        test_name="Quality metrics average",
+        test_func=test_quality_metrics_average,
+        test_summary="Tests Quality metrics average functionality",
+        method_description="Calls QualityMetrics and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test("Quality score acceptable", test_quality_score_acceptable)
-    suite.add_test(
-        "Quality score not acceptable - low",
-        test_quality_score_not_acceptable_low_score,
+    suite.run_test(
+        test_name="Artifact detection clean",
+        test_func=test_artifact_detection_clean,
+        test_summary="Tests Artifact detection clean functionality",
+        method_description="Calls ArtifactDetection and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test(
-        "Quality score not acceptable - artifacts",
-        test_quality_score_not_acceptable_artifacts,
+    suite.run_test(
+        test_name="Artifact detection with issues",
+        test_func=test_artifact_detection_with_issues,
+        test_summary="Tests Artifact detection with issues functionality",
+        method_description="Calls ArtifactDetection and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test("Quality score grades", test_quality_score_grades)
-    suite.add_test("Thresholds defaults", test_thresholds_defaults)
-    suite.add_test("Assessor init", test_assessor_init)
-    suite.add_test("Assessor custom thresholds", test_assessor_custom_thresholds)
-    suite.add_test("Assess missing file", test_assess_missing_file)
-    suite.add_test("Score aspect ratio", test_score_aspect_ratio)
-    suite.add_test("Should regenerate - low score", test_should_regenerate_low_score)
-    suite.add_test("Should regenerate - artifacts", test_should_regenerate_artifacts)
-    suite.add_test("Format report", test_format_report)
+    suite.run_test(
+        test_name="Quality score acceptable",
+        test_func=test_quality_score_acceptable,
+        test_summary="Tests Quality score acceptable functionality",
+        method_description="Calls QualityScore and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Quality score not acceptable - low",
+        test_func=test_quality_score_not_acceptable_low_score,
+        test_summary="Tests Quality score not acceptable with low scenario",
+        method_description="Calls QualityScore and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Quality score not acceptable - artifacts",
+        test_func=test_quality_score_not_acceptable_artifacts,
+        test_summary="Tests Quality score not acceptable with artifacts scenario",
+        method_description="Calls QualityScore and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Quality score grades",
+        test_func=test_quality_score_grades,
+        test_summary="Tests Quality score grades functionality",
+        method_description="Calls QualityScore and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Thresholds defaults",
+        test_func=test_thresholds_defaults,
+        test_summary="Tests Thresholds defaults functionality",
+        method_description="Calls QualityThresholds and verifies the result",
+        expected_outcome="Function returns the correct default result",
+    )
+    suite.run_test(
+        test_name="Assessor init",
+        test_func=test_assessor_init,
+        test_summary="Tests Assessor init functionality",
+        method_description="Calls ImageQualityAssessor and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Assessor custom thresholds",
+        test_func=test_assessor_custom_thresholds,
+        test_summary="Tests Assessor custom thresholds functionality",
+        method_description="Calls QualityThresholds and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Assess missing file",
+        test_func=test_assess_missing_file,
+        test_summary="Tests Assess missing file functionality",
+        method_description="Calls ImageQualityAssessor and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="Score aspect ratio",
+        test_func=test_score_aspect_ratio,
+        test_summary="Tests Score aspect ratio functionality",
+        method_description="Calls ImageQualityAssessor and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Should regenerate - low score",
+        test_func=test_should_regenerate_low_score,
+        test_summary="Tests Should regenerate with low score scenario",
+        method_description="Calls ImageQualityAssessor and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Should regenerate - artifacts",
+        test_func=test_should_regenerate_artifacts,
+        test_summary="Tests Should regenerate with artifacts scenario",
+        method_description="Calls ImageQualityAssessor and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Format report",
+        test_func=test_format_report,
+        test_summary="Tests Format report functionality",
+        method_description="Calls ImageQualityAssessor and verifies the result",
+        expected_outcome="Function produces correctly formatted output",
+    )
 
-    return suite
-
-
+    return suite.finish_suite()
 if __name__ == "__main__":
     suite = _create_module_tests()
     suite.run()

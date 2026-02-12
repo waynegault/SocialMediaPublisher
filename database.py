@@ -895,7 +895,6 @@ class Database:
         Returns stories where direct_people or indirect_people exist
         but some entries are missing linkedin_profile URLs.
         """
-        import json as json_module
 
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -1464,10 +1463,10 @@ class Database:
                 if row["indirect_people"]:
                     leaders = json.loads(row["indirect_people"])
                     total_indirect += len(leaders)
-                    for l in leaders:
-                        if l.get("linkedin_profile") or l.get("linkedin_urn"):
+                    for leader in leaders:
+                        if leader.get("linkedin_profile") or leader.get("linkedin_urn"):
                             with_linkedin += 1
-                        conf = l.get("match_confidence", "")
+                        conf = leader.get("match_confidence", "")
                         if conf == "high":
                             high_confidence += 1
                         elif conf == "org_fallback":
@@ -2276,14 +2275,15 @@ class Database:
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for database module."""
     import os
     import tempfile
 
     from test_framework import TestSuite
 
-    suite = TestSuite("Database Tests")
+    suite = TestSuite("Database Tests", "database.py")
+    suite.start_suite()
 
     def test_story_dataclass():
         story = Story(title="Test", summary="Summary", quality_score=8)
@@ -2423,7 +2423,7 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
                 source_links=["https://example.com"],
                 quality_score=7,
             )
-            story1_id = db.add_story(story1)
+            _story1_id = db.add_story(story1)
 
             # Add a story that will be published
             story2 = Story(
@@ -2454,17 +2454,89 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
-    suite.add_test("Story dataclass", test_story_dataclass)
-    suite.add_test("Story to_dict", test_story_to_dict)
-    suite.add_test("Story from_row and _parse_datetime", test_story_from_row)
-    suite.add_test("Database init", test_database_init)
-    suite.add_test("Database add story", test_database_add_story)
-    suite.add_test("Database get story", test_database_get_story)
-    suite.add_test("Database get story by title", test_database_get_story_by_title)
-    suite.add_test("Database update story", test_database_update_story)
-    suite.add_test("Database delete story", test_database_delete_story)
-    suite.add_test("Database statistics", test_database_statistics)
-    suite.add_test("Database state", test_database_state)
-    suite.add_test("Database published titles", test_database_published_titles)
+    suite.run_test(
+        test_name="Story dataclass",
+        test_func=test_story_dataclass,
+        test_summary="Tests Story dataclass functionality",
+        method_description="Calls Story and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Story to_dict",
+        test_func=test_story_to_dict,
+        test_summary="Tests Story to dict functionality",
+        method_description="Calls Story and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Story from_row and _parse_datetime",
+        test_func=test_story_from_row,
+        test_summary="Tests Story from row and parse datetime functionality",
+        method_description="Calls  parse datetime and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Database init",
+        test_func=test_database_init,
+        test_summary="Tests Database init functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Database add story",
+        test_func=test_database_add_story,
+        test_summary="Tests Database add story functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Database get story",
+        test_func=test_database_get_story,
+        test_summary="Tests Database get story functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Database get story by title",
+        test_func=test_database_get_story_by_title,
+        test_summary="Tests Database get story by title functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Database update story",
+        test_func=test_database_update_story,
+        test_summary="Tests Database update story functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns True",
+    )
+    suite.run_test(
+        test_name="Database delete story",
+        test_func=test_database_delete_story,
+        test_summary="Tests Database delete story functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Database statistics",
+        test_func=test_database_statistics,
+        test_summary="Tests Database statistics functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Database state",
+        test_func=test_database_state,
+        test_summary="Tests Database state functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Database published titles",
+        test_func=test_database_published_titles,
+        test_summary="Tests Database published titles functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
+    return suite.finish_suite()

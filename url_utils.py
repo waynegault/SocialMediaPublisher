@@ -325,116 +325,119 @@ def validate_linkedin_url(url: str, url_type: str = "profile") -> bool:
 # ============================================================================
 
 
-def _create_module_tests():
-    """Create tests for this module. Call from run_tests.py."""
-    from test_framework import TestSuite
+def _test_validate_url_format_empty() -> None:
+    assert not validate_url_format("")
 
-    suite = TestSuite("URL Utilities")
 
-    # validate_url_format tests
-    suite.add_test(
-        "validate_url_format_empty",
-        lambda: not validate_url_format(""),
-    )
+def _test_validate_url_format_no_scheme() -> None:
+    assert not validate_url_format("example.com/path")
 
-    suite.add_test(
-        "validate_url_format_no_scheme",
-        lambda: not validate_url_format("example.com/path"),
-    )
 
-    suite.add_test(
-        "validate_url_format_invalid_scheme",
-        lambda: not validate_url_format("ftp://example.com"),
-    )
+def _test_validate_url_format_invalid_scheme() -> None:
+    assert not validate_url_format("ftp://example.com")
 
-    suite.add_test(
-        "validate_url_format_valid_http",
-        lambda: validate_url_format("http://example.com/path"),
-    )
 
-    suite.add_test(
-        "validate_url_format_valid_https",
-        lambda: validate_url_format("https://example.com/path?query=1"),
-    )
+def _test_validate_url_format_valid() -> None:
+    assert validate_url_format("http://example.com/path")
+    assert validate_url_format("https://example.com/path?query=1")
 
-    # get_base_url tests
-    suite.add_test(
-        "get_base_url_full_url",
-        lambda: get_base_url("https://news.example.com/path/article")
-        == "https://news.example.com",
-    )
 
-    suite.add_test(
-        "get_base_url_empty",
-        lambda: get_base_url("") == "",
-    )
+def _test_get_base_url() -> None:
+    assert get_base_url("https://news.example.com/path/article") == "https://news.example.com"
+    assert get_base_url("") == ""
 
-    # resolve_relative_url tests
-    suite.add_test(
-        "resolve_relative_url_protocol_relative",
-        lambda: resolve_relative_url(
-            "//cdn.example.com/image.jpg", "https://example.com"
+
+def _test_resolve_relative_url() -> None:
+    assert resolve_relative_url("//cdn.example.com/image.jpg", "https://example.com") == "https://cdn.example.com/image.jpg"
+    assert resolve_relative_url("/images/photo.jpg", "https://example.com/news/article") == "https://example.com/images/photo.jpg"
+    assert resolve_relative_url("photo.jpg", "https://example.com/news/") == "https://example.com/news/photo.jpg"
+    assert resolve_relative_url("https://other.com/image.jpg", "https://example.com") == "https://other.com/image.jpg"
+
+
+def _test_extract_path_keywords() -> None:
+    kw = extract_path_keywords("https://news.rice.edu/news/2026/researchers-unlock-catalyst-behavior")
+    assert {"researchers", "unlock", "catalyst", "behavior"} <= kw
+    assert extract_path_keywords("") == set()
+
+
+def _test_validate_linkedin_url() -> None:
+    assert validate_linkedin_url("https://linkedin.com/in/john-doe-12345")
+    assert not validate_linkedin_url("https://linkedin.com/in/login")
+    assert validate_linkedin_url("https://linkedin.com/company/acme-corp", url_type="company")
+    assert not validate_linkedin_url("")
+
+
+def _create_module_tests() -> bool:
+    """Comprehensive test suite for url_utils.py"""
+    from test_framework import TestSuite, suppress_logging
+
+    suite = TestSuite("URL Utilities", "url_utils.py")
+    suite.start_suite()
+
+    with suppress_logging():
+        suite.run_test(
+            test_name="validate_url_format rejects empty/invalid",
+            test_func=_test_validate_url_format_empty,
+            test_summary="Empty URL should be rejected",
+            functions_tested="validate_url_format()",
+            method_description="Pass empty string and verify False returned",
+            expected_outcome="Returns False for empty input",
         )
-        == "https://cdn.example.com/image.jpg",
-    )
-
-    suite.add_test(
-        "resolve_relative_url_absolute_path",
-        lambda: resolve_relative_url(
-            "/images/photo.jpg", "https://example.com/news/article"
+        suite.run_test(
+            test_name="validate_url_format rejects no-scheme",
+            test_func=_test_validate_url_format_no_scheme,
+            test_summary="URL without scheme should be rejected",
+            functions_tested="validate_url_format()",
+            method_description="Pass URL without http/https scheme",
+            expected_outcome="Returns False for schemeless URL",
         )
-        == "https://example.com/images/photo.jpg",
-    )
-
-    suite.add_test(
-        "resolve_relative_url_relative_path",
-        lambda: resolve_relative_url("photo.jpg", "https://example.com/news/")
-        == "https://example.com/news/photo.jpg",
-    )
-
-    suite.add_test(
-        "resolve_relative_url_full_url",
-        lambda: resolve_relative_url(
-            "https://other.com/image.jpg", "https://example.com"
+        suite.run_test(
+            test_name="validate_url_format rejects invalid scheme",
+            test_func=_test_validate_url_format_invalid_scheme,
+            test_summary="URL with ftp scheme should be rejected",
+            functions_tested="validate_url_format()",
+            method_description="Pass ftp:// URL",
+            expected_outcome="Returns False for non-http/https scheme",
         )
-        == "https://other.com/image.jpg",
-    )
+        suite.run_test(
+            test_name="validate_url_format accepts valid URLs",
+            test_func=_test_validate_url_format_valid,
+            test_summary="Valid http/https URLs should be accepted",
+            functions_tested="validate_url_format()",
+            method_description="Pass valid http and https URLs",
+            expected_outcome="Returns True for valid URLs",
+        )
+        suite.run_test(
+            test_name="get_base_url extraction",
+            test_func=_test_get_base_url,
+            test_summary="Extract base URL from full URL",
+            functions_tested="get_base_url()",
+            method_description="Pass full URL and empty string",
+            expected_outcome="Returns scheme+host for full URL, empty for empty",
+        )
+        suite.run_test(
+            test_name="resolve_relative_url all cases",
+            test_func=_test_resolve_relative_url,
+            test_summary="Resolve protocol-relative, absolute, relative, and full URLs",
+            functions_tested="resolve_relative_url()",
+            method_description="Test all four URL resolution cases",
+            expected_outcome="Each case resolves to the correct absolute URL",
+        )
+        suite.run_test(
+            test_name="extract_path_keywords",
+            test_func=_test_extract_path_keywords,
+            test_summary="Extract keywords from URL path segments",
+            functions_tested="extract_path_keywords()",
+            method_description="Pass research URL and verify keyword extraction",
+            expected_outcome="Returns set of path-segment keywords",
+        )
+        suite.run_test(
+            test_name="validate_linkedin_url",
+            test_func=_test_validate_linkedin_url,
+            test_summary="Validate LinkedIn profile and company URLs",
+            functions_tested="validate_linkedin_url()",
+            method_description="Test valid/invalid profile and company URLs",
+            expected_outcome="Valid URLs accepted, invalid/empty rejected",
+        )
 
-    # extract_path_keywords tests
-    suite.add_test(
-        "extract_path_keywords_research_url",
-        lambda: {"researchers", "unlock", "catalyst", "behavior"}
-        <= extract_path_keywords(
-            "https://news.rice.edu/news/2026/researchers-unlock-catalyst-behavior"
-        ),
-    )
-
-    suite.add_test(
-        "extract_path_keywords_empty",
-        lambda: extract_path_keywords("") == set(),
-    )
-
-    # validate_linkedin_url tests
-    suite.add_test(
-        "validate_linkedin_url_valid_profile",
-        lambda: validate_linkedin_url("https://linkedin.com/in/john-doe-12345"),
-    )
-
-    suite.add_test(
-        "validate_linkedin_url_invalid_profile",
-        lambda: not validate_linkedin_url("https://linkedin.com/in/login"),
-    )
-
-    suite.add_test(
-        "validate_linkedin_url_valid_company",
-        lambda: validate_linkedin_url(
-            "https://linkedin.com/company/acme-corp", url_type="company"
-        ),
-    )
-
-    suite.add_test(
-        "validate_linkedin_url_empty",
-        lambda: not validate_linkedin_url(""),
-    )
-
-    return suite
+    return suite.finish_suite()

@@ -466,11 +466,12 @@ class LinkedInOptimizer:
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for linkedin_optimizer module."""
     from test_framework import TestSuite
 
-    suite = TestSuite("LinkedIn Optimizer Tests")
+    suite = TestSuite("LinkedIn Optimizer Tests", "linkedin_optimizer.py")
+    suite.start_suite()
 
     def test_analyze_empty_post():
         optimizer = LinkedInOptimizer()
@@ -580,20 +581,110 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert "Length" in summary
         assert "Hook" in summary
 
-    suite.add_test("Analyze empty post", test_analyze_empty_post)
-    suite.add_test("Analyze short post", test_analyze_short_post)
-    suite.add_test("Analyze optimal length post", test_analyze_optimal_length_post)
-    suite.add_test("Has hook - question", test_has_hook_question)
-    suite.add_test("Has hook - starter", test_has_hook_starter)
-    suite.add_test("No hook detection", test_no_hook)
-    suite.add_test("Has CTA detection", test_has_cta)
-    suite.add_test("No CTA detection", test_no_cta)
-    suite.add_test("Detect spam hashtags", test_detect_spam_hashtags)
-    suite.add_test("Detect spam pattern", test_detect_spam_pattern)
-    suite.add_test("Optimize post formatting", test_optimize_post_formatting)
-    suite.add_test("Create hook", test_create_hook)
-    suite.add_test("Create CTA", test_create_cta)
-    suite.add_test("Readability score bounds", test_readability_score_bounds)
-    suite.add_test("Optimization summary", test_optimization_summary)
+    suite.run_test(
+        test_name="Analyze empty post",
+        test_func=test_analyze_empty_post,
+        test_summary="Tests Analyze empty post functionality",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="Analyze short post",
+        test_func=test_analyze_short_post,
+        test_summary="Tests Analyze short post functionality",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Analyze optimal length post",
+        test_func=test_analyze_optimal_length_post,
+        test_summary="Tests Analyze optimal length post functionality",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Has hook - question",
+        test_func=test_has_hook_question,
+        test_summary="Tests Has hook with question scenario",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Has hook - starter",
+        test_func=test_has_hook_starter,
+        test_summary="Tests Has hook with starter scenario",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="No hook detection",
+        test_func=test_no_hook,
+        test_summary="Tests No hook detection functionality",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="Has CTA detection",
+        test_func=test_has_cta,
+        test_summary="Tests Has CTA detection functionality",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="No CTA detection",
+        test_func=test_no_cta,
+        test_summary="Tests No CTA detection functionality",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="Detect spam hashtags",
+        test_func=test_detect_spam_hashtags,
+        test_summary="Tests Detect spam hashtags functionality",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Detect spam pattern",
+        test_func=test_detect_spam_pattern,
+        test_summary="Tests Detect spam pattern functionality",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Optimize post formatting",
+        test_func=test_optimize_post_formatting,
+        test_summary="Tests Optimize post formatting functionality",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function produces correctly formatted output",
+    )
+    suite.run_test(
+        test_name="Create hook",
+        test_func=test_create_hook,
+        test_summary="Tests Create hook functionality",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Create CTA",
+        test_func=test_create_cta,
+        test_summary="Tests Create CTA functionality",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Readability score bounds",
+        test_func=test_readability_score_bounds,
+        test_summary="Tests Readability score bounds functionality",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Optimization summary",
+        test_func=test_optimization_summary,
+        test_summary="Tests Optimization summary functionality",
+        method_description="Calls LinkedInOptimizer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
+    return suite.finish_suite()

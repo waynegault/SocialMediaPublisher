@@ -716,11 +716,12 @@ def get_health_status() -> dict[str, Any]:
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for monitoring module."""
     from test_framework import TestSuite
 
-    suite = TestSuite("Monitoring Tests")
+    suite = TestSuite("Monitoring Tests", "monitoring.py")
+    suite.start_suite()
 
     def test_json_formatter():
         formatter = JSONFormatter()
@@ -883,20 +884,110 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert stats.min_value == 10.0
         assert stats.max_value == 30.0
 
-    suite.add_test("JSON formatter", test_json_formatter)
-    suite.add_test("Colored formatter", test_colored_formatter)
-    suite.add_test("Metrics counter", test_metrics_counter)
-    suite.add_test("Metrics gauge", test_metrics_gauge)
-    suite.add_test("Metrics histogram", test_metrics_histogram)
-    suite.add_test("Metrics timing", test_metrics_timing)
-    suite.add_test("Metrics with labels", test_metrics_with_labels)
-    suite.add_test("Prometheus export", test_prometheus_export)
-    suite.add_test("Event tracker", test_event_tracker)
-    suite.add_test("Event tracker limit", test_event_tracker_limit)
-    suite.add_test("Event counts", test_event_counts)
-    suite.add_test("Timed decorator", test_timed_decorator)
-    suite.add_test("Counted decorator", test_counted_decorator)
-    suite.add_test("Health status", test_health_status)
-    suite.add_test("Metric stats", test_metric_stats)
+    suite.run_test(
+        test_name="JSON formatter",
+        test_func=test_json_formatter,
+        test_summary="Tests JSON formatter functionality",
+        method_description="Calls JSONFormatter and verifies the result",
+        expected_outcome="Function produces correctly formatted output",
+    )
+    suite.run_test(
+        test_name="Colored formatter",
+        test_func=test_colored_formatter,
+        test_summary="Tests Colored formatter functionality",
+        method_description="Calls ColoredFormatter and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
+    )
+    suite.run_test(
+        test_name="Metrics counter",
+        test_func=test_metrics_counter,
+        test_summary="Tests Metrics counter functionality",
+        method_description="Calls MetricsCollector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Metrics gauge",
+        test_func=test_metrics_gauge,
+        test_summary="Tests Metrics gauge functionality",
+        method_description="Calls MetricsCollector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Metrics histogram",
+        test_func=test_metrics_histogram,
+        test_summary="Tests Metrics histogram functionality",
+        method_description="Calls MetricsCollector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Metrics timing",
+        test_func=test_metrics_timing,
+        test_summary="Tests Metrics timing functionality",
+        method_description="Calls MetricsCollector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Metrics with labels",
+        test_func=test_metrics_with_labels,
+        test_summary="Tests Metrics with labels functionality",
+        method_description="Calls MetricsCollector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Prometheus export",
+        test_func=test_prometheus_export,
+        test_summary="Tests Prometheus export functionality",
+        method_description="Calls MetricsCollector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Event tracker",
+        test_func=test_event_tracker,
+        test_summary="Tests Event tracker functionality",
+        method_description="Calls EventTracker and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Event tracker limit",
+        test_func=test_event_tracker_limit,
+        test_summary="Tests Event tracker limit functionality",
+        method_description="Calls EventTracker and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Event counts",
+        test_func=test_event_counts,
+        test_summary="Tests Event counts functionality",
+        method_description="Calls EventTracker and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Timed decorator",
+        test_func=test_timed_decorator,
+        test_summary="Tests Timed decorator functionality",
+        method_description="Calls MetricsCollector and verifies the result",
+        expected_outcome="Function returns the expected value",
+    )
+    suite.run_test(
+        test_name="Counted decorator",
+        test_func=test_counted_decorator,
+        test_summary="Tests Counted decorator functionality",
+        method_description="Calls MetricsCollector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Health status",
+        test_func=test_health_status,
+        test_summary="Tests Health status functionality",
+        method_description="Calls MetricsCollector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Metric stats",
+        test_func=test_metric_stats,
+        test_summary="Tests Metric stats functionality",
+        method_description="Calls MetricStats and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
+    return suite.finish_suite()

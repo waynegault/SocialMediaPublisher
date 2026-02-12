@@ -537,11 +537,12 @@ def boost_quality_score(
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for trend_detector module."""
     from test_framework import TestSuite
 
-    suite = TestSuite("Trend Detector Tests")
+    suite = TestSuite("Trend Detector Tests", "trend_detector.py")
+    suite.start_suite()
 
     def test_freshness_score_new():
         detector = TrendDetector()
@@ -661,21 +662,117 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert "BREAKING NEWS" in summary
         assert "green hydrogen" in summary
 
-    suite.add_test("Freshness score - new", test_freshness_score_new)
-    suite.add_test("Freshness score - old", test_freshness_score_old)
-    suite.add_test("Freshness score - none", test_freshness_score_none)
-    suite.add_test("Freshness half-life", test_freshness_half_life)
-    suite.add_test("Breaking news - indicator", test_is_breaking_news_indicator)
-    suite.add_test("Breaking news - recent", test_is_breaking_news_recent)
-    suite.add_test("Breaking news - old", test_is_breaking_news_old)
-    suite.add_test("Detect trending topics", test_detect_trending_topics)
-    suite.add_test("Detect trending - empty", test_detect_trending_topics_empty)
-    suite.add_test("Trending boost", test_trending_boost)
-    suite.add_test("Analyze content freshness", test_analyze_content_freshness)
-    suite.add_test("FreshnessScore dataclass", test_freshness_score_dataclass)
-    suite.add_test("Extract date - ISO", test_extract_publication_date_iso)
-    suite.add_test("Extract date - US format", test_extract_publication_date_us)
-    suite.add_test("Boost quality score", test_boost_quality_score)
-    suite.add_test("Freshness summary", test_freshness_summary)
+    suite.run_test(
+        test_name="Freshness score - new",
+        test_func=test_freshness_score_new,
+        test_summary="Tests Freshness score with new scenario",
+        method_description="Calls TrendDetector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Freshness score - old",
+        test_func=test_freshness_score_old,
+        test_summary="Tests Freshness score with old scenario",
+        method_description="Calls TrendDetector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Freshness score - none",
+        test_func=test_freshness_score_none,
+        test_summary="Tests Freshness score with none scenario",
+        method_description="Calls TrendDetector and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="Freshness half-life",
+        test_func=test_freshness_half_life,
+        test_summary="Tests Freshness half-life functionality",
+        method_description="Calls TrendDetector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Breaking news - indicator",
+        test_func=test_is_breaking_news_indicator,
+        test_summary="Tests Breaking news with indicator scenario",
+        method_description="Calls TrendDetector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Breaking news - recent",
+        test_func=test_is_breaking_news_recent,
+        test_summary="Tests Breaking news with recent scenario",
+        method_description="Calls TrendDetector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Breaking news - old",
+        test_func=test_is_breaking_news_old,
+        test_summary="Tests Breaking news with old scenario",
+        method_description="Calls TrendDetector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Detect trending topics",
+        test_func=test_detect_trending_topics,
+        test_summary="Tests Detect trending topics functionality",
+        method_description="Calls TrendDetector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Detect trending - empty",
+        test_func=test_detect_trending_topics_empty,
+        test_summary="Tests Detect trending with empty scenario",
+        method_description="Calls TrendDetector and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="Trending boost",
+        test_func=test_trending_boost,
+        test_summary="Tests Trending boost functionality",
+        method_description="Calls TrendDetector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Analyze content freshness",
+        test_func=test_analyze_content_freshness,
+        test_summary="Tests Analyze content freshness functionality",
+        method_description="Calls TrendDetector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="FreshnessScore dataclass",
+        test_func=test_freshness_score_dataclass,
+        test_summary="Tests FreshnessScore dataclass functionality",
+        method_description="Calls FreshnessScore and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Extract date - ISO",
+        test_func=test_extract_publication_date_iso,
+        test_summary="Tests Extract date with iso scenario",
+        method_description="Calls extract publication date and verifies the result",
+        expected_outcome="Function correctly parses and extracts the data",
+    )
+    suite.run_test(
+        test_name="Extract date - US format",
+        test_func=test_extract_publication_date_us,
+        test_summary="Tests Extract date with us format scenario",
+        method_description="Calls extract publication date and verifies the result",
+        expected_outcome="Function produces correctly formatted output",
+    )
+    suite.run_test(
+        test_name="Boost quality score",
+        test_func=test_boost_quality_score,
+        test_summary="Tests Boost quality score functionality",
+        method_description="Calls boost quality score and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Freshness summary",
+        test_func=test_freshness_summary,
+        test_summary="Tests Freshness summary functionality",
+        method_description="Calls TrendDetector and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
+    return suite.finish_suite()

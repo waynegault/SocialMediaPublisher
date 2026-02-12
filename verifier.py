@@ -96,7 +96,7 @@ class ContentVerifier:
 
                     # If LinkedIn coverage insufficient and callback available, try to fix it
                     if not linkedin_valid and linkedin_lookup_callback is not None:
-                        logger.info(f"  🔄 Auto-running LinkedIn profile lookup...")
+                        logger.info("  🔄 Auto-running LinkedIn profile lookup...")
                         try:
                             linkedin_lookup_callback([story])
                             # Refresh the story from database after lookup
@@ -238,7 +238,7 @@ class ContentVerifier:
         except Exception as e:
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                 logger.error(
-                    f"Verification failed: API quota exceeded (429 RESOURCE_EXHAUSTED)"
+                    "Verification failed: API quota exceeded (429 RESOURCE_EXHAUSTED)"
                 )
                 raise RuntimeError(
                     "API quota exceeded during verification. Please try again later."
@@ -505,14 +505,15 @@ class ContentVerifier:
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for verifier module."""
     import os
     import tempfile
 
     from test_framework import TestSuite
 
-    suite = TestSuite("Verifier Tests")
+    suite = TestSuite("Verifier Tests", "verifier.py")
+    suite.start_suite()
 
     def test_parse_verification_response_approved():
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -586,14 +587,40 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
-    suite.add_test(
-        "Parse response - approved", test_parse_verification_response_approved
+    suite.run_test(
+        test_name="Parse response - approved",
+        test_func=test_parse_verification_response_approved,
+        test_summary="Tests Parse response with approved scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns True",
     )
-    suite.add_test(
-        "Parse response - rejected", test_parse_verification_response_rejected
+    suite.run_test(
+        test_name="Parse response - rejected",
+        test_func=test_parse_verification_response_rejected,
+        test_summary="Tests Parse response with rejected scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function correctly parses and extracts the data",
     )
-    suite.add_test("Parse response - unclear", test_parse_verification_response_unclear)
-    suite.add_test("Build verification prompt", test_build_verification_prompt)
-    suite.add_test("Get verification stats", test_get_verification_stats)
+    suite.run_test(
+        test_name="Parse response - unclear",
+        test_func=test_parse_verification_response_unclear,
+        test_summary="Tests Parse response with unclear scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function correctly parses and extracts the data",
+    )
+    suite.run_test(
+        test_name="Build verification prompt",
+        test_func=test_build_verification_prompt,
+        test_summary="Tests Build verification prompt functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Get verification stats",
+        test_func=test_get_verification_stats,
+        test_summary="Tests Get verification stats functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
+    return suite.finish_suite()

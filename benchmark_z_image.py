@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 import torch
-from generate_image import HardwareSettings, get_optimal_settings, optimize_size_for_hardware
+from generate_image import get_optimal_settings
 from image_providers import get_image_provider
 from image_providers.z_image import ZImageProvider
 from tqdm import tqdm

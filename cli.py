@@ -22,11 +22,10 @@ import sys
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
-    from test_framework import TestSuite
+    pass
 
 
 # =============================================================================
@@ -725,12 +724,12 @@ def create_default_cli() -> CLI:
 # =============================================================================
 
 
-def _create_module_tests() -> "TestSuite":
+def _create_module_tests() -> bool:
     """Create unit tests for this module."""
-    sys.path.insert(0, str(Path(__file__).parent))
     from test_framework import TestSuite
 
-    suite = TestSuite("CLI")
+    suite = TestSuite("CLI", "cli.py")
+    suite.start_suite()
 
     def test_verbosity_levels():
         assert Verbosity.QUIET.value == 0
@@ -830,25 +829,113 @@ def _create_module_tests() -> "TestSuite":
         result = cli.run(["--version"])
         assert result == 0
 
-    suite.add_test("Verbosity levels", test_verbosity_levels)
-    suite.add_test("Colorize disabled", test_colorize_disabled)
-    suite.add_test("Progress bar init", test_progress_bar_init)
-    suite.add_test("Progress bar update", test_progress_bar_update)
-    suite.add_test("Progress bar set", test_progress_bar_set)
-    suite.add_test("Spinner step", test_spinner_step)
-    suite.add_test("Option matches", test_option_matches)
-    suite.add_test("Argument defaults", test_argument_defaults)
-    suite.add_test("Command help", test_command_help)
-    suite.add_test("CLI context verbosity", test_cli_context_verbosity)
-    suite.add_test("CLI add command", test_cli_add_command)
-    suite.add_test("CLI completions", test_cli_completions)
-    suite.add_test("Argument parser", test_argument_parser)
-    suite.add_test("CLI help flag", test_cli_help_flag)
-    suite.add_test("CLI version flag", test_cli_version_flag)
+    suite.run_test(
+        test_name="Verbosity levels",
+        test_func=test_verbosity_levels,
+        test_summary="Tests Verbosity levels functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Colorize disabled",
+        test_func=test_colorize_disabled,
+        test_summary="Tests Colorize disabled functionality",
+        method_description="Calls colorize and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Progress bar init",
+        test_func=test_progress_bar_init,
+        test_summary="Tests Progress bar init functionality",
+        method_description="Calls ProgressBar and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Progress bar update",
+        test_func=test_progress_bar_update,
+        test_summary="Tests Progress bar update functionality",
+        method_description="Calls ProgressBar and verifies the result",
+        expected_outcome="Function correctly updates the target",
+    )
+    suite.run_test(
+        test_name="Progress bar set",
+        test_func=test_progress_bar_set,
+        test_summary="Tests Progress bar set functionality",
+        method_description="Calls ProgressBar and verifies the result",
+        expected_outcome="Function correctly updates the target",
+    )
+    suite.run_test(
+        test_name="Spinner step",
+        test_func=test_spinner_step,
+        test_summary="Tests Spinner step functionality",
+        method_description="Calls Spinner and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Option matches",
+        test_func=test_option_matches,
+        test_summary="Tests Option matches functionality",
+        method_description="Calls Option and verifies the result",
+        expected_outcome="Function returns False or falsy value",
+    )
+    suite.run_test(
+        test_name="Argument defaults",
+        test_func=test_argument_defaults,
+        test_summary="Tests Argument defaults functionality",
+        method_description="Calls Argument and verifies the result",
+        expected_outcome="Function returns False or falsy value",
+    )
+    suite.run_test(
+        test_name="Command help",
+        test_func=test_command_help,
+        test_summary="Tests Command help functionality",
+        method_description="Calls Command and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="CLI context verbosity",
+        test_func=test_cli_context_verbosity,
+        test_summary="Tests CLI context verbosity functionality",
+        method_description="Calls CLIContext and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="CLI add command",
+        test_func=test_cli_add_command,
+        test_summary="Tests CLI add command functionality",
+        method_description="Calls Command and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="CLI completions",
+        test_func=test_cli_completions,
+        test_summary="Tests CLI completions functionality",
+        method_description="Calls create default cli and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Argument parser",
+        test_func=test_argument_parser,
+        test_summary="Tests Argument parser functionality",
+        method_description="Calls Command and verifies the result",
+        expected_outcome="Function correctly parses and extracts the data",
+    )
+    suite.run_test(
+        test_name="CLI help flag",
+        test_func=test_cli_help_flag,
+        test_summary="Tests CLI help flag functionality",
+        method_description="Calls create default cli and verifies the result",
+        expected_outcome="Function returns the expected value",
+    )
+    suite.run_test(
+        test_name="CLI version flag",
+        test_func=test_cli_version_flag,
+        test_summary="Tests CLI version flag functionality",
+        method_description="Calls create default cli and verifies the result",
+        expected_outcome="Function returns the expected value",
+    )
 
-    return suite
-
-
+    return suite.finish_suite()
 if __name__ == "__main__":
     cli = create_default_cli()
     sys.exit(cli.run())

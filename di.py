@@ -20,11 +20,9 @@ Example:
 
 from __future__ import annotations
 
-import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -36,7 +34,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
-    from test_framework import TestSuite
+    pass
 
 
 # =============================================================================
@@ -661,12 +659,12 @@ def inject(name: str) -> Any:
 # =============================================================================
 
 
-def _create_module_tests() -> "TestSuite":
+def _create_module_tests() -> bool:
     """Create unit tests for this module."""
-    sys.path.insert(0, str(Path(__file__).parent))
     from test_framework import TestSuite
 
-    suite = TestSuite("Dependency Injection")
+    suite = TestSuite("Dependency Injection", "di.py")
+    suite.start_suite()
 
     def test_environment_config():
         config = EnvironmentConfig.development()
@@ -775,24 +773,106 @@ def _create_module_tests() -> "TestSuite":
         container = builder.build()
         assert container.get("from_provider") == "provided"
 
-    suite.add_test("Environment config", test_environment_config)
-    suite.add_test("Environment production", test_environment_production)
-    suite.add_test("Container init", test_container_init)
-    suite.add_test("Container register", test_container_register)
-    suite.add_test("Container get", test_container_get)
-    suite.add_test("Container singleton", test_container_singleton)
-    suite.add_test("Container transient", test_container_transient)
-    suite.add_test("Container dependencies", test_container_dependencies)
-    suite.add_test("Circular detection", test_container_circular_detection)
-    suite.add_test("Register instance", test_container_register_instance)
-    suite.add_test("Override service", test_container_override)
-    suite.add_test("Service tags", test_container_tags)
-    suite.add_test("Application builder", test_application_builder)
-    suite.add_test("Service provider", test_service_provider)
+    suite.run_test(
+        test_name="Environment config",
+        test_func=test_environment_config,
+        test_summary="Tests Environment config functionality",
+        method_description="Calls development and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Environment production",
+        test_func=test_environment_production,
+        test_summary="Tests Environment production functionality",
+        method_description="Calls production and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Container init",
+        test_func=test_container_init,
+        test_summary="Tests Container init functionality",
+        method_description="Calls ServiceContainer and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Container register",
+        test_func=test_container_register,
+        test_summary="Tests Container register functionality",
+        method_description="Calls ServiceContainer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Container get",
+        test_func=test_container_get,
+        test_summary="Tests Container get functionality",
+        method_description="Calls ServiceContainer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Container singleton",
+        test_func=test_container_singleton,
+        test_summary="Tests Container singleton functionality",
+        method_description="Calls ServiceContainer and verifies the result",
+        expected_outcome="Function returns True",
+    )
+    suite.run_test(
+        test_name="Container transient",
+        test_func=test_container_transient,
+        test_summary="Tests Container transient functionality",
+        method_description="Calls ServiceContainer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Container dependencies",
+        test_func=test_container_dependencies,
+        test_summary="Tests Container dependencies functionality",
+        method_description="Calls ServiceContainer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Circular detection",
+        test_func=test_container_circular_detection,
+        test_summary="Tests Circular detection functionality",
+        method_description="Calls ServiceContainer and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
+    )
+    suite.run_test(
+        test_name="Register instance",
+        test_func=test_container_register_instance,
+        test_summary="Tests Register instance functionality",
+        method_description="Calls ServiceContainer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Override service",
+        test_func=test_container_override,
+        test_summary="Tests Override service functionality",
+        method_description="Calls ServiceContainer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Service tags",
+        test_func=test_container_tags,
+        test_summary="Tests Service tags functionality",
+        method_description="Calls ServiceContainer and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Application builder",
+        test_func=test_application_builder,
+        test_summary="Tests Application builder functionality",
+        method_description="Calls ApplicationBuilder and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Service provider",
+        test_func=test_service_provider,
+        test_summary="Tests Service provider functionality",
+        method_description="Calls TestProvider and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
-
-
+    return suite.finish_suite()
 if __name__ == "__main__":
     # Demo usage
     print("Dependency Injection Demo")

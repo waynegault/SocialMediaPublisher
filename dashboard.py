@@ -952,11 +952,12 @@ def get_dashboard_server(database: Optional[Database] = None) -> DashboardServer
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for dashboard module."""
     from test_framework import TestSuite
 
-    suite = TestSuite("Web Dashboard Tests")
+    suite = TestSuite("Web Dashboard Tests", "dashboard.py")
+    suite.start_suite()
 
     def test_pipeline_status_dataclass():
         """Test PipelineStatus defaults."""
@@ -970,7 +971,19 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert metrics.total_stories == 0
         assert metrics.stories_by_category == {}
 
-    suite.add_test("PipelineStatus dataclass", test_pipeline_status_dataclass)
-    suite.add_test("DashboardMetrics dataclass", test_dashboard_metrics_dataclass)
+    suite.run_test(
+        test_name="PipelineStatus dataclass",
+        test_func=test_pipeline_status_dataclass,
+        test_summary="Tests PipelineStatus dataclass functionality",
+        method_description="Calls PipelineStatus and verifies the result",
+        expected_outcome="Function returns an empty collection",
+    )
+    suite.run_test(
+        test_name="DashboardMetrics dataclass",
+        test_func=test_dashboard_metrics_dataclass,
+        test_summary="Tests DashboardMetrics dataclass functionality",
+        method_description="Calls DashboardMetrics and verifies the result",
+        expected_outcome="Function returns an empty collection",
+    )
 
-    return suite
+    return suite.finish_suite()

@@ -24,15 +24,13 @@ import csv
 import io
 import json
 import sqlite3
-import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from enum import Enum
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from test_framework import TestSuite
+    pass
 
 
 # =============================================================================
@@ -763,12 +761,12 @@ def create_analytics_warehouse(db_path: str | None = None) -> AnalyticsWarehouse
 # =============================================================================
 
 
-def _create_module_tests() -> "TestSuite":
+def _create_module_tests() -> bool:
     """Create unit tests for this module."""
-    sys.path.insert(0, str(Path(__file__).parent))
     from test_framework import TestSuite
 
-    suite = TestSuite("Analytics Data Warehouse")
+    suite = TestSuite("Analytics Data Warehouse", "analytics_db.py")
+    suite.start_suite()
 
     def test_metric_point():
         mp = MetricPoint(
@@ -912,24 +910,106 @@ def _create_module_tests() -> "TestSuite":
         remaining = warehouse.get_metrics("old")
         assert len(remaining) == 0
 
-    suite.add_test("MetricPoint creation", test_metric_point)
-    suite.add_test("AggregatedMetric creation", test_aggregated_metric)
-    suite.add_test("Warehouse init", test_warehouse_init)
-    suite.add_test("Record metric", test_record_metric)
-    suite.add_test("Record metric with tags", test_record_metric_with_tags)
-    suite.add_test("Record batch", test_record_batch)
-    suite.add_test("Get metrics", test_get_metrics)
-    suite.add_test("Get metrics date filter", test_get_metrics_date_filter)
-    suite.add_test("Aggregate daily", test_aggregate_daily)
-    suite.add_test("Get trends", test_get_trends)
-    suite.add_test("Generate report", test_generate_report)
-    suite.add_test("Export CSV", test_export_csv)
-    suite.add_test("Export JSON", test_export_json)
-    suite.add_test("Cleanup old data", test_cleanup_old_data)
+    suite.run_test(
+        test_name="MetricPoint creation",
+        test_func=test_metric_point,
+        test_summary="Tests MetricPoint creation functionality",
+        method_description="Calls MetricPoint and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="AggregatedMetric creation",
+        test_func=test_aggregated_metric,
+        test_summary="Tests AggregatedMetric creation functionality",
+        method_description="Calls AggregatedMetric and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Warehouse init",
+        test_func=test_warehouse_init,
+        test_summary="Tests Warehouse init functionality",
+        method_description="Calls AnalyticsWarehouse and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Record metric",
+        test_func=test_record_metric,
+        test_summary="Tests Record metric functionality",
+        method_description="Calls AnalyticsWarehouse and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Record metric with tags",
+        test_func=test_record_metric_with_tags,
+        test_summary="Tests Record metric with tags functionality",
+        method_description="Calls AnalyticsWarehouse and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Record batch",
+        test_func=test_record_batch,
+        test_summary="Tests Record batch functionality",
+        method_description="Calls AnalyticsWarehouse and verifies the result",
+        expected_outcome="Function correctly processes multiple items",
+    )
+    suite.run_test(
+        test_name="Get metrics",
+        test_func=test_get_metrics,
+        test_summary="Tests Get metrics functionality",
+        method_description="Calls AnalyticsWarehouse and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Get metrics date filter",
+        test_func=test_get_metrics_date_filter,
+        test_summary="Tests Get metrics date filter functionality",
+        method_description="Calls AnalyticsWarehouse and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Aggregate daily",
+        test_func=test_aggregate_daily,
+        test_summary="Tests Aggregate daily functionality",
+        method_description="Calls AnalyticsWarehouse and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Get trends",
+        test_func=test_get_trends,
+        test_summary="Tests Get trends functionality",
+        method_description="Calls AnalyticsWarehouse and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Generate report",
+        test_func=test_generate_report,
+        test_summary="Tests Generate report functionality",
+        method_description="Calls AnalyticsWarehouse and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Export CSV",
+        test_func=test_export_csv,
+        test_summary="Tests Export CSV functionality",
+        method_description="Calls AnalyticsWarehouse and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Export JSON",
+        test_func=test_export_json,
+        test_summary="Tests Export JSON functionality",
+        method_description="Calls AnalyticsWarehouse and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Cleanup old data",
+        test_func=test_cleanup_old_data,
+        test_summary="Tests Cleanup old data functionality",
+        method_description="Calls AnalyticsWarehouse and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
-
-
+    return suite.finish_suite()
 if __name__ == "__main__":
     # Demo usage
     print("Analytics Data Warehouse Demo")

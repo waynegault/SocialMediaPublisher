@@ -601,3 +601,244 @@ def calculate_similarity(
     union = words1 | words2
 
     return len(intersection) / len(union) if union else 0.0
+
+
+# =============================================================================
+# Module Tests
+# =============================================================================
+
+
+def _create_module_tests() -> bool:
+    """Create unit tests for text_utils module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("Text Utilities", "text_utils.py")
+    suite.start_suite()
+
+    def test_is_common_name_true():
+        assert is_common_name("John") is True
+        assert is_common_name("james") is True
+
+    def test_is_common_name_false():
+        assert is_common_name("Xiaoying") is False
+
+    def test_strip_markdown_code_block():
+        raw = '```json\n{"key": "value"}\n```'
+        result = strip_markdown_code_block(raw)
+        assert result.strip() == '{"key": "value"}'
+
+    def test_strip_markdown_no_fences():
+        assert strip_markdown_code_block("plain text") == "plain text"
+
+    def test_get_name_variants():
+        variants = get_name_variants("Robert")
+        assert "robert" in variants
+        assert "bob" in variants or "rob" in variants
+
+    def test_is_nickname_of():
+        assert is_nickname_of("Bob", "Robert") is True
+        assert is_nickname_of("Alice", "Robert") is False
+
+    def test_names_could_match_exact():
+        assert names_could_match("John", "John") is True
+
+    def test_names_could_match_prefix():
+        assert names_could_match("Rob", "Robert") is True
+
+    def test_strip_titles():
+        assert strip_titles("Dr. John Smith") == "John Smith"
+        assert strip_titles("Prof. Jane Doe") == "Jane Doe"
+
+    def test_normalize_name():
+        result = normalize_name("  Dr.  John   SMITH  ")
+        assert result == "john smith"
+
+    def test_extract_first_last_name():
+        first, last = extract_first_last_name("John Smith")
+        assert first == "john"
+        assert last == "smith"
+
+    def test_extract_first_last_single():
+        first, last = extract_first_last_name("Madonna")
+        assert first == "madonna"
+        assert last == ""
+
+    def test_name_matches_exact():
+        assert name_matches("John Smith", "John Smith") is True
+
+    def test_name_matches_different():
+        assert name_matches("John Smith", "Jane Doe") is False
+
+    def test_truncate_text():
+        result = truncate_text("Hello World", max_length=8)
+        assert len(result) <= 8
+        assert result.endswith("...")
+
+    def test_truncate_text_short():
+        assert truncate_text("Hi", max_length=100) == "Hi"
+
+    def test_calculate_similarity_identical():
+        score = calculate_similarity(
+            "quantum physics research", "quantum physics research"
+        )
+        assert score == 1.0
+
+    def test_calculate_similarity_different():
+        score = calculate_similarity("quantum physics", "banana smoothie")
+        assert score == 0.0
+
+    def test_calculate_similarity_empty():
+        assert calculate_similarity("", "text") == 0.0
+        assert calculate_similarity("text", "") == 0.0
+
+    def test_build_context_keywords():
+        kw = build_context_keywords(company="Acme Corp", department="R&D")
+        assert "acme" in kw or "corp" in kw
+
+    suite.run_test(
+
+        test_name="is_common_name - common",
+
+        test_func=test_is_common_name_true,
+
+        test_summary="is_common_name behavior with common input",
+
+        method_description="Testing is_common_name with common input using boolean return verification",
+
+        expected_outcome="Function returns True for common input",
+
+    )
+    suite.run_test(
+        test_name="is_common_name - uncommon",
+        test_func=test_is_common_name_false,
+        test_summary="is_common_name behavior with uncommon input",
+        method_description="Testing is_common_name with uncommon input using boolean return verification",
+        expected_outcome="Function returns False for uncommon input",
+    )
+    suite.run_test(
+        test_name="strip_markdown_code_block",
+        test_func=test_strip_markdown_code_block,
+        test_summary="Verify strip_markdown_code_block produces correct results",
+        method_description="Testing strip_markdown_code_block using equality assertions",
+        expected_outcome="strip_markdown_code_block returns the expected value",
+    )
+    suite.run_test(
+        test_name="strip_markdown - no fences",
+        test_func=test_strip_markdown_no_fences,
+        test_summary="strip_markdown behavior with no fences input",
+        method_description="Testing strip_markdown with no fences input using equality assertions",
+        expected_outcome="strip_markdown returns the expected value",
+    )
+    suite.run_test(
+        test_name="get_name_variants",
+        test_func=test_get_name_variants,
+        test_summary="Verify get_name_variants produces correct results",
+        method_description="Testing get_name_variants using membership verification",
+        expected_outcome="Result contains expected elements",
+    )
+    suite.run_test(
+        test_name="is_nickname_of",
+        test_func=test_is_nickname_of,
+        test_summary="Verify is_nickname_of produces correct results",
+        method_description="Testing is_nickname_of using boolean return verification",
+        expected_outcome="is_nickname_of returns True for matching input; is_nickname_of returns False for non-matching input",
+    )
+    suite.run_test(
+        test_name="names_could_match - exact",
+        test_func=test_names_could_match_exact,
+        test_summary="names_could_match behavior with exact input",
+        method_description="Testing names_could_match with exact input using boolean return verification",
+        expected_outcome="Function returns True for exact input",
+    )
+    suite.run_test(
+        test_name="names_could_match - prefix",
+        test_func=test_names_could_match_prefix,
+        test_summary="names_could_match behavior with prefix input",
+        method_description="Testing names_could_match with prefix input using boolean return verification",
+        expected_outcome="Function returns True for prefix input",
+    )
+    suite.run_test(
+        test_name="strip_titles",
+        test_func=test_strip_titles,
+        test_summary="Verify strip_titles produces correct results",
+        method_description="Testing strip_titles using equality assertions",
+        expected_outcome="strip_titles returns the expected value",
+    )
+    suite.run_test(
+        test_name="normalize_name",
+        test_func=test_normalize_name,
+        test_summary="Verify normalize_name produces correct results",
+        method_description="Testing normalize_name using equality assertions",
+        expected_outcome="normalize_name returns the expected value",
+    )
+    suite.run_test(
+        test_name="extract_first_last_name",
+        test_func=test_extract_first_last_name,
+        test_summary="Verify extract_first_last_name produces correct results",
+        method_description="Testing extract_first_last_name using equality assertions",
+        expected_outcome="extract_first_last_name returns the expected value",
+    )
+    suite.run_test(
+        test_name="extract_first_last - single",
+        test_func=test_extract_first_last_single,
+        test_summary="extract_first_last behavior with single input",
+        method_description="Testing extract_first_last with single input using equality assertions",
+        expected_outcome="extract_first_last returns the expected value",
+    )
+    suite.run_test(
+        test_name="name_matches - exact",
+        test_func=test_name_matches_exact,
+        test_summary="name_matches behavior with exact input",
+        method_description="Testing name_matches with exact input using boolean return verification",
+        expected_outcome="Function returns True for exact input",
+    )
+    suite.run_test(
+        test_name="name_matches - different",
+        test_func=test_name_matches_different,
+        test_summary="name_matches behavior with different input",
+        method_description="Testing name_matches with different input using boolean return verification",
+        expected_outcome="Function returns False for different input",
+    )
+    suite.run_test(
+        test_name="truncate_text",
+        test_func=test_truncate_text,
+        test_summary="Verify truncate_text produces correct results",
+        method_description="Testing truncate_text using size validation",
+        expected_outcome="Result has the expected size; Result falls within expected bounds",
+    )
+    suite.run_test(
+        test_name="truncate_text - short",
+        test_func=test_truncate_text_short,
+        test_summary="truncate_text behavior with short input",
+        method_description="Testing truncate_text with short input using equality assertions",
+        expected_outcome="truncate_text returns the expected value",
+    )
+    suite.run_test(
+        test_name="calculate_similarity - identical",
+        test_func=test_calculate_similarity_identical,
+        test_summary="calculate_similarity behavior with identical input",
+        method_description="Testing calculate_similarity with identical input using equality assertions",
+        expected_outcome="calculate_similarity returns the expected value",
+    )
+    suite.run_test(
+        test_name="calculate_similarity - different",
+        test_func=test_calculate_similarity_different,
+        test_summary="calculate_similarity behavior with different input",
+        method_description="Testing calculate_similarity with different input using equality assertions",
+        expected_outcome="calculate_similarity returns the expected value",
+    )
+    suite.run_test(
+        test_name="calculate_similarity - empty",
+        test_func=test_calculate_similarity_empty,
+        test_summary="calculate_similarity behavior with empty input",
+        method_description="Testing calculate_similarity with empty input using equality assertions",
+        expected_outcome="calculate_similarity returns the expected value",
+    )
+    suite.run_test(
+        test_name="build_context_keywords",
+        test_func=test_build_context_keywords,
+        test_summary="Verify build_context_keywords produces correct results",
+        method_description="Testing build_context_keywords using membership verification",
+        expected_outcome="Result contains expected elements",
+    )
+    return suite.finish_suite()

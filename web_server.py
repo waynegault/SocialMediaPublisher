@@ -958,11 +958,12 @@ def run_dashboard(database: Database, port: int = 5000) -> None:
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for web_server module."""
     from test_framework import TestSuite
 
-    suite = TestSuite("Unified Web Server Tests")
+    suite = TestSuite("Unified Web Server Tests", "web_server.py")
+    suite.start_suite()
 
     def test_pipeline_status_dataclass():
         status = PipelineStatus()
@@ -982,9 +983,33 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert LANDING_TEMPLATE is not None
         assert "Social Media Publisher" in LANDING_TEMPLATE
 
-    suite.add_test("PipelineStatus dataclass", test_pipeline_status_dataclass)
-    suite.add_test("DashboardMetrics dataclass", test_dashboard_metrics_dataclass)
-    suite.add_test("Shared CSS exists", test_shared_css_exists)
-    suite.add_test("Landing template exists", test_landing_template_exists)
+    suite.run_test(
+        test_name="PipelineStatus dataclass",
+        test_func=test_pipeline_status_dataclass,
+        test_summary="Tests PipelineStatus dataclass functionality",
+        method_description="Calls PipelineStatus and verifies the result",
+        expected_outcome="Function returns an empty collection",
+    )
+    suite.run_test(
+        test_name="DashboardMetrics dataclass",
+        test_func=test_dashboard_metrics_dataclass,
+        test_summary="Tests DashboardMetrics dataclass functionality",
+        method_description="Calls DashboardMetrics and verifies the result",
+        expected_outcome="Function returns an empty collection",
+    )
+    suite.run_test(
+        test_name="Shared CSS exists",
+        test_func=test_shared_css_exists,
+        test_summary="Tests Shared CSS exists functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Landing template exists",
+        test_func=test_landing_template_exists,
+        test_summary="Tests Landing template exists functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
+    return suite.finish_suite()

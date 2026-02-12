@@ -19,7 +19,6 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
@@ -956,12 +955,13 @@ def get_linkedin_cache() -> LinkedInCache:
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for cache module."""
     from test_framework import TestSuite
     import tempfile
 
-    suite = TestSuite("Cache Tests")
+    suite = TestSuite("Cache Tests", "cache.py")
+    suite.start_suite()
 
     def test_lru_cache_basic():
         cache = LRUCache(max_size=10)
@@ -1116,20 +1116,110 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         cache.clear()
         assert len(cache) == 0
 
-    suite.add_test("LRU cache basic", test_lru_cache_basic)
-    suite.add_test("LRU cache TTL", test_lru_cache_ttl)
-    suite.add_test("LRU cache eviction", test_lru_cache_eviction)
-    suite.add_test("LRU cache LRU order", test_lru_cache_lru_order)
-    suite.add_test("LRU cache stats", test_lru_cache_stats)
-    suite.add_test("SQLite cache basic", test_sqlite_cache_basic)
-    suite.add_test("SQLite cache TTL", test_sqlite_cache_ttl)
-    suite.add_test("SQLite cache cleanup", test_sqlite_cache_cleanup)
-    suite.add_test("Two-level cache", test_two_level_cache)
-    suite.add_test("Two-level cache promotion", test_two_level_cache_promotion)
-    suite.add_test("Generate cache key", test_generate_cache_key)
-    suite.add_test("Cache key with kwargs", test_generate_cache_key_with_kwargs)
-    suite.add_test("Cached decorator", test_cached_decorator)
-    suite.add_test("Cache delete", test_cache_delete)
-    suite.add_test("Cache clear", test_cache_clear)
+    suite.run_test(
+        test_name="LRU cache basic",
+        test_func=test_lru_cache_basic,
+        test_summary="Tests LRU cache basic functionality",
+        method_description="Calls LRUCache and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="LRU cache TTL",
+        test_func=test_lru_cache_ttl,
+        test_summary="Tests LRU cache TTL functionality",
+        method_description="Calls LRUCache and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="LRU cache eviction",
+        test_func=test_lru_cache_eviction,
+        test_summary="Tests LRU cache eviction functionality",
+        method_description="Calls LRUCache and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="LRU cache LRU order",
+        test_func=test_lru_cache_lru_order,
+        test_summary="Tests LRU cache LRU order functionality",
+        method_description="Calls LRUCache and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="LRU cache stats",
+        test_func=test_lru_cache_stats,
+        test_summary="Tests LRU cache stats functionality",
+        method_description="Calls LRUCache and verifies the result",
+        expected_outcome="Caching behavior works as expected",
+    )
+    suite.run_test(
+        test_name="SQLite cache basic",
+        test_func=test_sqlite_cache_basic,
+        test_summary="Tests SQLite cache basic functionality",
+        method_description="Calls TemporaryDirectory and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="SQLite cache TTL",
+        test_func=test_sqlite_cache_ttl,
+        test_summary="Tests SQLite cache TTL functionality",
+        method_description="Calls TemporaryDirectory and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="SQLite cache cleanup",
+        test_func=test_sqlite_cache_cleanup,
+        test_summary="Tests SQLite cache cleanup functionality",
+        method_description="Calls TemporaryDirectory and verifies the result",
+        expected_outcome="Caching behavior works as expected",
+    )
+    suite.run_test(
+        test_name="Two-level cache",
+        test_func=test_two_level_cache,
+        test_summary="Tests Two-level cache functionality",
+        method_description="Calls TemporaryDirectory and verifies the result",
+        expected_outcome="Caching behavior works as expected",
+    )
+    suite.run_test(
+        test_name="Two-level cache promotion",
+        test_func=test_two_level_cache_promotion,
+        test_summary="Tests Two-level cache promotion functionality",
+        method_description="Calls TemporaryDirectory and verifies the result",
+        expected_outcome="Caching behavior works as expected",
+    )
+    suite.run_test(
+        test_name="Generate cache key",
+        test_func=test_generate_cache_key,
+        test_summary="Tests Generate cache key functionality",
+        method_description="Calls generate cache key and verifies the result",
+        expected_outcome="Caching behavior works as expected",
+    )
+    suite.run_test(
+        test_name="Cache key with kwargs",
+        test_func=test_generate_cache_key_with_kwargs,
+        test_summary="Tests Cache key with kwargs functionality",
+        method_description="Calls generate cache key and verifies the result",
+        expected_outcome="Caching behavior works as expected",
+    )
+    suite.run_test(
+        test_name="Cached decorator",
+        test_func=test_cached_decorator,
+        test_summary="Tests Cached decorator functionality",
+        method_description="Calls LRUCache and verifies the result",
+        expected_outcome="Caching behavior works as expected",
+    )
+    suite.run_test(
+        test_name="Cache delete",
+        test_func=test_cache_delete,
+        test_summary="Tests Cache delete functionality",
+        method_description="Calls LRUCache and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Cache clear",
+        test_func=test_cache_clear,
+        test_summary="Tests Cache clear functionality",
+        method_description="Calls LRUCache and verifies the result",
+        expected_outcome="Caching behavior works as expected",
+    )
 
-    return suite
+    return suite.finish_suite()

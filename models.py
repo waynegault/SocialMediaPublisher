@@ -289,3 +289,177 @@ class LinkedInOrganization:
             location=getattr(org, "location", ""),
             employee_count=getattr(org, "employee_count", ""),
         )
+
+
+# =============================================================================
+# Module Tests
+# =============================================================================
+
+
+def _create_module_tests() -> bool:
+    """Create unit tests for models module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("Models", "models.py")
+    suite.start_suite()
+
+    def test_profile_creation():
+        p = LinkedInProfile(first_name="John", last_name="Smith")
+        assert p.first_name == "John"
+        assert p.last_name == "Smith"
+        assert p.full_name == "John Smith"
+
+    def test_profile_name_property():
+        p = LinkedInProfile(full_name="Jane Doe")
+        assert p.name == "Jane Doe"
+
+    def test_profile_url_auto():
+        p = LinkedInProfile(public_id="john-smith-123")
+        assert p.linkedin_url == "https://www.linkedin.com/in/john-smith-123"
+
+    def test_profile_url_property():
+        p = LinkedInProfile(linkedin_url="https://www.linkedin.com/in/test")
+        assert p.profile_url == "https://www.linkedin.com/in/test"
+
+    def test_profile_mention_urn():
+        p = LinkedInProfile(urn_id="ACoAABxxxxxx")
+        urn = p.mention_urn
+        assert isinstance(urn, str)
+
+    def test_profile_to_dict():
+        p = LinkedInProfile(first_name="Alice", last_name="Bob", company="Acme")
+        d = p.to_dict()
+        assert isinstance(d, dict)
+        assert d["first_name"] == "Alice"
+        assert d["company"] == "Acme"
+
+    def test_profile_from_dict():
+        d = {"first_name": "Alice", "last_name": "Wonder", "company": "Acme"}
+        p = LinkedInProfile.from_dict(d)
+        assert p.first_name == "Alice"
+        assert p.last_name == "Wonder"
+
+    def test_profile_roundtrip():
+        original = LinkedInProfile(
+            first_name="Test", last_name="User",
+            headline="Engineer", company="Corp"
+        )
+        d = original.to_dict()
+        restored = LinkedInProfile.from_dict(d)
+        assert restored.first_name == original.first_name
+        assert restored.headline == original.headline
+
+    def test_org_creation():
+        org = LinkedInOrganization(name="BASF", industry="Chemical")
+        assert org.name == "BASF"
+        assert org.industry == "Chemical"
+
+    def test_org_to_dict():
+        org = LinkedInOrganization(name="Acme", public_id="acme-corp")
+        d = org.to_dict()
+        assert isinstance(d, dict)
+        assert d["name"] == "Acme"
+
+    def test_org_from_dict():
+        d = {"name": "TestOrg", "industry": "Tech"}
+        org = LinkedInOrganization.from_dict(d)
+        assert org.name == "TestOrg"
+        assert org.industry == "Tech"
+
+    def test_profile_defaults():
+        p = LinkedInProfile()
+        assert p.first_name == ""
+        assert p.match_score == 0.0
+        assert p.match_signals == []
+
+    suite.run_test(
+
+        test_name="Profile creation",
+
+        test_func=test_profile_creation,
+
+        test_summary="Verify Profile creation produces correct results",
+
+        method_description="Testing Profile creation using equality assertions",
+
+        expected_outcome="Profile creation returns the expected value",
+
+    )
+    suite.run_test(
+        test_name="Profile name property",
+        test_func=test_profile_name_property,
+        test_summary="Verify Profile name property produces correct results",
+        method_description="Testing Profile name property using equality assertions",
+        expected_outcome="Profile name property returns the expected value",
+    )
+    suite.run_test(
+        test_name="Profile URL auto-build",
+        test_func=test_profile_url_auto,
+        test_summary="Verify Profile URL auto-build produces correct results",
+        method_description="Testing Profile URL auto-build using equality assertions",
+        expected_outcome="Profile URL auto-build returns the expected value",
+    )
+    suite.run_test(
+        test_name="Profile URL property",
+        test_func=test_profile_url_property,
+        test_summary="Verify Profile URL property produces correct results",
+        method_description="Testing Profile URL property using equality assertions",
+        expected_outcome="Profile URL property returns the expected value",
+    )
+    suite.run_test(
+        test_name="Profile mention URN",
+        test_func=test_profile_mention_urn,
+        test_summary="Verify Profile mention URN produces correct results",
+        method_description="Testing Profile mention URN using type checking",
+        expected_outcome="Profile mention URN returns the correct type",
+    )
+    suite.run_test(
+        test_name="Profile to_dict",
+        test_func=test_profile_to_dict,
+        test_summary="Verify Profile to_dict produces correct results",
+        method_description="Testing Profile to_dict using equality assertions and type checking",
+        expected_outcome="Profile to_dict returns the expected value",
+    )
+    suite.run_test(
+        test_name="Profile from_dict",
+        test_func=test_profile_from_dict,
+        test_summary="Verify Profile from_dict produces correct results",
+        method_description="Testing Profile from_dict using equality assertions",
+        expected_outcome="Profile from_dict returns the expected value",
+    )
+    suite.run_test(
+        test_name="Profile roundtrip",
+        test_func=test_profile_roundtrip,
+        test_summary="Verify Profile roundtrip produces correct results",
+        method_description="Testing Profile roundtrip using equality assertions",
+        expected_outcome="Profile roundtrip returns the expected value",
+    )
+    suite.run_test(
+        test_name="Organization creation",
+        test_func=test_org_creation,
+        test_summary="Verify Organization creation produces correct results",
+        method_description="Testing Organization creation using equality assertions",
+        expected_outcome="Organization creation returns the expected value",
+    )
+    suite.run_test(
+        test_name="Organization to_dict",
+        test_func=test_org_to_dict,
+        test_summary="Verify Organization to_dict produces correct results",
+        method_description="Testing Organization to_dict using equality assertions and type checking",
+        expected_outcome="Organization to_dict returns the expected value",
+    )
+    suite.run_test(
+        test_name="Organization from_dict",
+        test_func=test_org_from_dict,
+        test_summary="Verify Organization from_dict produces correct results",
+        method_description="Testing Organization from_dict using equality assertions",
+        expected_outcome="Organization from_dict returns the expected value",
+    )
+    suite.run_test(
+        test_name="Profile defaults",
+        test_func=test_profile_defaults,
+        test_summary="Verify Profile defaults produces correct results",
+        method_description="Testing Profile defaults using equality assertions",
+        expected_outcome="Profile defaults returns the expected value",
+    )
+    return suite.finish_suite()

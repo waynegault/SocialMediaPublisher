@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from test_framework import TestSuite
+    pass
 
 
 # =============================================================================
@@ -646,15 +646,13 @@ def get_style_for_topic(topic: str) -> str:
 # =============================================================================
 
 
-def _create_module_tests() -> "TestSuite":
+def _create_module_tests() -> bool:
     """Create unit tests for this module."""
-    import sys
-    from pathlib import Path
 
-    sys.path.insert(0, str(Path(__file__).parent))
     from test_framework import TestSuite
 
-    suite = TestSuite("Image Style Tests")
+    suite = TestSuite("Image Style Tests", "image_style.py")
+    suite.start_suite()
 
     def test_color_palette_description():
         palette = ColorPalette()
@@ -783,29 +781,113 @@ def _create_module_tests() -> "TestSuite":
         style = get_style_for_topic("renewable energy solar panels")
         assert style == "sustainability_green"
 
-    suite.add_test("Color palette description", test_color_palette_description)
-    suite.add_test("Style preset apply", test_style_preset_apply)
-    suite.add_test(
-        "Style preset average engagement", test_style_preset_average_engagement
+    suite.run_test(
+        test_name="Color palette description",
+        test_func=test_color_palette_description,
+        test_summary="Tests Color palette description functionality",
+        method_description="Calls ColorPalette and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test("Style manager init", test_style_manager_init)
-    suite.add_test("Style manager get preset", test_style_manager_get_preset)
-    suite.add_test("Style manager apply", test_style_manager_apply)
-    suite.add_test("Style manager apply missing", test_style_manager_apply_missing)
-    suite.add_test("Style manager recommend", test_style_manager_recommend)
-    suite.add_test("Style manager add/remove", test_style_manager_add_remove)
-    suite.add_test(
-        "Style manager record engagement", test_style_manager_record_engagement
+    suite.run_test(
+        test_name="Style preset apply",
+        test_func=test_style_preset_apply,
+        test_summary="Tests Style preset apply functionality",
+        method_description="Calls StylePreset and verifies the result",
+        expected_outcome="Function correctly updates the target",
     )
-    suite.add_test("Style experiment variant", test_style_experiment_variant)
-    suite.add_test("Style experiment results", test_style_experiment_results)
-    suite.add_test("Create styled prompt", test_create_styled_prompt)
-    suite.add_test("List available styles", test_list_available_styles)
-    suite.add_test("Get style for topic", test_get_style_for_topic)
+    suite.run_test(
+        test_name="Style preset average engagement",
+        test_func=test_style_preset_average_engagement,
+        test_summary="Tests Style preset average engagement functionality",
+        method_description="Calls StylePreset and verifies the result",
+        expected_outcome="Function correctly updates the target",
+    )
+    suite.run_test(
+        test_name="Style manager init",
+        test_func=test_style_manager_init,
+        test_summary="Tests Style manager init functionality",
+        method_description="Calls StyleManager and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Style manager get preset",
+        test_func=test_style_manager_get_preset,
+        test_summary="Tests Style manager get preset functionality",
+        method_description="Calls StyleManager and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Style manager apply",
+        test_func=test_style_manager_apply,
+        test_summary="Tests Style manager apply functionality",
+        method_description="Calls StyleManager and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Style manager apply missing",
+        test_func=test_style_manager_apply_missing,
+        test_summary="Tests Style manager apply missing functionality",
+        method_description="Calls StyleManager and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="Style manager recommend",
+        test_func=test_style_manager_recommend,
+        test_summary="Tests Style manager recommend functionality",
+        method_description="Calls StyleManager and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Style manager add/remove",
+        test_func=test_style_manager_add_remove,
+        test_summary="Tests Style manager add/remove functionality",
+        method_description="Calls StyleManager and verifies the result",
+        expected_outcome="Function removes the target correctly",
+    )
+    suite.run_test(
+        test_name="Style manager record engagement",
+        test_func=test_style_manager_record_engagement,
+        test_summary="Tests Style manager record engagement functionality",
+        method_description="Calls StyleManager and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Style experiment variant",
+        test_func=test_style_experiment_variant,
+        test_summary="Tests Style experiment variant functionality",
+        method_description="Calls StyleExperiment and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Style experiment results",
+        test_func=test_style_experiment_results,
+        test_summary="Tests Style experiment results functionality",
+        method_description="Calls StyleExperiment and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Create styled prompt",
+        test_func=test_create_styled_prompt,
+        test_summary="Tests Create styled prompt functionality",
+        method_description="Calls create styled prompt and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="List available styles",
+        test_func=test_list_available_styles,
+        test_summary="Tests List available styles functionality",
+        method_description="Calls list available styles and verifies the result",
+        expected_outcome="Function correctly processes multiple items",
+    )
+    suite.run_test(
+        test_name="Get style for topic",
+        test_func=test_get_style_for_topic,
+        test_summary="Tests Get style for topic functionality",
+        method_description="Calls get style for topic and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
-
-
+    return suite.finish_suite()
 if __name__ == "__main__":
     suite = _create_module_tests()
     suite.run()

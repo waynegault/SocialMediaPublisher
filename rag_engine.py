@@ -728,7 +728,7 @@ def get_rag_engine() -> RAGEngine:
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for rag_engine module."""
     from typing import TYPE_CHECKING
 
@@ -738,7 +738,8 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     from test_framework import TestSuite
     import tempfile
 
-    suite = TestSuite("RAG Engine Tests")
+    suite = TestSuite("RAG Engine Tests", "rag_engine.py")
+    suite.start_suite()
 
     def test_document_creation():
         """Test Document dataclass creation."""
@@ -864,23 +865,103 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert r1 is r2
         _rag_engine = None  # Cleanup
 
-    suite.add_test("Document creation", test_document_creation)
-    suite.add_test("RetrievalResult creation", test_retrieval_result_creation)
-    suite.add_test("RetrievalResult context", test_retrieval_result_context)
-    suite.add_test("RetrievalResult top_document", test_retrieval_result_top_document)
-    suite.add_test(
-        "RetrievalResult top_document empty", test_retrieval_result_top_document_empty
+    suite.run_test(
+        test_name="Document creation",
+        test_func=test_document_creation,
+        test_summary="Tests Document creation functionality",
+        method_description="Calls Document and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test("PersonalContext creation", test_personal_context_creation)
-    suite.add_test(
-        "PersonalContext to_prompt_context", test_personal_context_to_prompt_context
+    suite.run_test(
+        test_name="RetrievalResult creation",
+        test_func=test_retrieval_result_creation,
+        test_summary="Tests RetrievalResult creation functionality",
+        method_description="Calls RetrievalResult and verifies the result",
+        expected_outcome="Function returns an empty collection",
     )
-    suite.add_test("PersonalContext empty", test_personal_context_empty)
-    suite.add_test("RAGEngine creation", test_rag_engine_creation)
-    suite.add_test("RAGEngine add_document", test_rag_engine_add_document)
-    suite.add_test("RAGEngine add_skill", test_rag_engine_add_skill)
-    suite.add_test("RAGEngine add_project", test_rag_engine_add_project)
-    suite.add_test("RAGEngine keyword retrieve", test_rag_engine_keyword_retrieve)
-    suite.add_test("get_rag_engine singleton", test_get_rag_engine_singleton)
+    suite.run_test(
+        test_name="RetrievalResult context",
+        test_func=test_retrieval_result_context,
+        test_summary="Tests RetrievalResult context functionality",
+        method_description="Calls Document and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="RetrievalResult top_document",
+        test_func=test_retrieval_result_top_document,
+        test_summary="Tests RetrievalResult top document functionality",
+        method_description="Calls Document and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="RetrievalResult top_document empty",
+        test_func=test_retrieval_result_top_document_empty,
+        test_summary="Tests RetrievalResult top document empty functionality",
+        method_description="Calls RetrievalResult and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="PersonalContext creation",
+        test_func=test_personal_context_creation,
+        test_summary="Tests PersonalContext creation functionality",
+        method_description="Calls PersonalContext and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="PersonalContext to_prompt_context",
+        test_func=test_personal_context_to_prompt_context,
+        test_summary="Tests PersonalContext to prompt context functionality",
+        method_description="Calls PersonalContext and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="PersonalContext empty",
+        test_func=test_personal_context_empty,
+        test_summary="Tests PersonalContext empty functionality",
+        method_description="Calls PersonalContext and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="RAGEngine creation",
+        test_func=test_rag_engine_creation,
+        test_summary="Tests RAGEngine creation functionality",
+        method_description="Calls TemporaryDirectory and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="RAGEngine add_document",
+        test_func=test_rag_engine_add_document,
+        test_summary="Tests RAGEngine add document functionality",
+        method_description="Calls TemporaryDirectory and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="RAGEngine add_skill",
+        test_func=test_rag_engine_add_skill,
+        test_summary="Tests RAGEngine add skill functionality",
+        method_description="Calls TemporaryDirectory and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="RAGEngine add_project",
+        test_func=test_rag_engine_add_project,
+        test_summary="Tests RAGEngine add project functionality",
+        method_description="Calls TemporaryDirectory and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="RAGEngine keyword retrieve",
+        test_func=test_rag_engine_keyword_retrieve,
+        test_summary="Tests RAGEngine keyword retrieve functionality",
+        method_description="Calls TemporaryDirectory and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="get_rag_engine singleton",
+        test_func=test_get_rag_engine_singleton,
+        test_summary="Tests get rag engine singleton functionality",
+        method_description="Calls RAGEngine and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
+    return suite.finish_suite()

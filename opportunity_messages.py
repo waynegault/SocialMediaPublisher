@@ -138,11 +138,12 @@ def clear_custom_messages() -> None:
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for opportunity_messages module."""
     from test_framework import TestSuite
 
-    suite = TestSuite("Opportunity Messages Tests")
+    suite = TestSuite("Opportunity Messages Tests", "opportunity_messages.py")
+    suite.start_suite()
 
     def test_get_random_opportunity_message():
         msg = get_random_opportunity_message()
@@ -210,19 +211,61 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
                 f"Message should start with 'P.S.': {msg[:30]}"
             )
 
-    suite.add_test(
-        "Get random opportunity message", test_get_random_opportunity_message
+    suite.run_test(
+        test_name="Get random opportunity message",
+        test_func=test_get_random_opportunity_message,
+        test_summary="Tests Get random opportunity message functionality",
+        method_description="Calls get random opportunity message and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test(
-        "Get message by index - valid", test_get_opportunity_message_by_index_valid
+    suite.run_test(
+        test_name="Get message by index - valid",
+        test_func=test_get_opportunity_message_by_index_valid,
+        test_summary="Tests Get message by index with valid scenario",
+        method_description="Calls get opportunity message by index and verifies the result",
+        expected_outcome="Function returns the expected successful result",
     )
-    suite.add_test(
-        "Get message by index - wraps", test_get_opportunity_message_by_index_wraps
+    suite.run_test(
+        test_name="Get message by index - wraps",
+        test_func=test_get_opportunity_message_by_index_wraps,
+        test_summary="Tests Get message by index with wraps scenario",
+        method_description="Calls get opportunity message by index and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test("Get all messages", test_get_all_messages)
-    suite.add_test("Get message count", test_get_message_count)
-    suite.add_test("Add custom message", test_add_custom_message)
-    suite.add_test("Get random with custom", test_get_random_message_with_custom)
-    suite.add_test("All messages have P.S. prefix", test_all_messages_have_ps_prefix)
+    suite.run_test(
+        test_name="Get all messages",
+        test_func=test_get_all_messages,
+        test_summary="Tests Get all messages functionality",
+        method_description="Calls get all messages and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Get message count",
+        test_func=test_get_message_count,
+        test_summary="Tests Get message count functionality",
+        method_description="Calls get message count and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Add custom message",
+        test_func=test_add_custom_message,
+        test_summary="Tests Add custom message functionality",
+        method_description="Calls clear custom messages and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Get random with custom",
+        test_func=test_get_random_message_with_custom,
+        test_summary="Tests Get random with custom functionality",
+        method_description="Calls clear custom messages and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="All messages have P.S. prefix",
+        test_func=test_all_messages_have_ps_prefix,
+        test_summary="Tests All messages have P.S. prefix functionality",
+        method_description="Calls get all messages and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
+    return suite.finish_suite()

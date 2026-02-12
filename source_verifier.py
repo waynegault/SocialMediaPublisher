@@ -12,11 +12,6 @@ from urllib.parse import urlparse
 
 from database import Story
 from domain_credibility import (
-    TIER_1_DOMAINS,
-    TIER_2_DOMAINS,
-    TIER_3_DOMAINS,
-    TIER_3_SUBDOMAIN_PATTERNS,
-    LOW_CREDIBILITY_DOMAINS,
     extract_domain,
     get_domain_tier,
     get_credibility_score,
@@ -403,11 +398,12 @@ class SourceVerifier:
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for source_verifier module."""
     from test_framework import TestSuite
 
-    suite = TestSuite("Source Verifier Tests")
+    suite = TestSuite("Source Verifier Tests", "source_verifier.py")
+    suite.start_suite()
 
     def test_tier1_nature():
         verifier = SourceVerifier()
@@ -539,20 +535,110 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert not result.is_verified
         assert any("tier 1 or tier 2" in issue.lower() for issue in result.issues)
 
-    suite.add_test("Tier 1 domain - nature.com", test_tier1_nature)
-    suite.add_test("Tier 1 domain - mit.edu", test_tier1_mit)
-    suite.add_test("Tier 2 domain - techcrunch", test_tier2_techcrunch)
-    suite.add_test("Government source - doe.gov", test_government_source)
-    suite.add_test("Low credibility source", test_low_credibility)
-    suite.add_test("Unknown domain - base score", test_unknown_domain)
-    suite.add_test("Empty URL handling", test_empty_url)
-    suite.add_test("Primary source - newsroom", test_primary_source)
-    suite.add_test("Story verification - multiple sources", test_story_multiple_sources)
-    suite.add_test("Story verification - no sources", test_story_no_sources)
-    suite.add_test("Story verification - low credibility", test_story_low_credibility)
-    suite.add_test("Average credibility calculation", test_average_credibility)
-    suite.add_test("Subdomain handling", test_subdomain)
-    suite.add_test("Source summary generation", test_source_summary)
-    suite.add_test("Require tier 1 or 2 option", test_require_tier1_or_2)
+    suite.run_test(
+        test_name="Tier 1 domain - nature.com",
+        test_func=test_tier1_nature,
+        test_summary="Tests Tier 1 domain with nature.com scenario",
+        method_description="Calls SourceVerifier and verifies the result",
+        expected_outcome="Function returns False or falsy value",
+    )
+    suite.run_test(
+        test_name="Tier 1 domain - mit.edu",
+        test_func=test_tier1_mit,
+        test_summary="Tests Tier 1 domain with mit.edu scenario",
+        method_description="Calls SourceVerifier and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Tier 2 domain - techcrunch",
+        test_func=test_tier2_techcrunch,
+        test_summary="Tests Tier 2 domain with techcrunch scenario",
+        method_description="Calls SourceVerifier and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Government source - doe.gov",
+        test_func=test_government_source,
+        test_summary="Tests Government source with doe.gov scenario",
+        method_description="Calls SourceVerifier and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Low credibility source",
+        test_func=test_low_credibility,
+        test_summary="Tests Low credibility source functionality",
+        method_description="Calls SourceVerifier and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Unknown domain - base score",
+        test_func=test_unknown_domain,
+        test_summary="Tests Unknown domain with base score scenario",
+        method_description="Calls SourceVerifier and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Empty URL handling",
+        test_func=test_empty_url,
+        test_summary="Tests Empty URL handling functionality",
+        method_description="Calls SourceVerifier and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="Primary source - newsroom",
+        test_func=test_primary_source,
+        test_summary="Tests Primary source with newsroom scenario",
+        method_description="Calls SourceVerifier and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Story verification - multiple sources",
+        test_func=test_story_multiple_sources,
+        test_summary="Tests Story verification with multiple sources scenario",
+        method_description="Calls Story and verifies the result",
+        expected_outcome="Function correctly processes multiple items",
+    )
+    suite.run_test(
+        test_name="Story verification - no sources",
+        test_func=test_story_no_sources,
+        test_summary="Tests Story verification with no sources scenario",
+        method_description="Calls Story and verifies the result",
+        expected_outcome="Function returns False or falsy value",
+    )
+    suite.run_test(
+        test_name="Story verification - low credibility",
+        test_func=test_story_low_credibility,
+        test_summary="Tests Story verification with low credibility scenario",
+        method_description="Calls Story and verifies the result",
+        expected_outcome="Function returns False or falsy value",
+    )
+    suite.run_test(
+        test_name="Average credibility calculation",
+        test_func=test_average_credibility,
+        test_summary="Tests Average credibility calculation functionality",
+        method_description="Calls Story and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Subdomain handling",
+        test_func=test_subdomain,
+        test_summary="Tests Subdomain handling functionality",
+        method_description="Calls SourceVerifier and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Source summary generation",
+        test_func=test_source_summary,
+        test_summary="Tests Source summary generation functionality",
+        method_description="Calls Story and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Require tier 1 or 2 option",
+        test_func=test_require_tier1_or_2,
+        test_summary="Tests Require tier 1 or 2 option functionality",
+        method_description="Calls Story and verifies the result",
+        expected_outcome="Function returns False or falsy value",
+    )
 
-    return suite
+    return suite.finish_suite()

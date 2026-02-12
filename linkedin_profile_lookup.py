@@ -9,20 +9,27 @@ import os
 import random
 import re
 import subprocess
-import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple, TypedDict, cast
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple, TypedDict
 
 import requests
 from google import genai  # type: ignore
 
+from text_utils import (
+    build_context_keywords,
+    is_common_name,
+    normalize_name,
+    get_name_variants,
+    names_could_match,
+)
+
 from api_client import api_client
 from cache import get_linkedin_cache, LinkedInCache
 from config import Config
-from error_handling import with_enhanced_recovery, NetworkTimeoutError
+from error_handling import with_enhanced_recovery
 from organization_aliases import ORG_ALIASES as _ORG_ALIASES
 from rate_limiter import AdaptiveRateLimiter
 
@@ -30,9 +37,6 @@ from rate_limiter import AdaptiveRateLimiter
 from entity_constants import (
     INVALID_ORG_NAMES,
     INVALID_ORG_PATTERNS,
-    INVALID_PERSON_NAMES,
-    INVALID_PERSON_PATTERNS,
-    VALID_SINGLE_WORD_ORGS,
     is_invalid_person_name,
 )
 
@@ -447,20 +451,6 @@ class PersonSearchContext:
     require_org_match: bool = True
     is_common_name: bool = False
     context_keywords: set[str] = field(default_factory=set)
-
-
-# Import shared constants from text_utils
-from text_utils import (
-    COMMON_FIRST_NAMES,
-    CONTEXT_STOPWORDS,
-    build_context_keywords,
-    is_common_name,
-    normalize_name,
-    strip_titles,
-    get_name_variants,
-    is_nickname_of,
-    names_could_match,
-)
 
 
 def _build_context_keywords(ctx: PersonSearchContext) -> set[str]:
@@ -1794,8 +1784,6 @@ class LinkedInCompanyLookup:
             Email address if found, None otherwise
         """
         from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
 
         try:
             # Navigate to settings page which shows email
@@ -4070,7 +4058,6 @@ NOT_FOUND"""
         Returns:
             LinkedIn profile URL if found, None otherwise
         """
-        from selenium.webdriver.common.by import By
         import urllib.parse
 
         # Build search keywords (normalized to drop suffixes/credentials)
@@ -4366,7 +4353,7 @@ NOT_FOUND"""
             )
             if linkedin_result:
                 return linkedin_result
-            logger.debug(f"LinkedIn direct search failed, falling back to Google/Bing")
+            logger.debug("LinkedIn direct search failed, falling back to Google/Bing")
 
         # === FALLBACK: Google/Bing Search ===
         # Build search queries - try quoted first (more precise), then unquoted (more lenient)
@@ -6187,7 +6174,7 @@ class URNCache:
 
 # Type hint for Playwright
 if TYPE_CHECKING:
-    from playwright.sync_api import Browser, Page, Playwright as PlaywrightSync
+    from playwright.sync_api import Page
 
 
 # Global URN cache
@@ -6590,11 +6577,12 @@ def get_robust_urn_resolver() -> RobustURNResolver:
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for linkedin_profile_lookup module."""
     from test_framework import TestSuite
 
-    suite = TestSuite("LinkedIn Profile Lookup Tests")
+    suite = TestSuite("LinkedIn Profile Lookup Tests", "linkedin_profile_lookup.py")
+    suite.start_suite()
 
     def test_validate_linkedin_org_url_valid_company():
         lookup = LinkedInCompanyLookup(genai_client=None)
@@ -6720,31 +6708,103 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert result.error == "Invalid LinkedIn profile URL"
         resolver.close()
 
-    suite.add_test(
-        "Validate LinkedIn URL - valid company",
-        test_validate_linkedin_org_url_valid_company,
+    suite.run_test(
+        test_name="Validate LinkedIn URL - valid company",
+        test_func=test_validate_linkedin_org_url_valid_company,
+        test_summary="Tests Validate LinkedIn URL with valid company scenario",
+        method_description="Calls LinkedInCompanyLookup and verifies the result",
+        expected_outcome="Function returns the expected successful result",
     )
-    suite.add_test(
-        "Validate LinkedIn URL - valid school",
-        test_validate_linkedin_org_url_valid_school,
+    suite.run_test(
+        test_name="Validate LinkedIn URL - valid school",
+        test_func=test_validate_linkedin_org_url_valid_school,
+        test_summary="Tests Validate LinkedIn URL with valid school scenario",
+        method_description="Calls LinkedInCompanyLookup and verifies the result",
+        expected_outcome="Function returns the expected successful result",
     )
-    suite.add_test(
-        "Validate LinkedIn URL - invalid", test_validate_linkedin_org_url_invalid
+    suite.run_test(
+        test_name="Validate LinkedIn URL - invalid",
+        test_func=test_validate_linkedin_org_url_invalid,
+        test_summary="Tests Validate LinkedIn URL with invalid scenario",
+        method_description="Calls LinkedInCompanyLookup and verifies the result",
+        expected_outcome="Function returns None as expected",
     )
-    suite.add_test(
-        "Validate LinkedIn URL - empty", test_validate_linkedin_org_url_empty
+    suite.run_test(
+        test_name="Validate LinkedIn URL - empty",
+        test_func=test_validate_linkedin_org_url_empty,
+        test_summary="Tests Validate LinkedIn URL with empty scenario",
+        method_description="Calls LinkedInCompanyLookup and verifies the result",
+        expected_outcome="Function returns None as expected",
     )
-    suite.add_test("Generate acronym - long phrase", test_generate_acronym_long)
-    suite.add_test("Generate acronym - short name", test_generate_acronym_short)
-    suite.add_test("Extract company URL from text", test_extract_company_url)
-    suite.add_test("Extract person URL from text", test_extract_person_url)
-    suite.add_test("Lookup class initialization", test_lookup_class_init)
-    suite.add_test("Context manager works", test_context_manager)
-    suite.add_test(
-        "Lookup person URN - invalid URL", test_lookup_person_urn_invalid_url
+    suite.run_test(
+        test_name="Generate acronym - long phrase",
+        test_func=test_generate_acronym_long,
+        test_summary="Tests Generate acronym with long phrase scenario",
+        method_description="Calls LinkedInCompanyLookup and verifies the result",
+        expected_outcome="Function creates the expected object or result",
     )
-    suite.add_test("Lookup person URN - no driver", test_lookup_person_urn_no_driver)
-    suite.add_test("URN cache operations", test_urn_cache)
-    suite.add_test("Robust resolver - invalid URL", test_robust_resolver_invalid_url)
+    suite.run_test(
+        test_name="Generate acronym - short name",
+        test_func=test_generate_acronym_short,
+        test_summary="Tests Generate acronym with short name scenario",
+        method_description="Calls LinkedInCompanyLookup and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Extract company URL from text",
+        test_func=test_extract_company_url,
+        test_summary="Tests Extract company URL from text functionality",
+        method_description="Calls LinkedInCompanyLookup and verifies the result",
+        expected_outcome="Function correctly parses and extracts the data",
+    )
+    suite.run_test(
+        test_name="Extract person URL from text",
+        test_func=test_extract_person_url,
+        test_summary="Tests Extract person URL from text functionality",
+        method_description="Calls LinkedInCompanyLookup and verifies the result",
+        expected_outcome="Function correctly parses and extracts the data",
+    )
+    suite.run_test(
+        test_name="Lookup class initialization",
+        test_func=test_lookup_class_init,
+        test_summary="Tests Lookup class initialization functionality",
+        method_description="Calls LinkedInCompanyLookup and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Context manager works",
+        test_func=test_context_manager,
+        test_summary="Tests Context manager works functionality",
+        method_description="Calls LinkedInCompanyLookup and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Lookup person URN - invalid URL",
+        test_func=test_lookup_person_urn_invalid_url,
+        test_summary="Tests Lookup person URN with invalid url scenario",
+        method_description="Calls LinkedInCompanyLookup and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Lookup person URN - no driver",
+        test_func=test_lookup_person_urn_no_driver,
+        test_summary="Tests Lookup person URN with no driver scenario",
+        method_description="Calls LinkedInCompanyLookup and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="URN cache operations",
+        test_func=test_urn_cache,
+        test_summary="Tests URN cache operations functionality",
+        method_description="Calls URNCache and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Robust resolver - invalid URL",
+        test_func=test_robust_resolver_invalid_url,
+        test_summary="Tests Robust resolver with invalid url scenario",
+        method_description="Calls RobustURNResolver and verifies the result",
+        expected_outcome="Function returns False or falsy value",
+    )
 
-    return suite
+    return suite.finish_suite()

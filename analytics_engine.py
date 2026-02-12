@@ -12,7 +12,6 @@ Features:
 TASK 2.4: LinkedIn Analytics Integration
 """
 
-import json
 import logging
 import sqlite3
 from dataclasses import dataclass, field
@@ -675,7 +674,7 @@ def get_analytics_engine() -> AnalyticsEngine:
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for analytics_engine module."""
     from typing import TYPE_CHECKING
 
@@ -684,7 +683,8 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
 
     from test_framework import TestSuite
 
-    suite = TestSuite("Analytics Engine Tests")
+    suite = TestSuite("Analytics Engine Tests", "analytics_engine.py")
+    suite.start_suite()
 
     def test_metric_type_enum():
         """Test MetricType enum values."""
@@ -817,19 +817,89 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert engine1 is engine2
         _analytics_engine = None  # Cleanup
 
-    suite.add_test("MetricType enum", test_metric_type_enum)
-    suite.add_test("PostMetrics creation", test_post_metrics_creation)
-    suite.add_test("PostMetrics engagement rate", test_post_metrics_engagement_rate)
-    suite.add_test("PostMetrics zero impressions", test_post_metrics_zero_impressions)
-    suite.add_test("PostMetrics to_dict", test_post_metrics_to_dict)
-    suite.add_test("ProfileMetrics creation", test_profile_metrics_creation)
-    suite.add_test("ProfileMetrics to_dict", test_profile_metrics_to_dict)
-    suite.add_test("ContentPerformance creation", test_content_performance_creation)
-    suite.add_test("AnalyticsSummary creation", test_analytics_summary_creation)
-    suite.add_test("AnalyticsEngine init", test_analytics_engine_init)
-    suite.add_test("AnalyticsEngine close", test_analytics_engine_close)
-    suite.add_test(
-        "get_analytics_engine singleton", test_get_analytics_engine_singleton
+    suite.run_test(
+        test_name="MetricType enum",
+        test_func=test_metric_type_enum,
+        test_summary="Tests MetricType enum functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="PostMetrics creation",
+        test_func=test_post_metrics_creation,
+        test_summary="Tests PostMetrics creation functionality",
+        method_description="Calls PostMetrics and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="PostMetrics engagement rate",
+        test_func=test_post_metrics_engagement_rate,
+        test_summary="Tests PostMetrics engagement rate functionality",
+        method_description="Calls PostMetrics and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="PostMetrics zero impressions",
+        test_func=test_post_metrics_zero_impressions,
+        test_summary="Tests PostMetrics zero impressions functionality",
+        method_description="Calls PostMetrics and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="PostMetrics to_dict",
+        test_func=test_post_metrics_to_dict,
+        test_summary="Tests PostMetrics to dict functionality",
+        method_description="Calls PostMetrics and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="ProfileMetrics creation",
+        test_func=test_profile_metrics_creation,
+        test_summary="Tests ProfileMetrics creation functionality",
+        method_description="Calls ProfileMetrics and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="ProfileMetrics to_dict",
+        test_func=test_profile_metrics_to_dict,
+        test_summary="Tests ProfileMetrics to dict functionality",
+        method_description="Calls ProfileMetrics and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="ContentPerformance creation",
+        test_func=test_content_performance_creation,
+        test_summary="Tests ContentPerformance creation functionality",
+        method_description="Calls ContentPerformance and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="AnalyticsSummary creation",
+        test_func=test_analytics_summary_creation,
+        test_summary="Tests AnalyticsSummary creation functionality",
+        method_description="Calls AnalyticsSummary and verifies the result",
+        expected_outcome="Function returns an empty collection",
+    )
+    suite.run_test(
+        test_name="AnalyticsEngine init",
+        test_func=test_analytics_engine_init,
+        test_summary="Tests AnalyticsEngine init functionality",
+        method_description="Calls mkdtemp and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="AnalyticsEngine close",
+        test_func=test_analytics_engine_close,
+        test_summary="Tests AnalyticsEngine close functionality",
+        method_description="Calls mkdtemp and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="get_analytics_engine singleton",
+        test_func=test_get_analytics_engine_singleton,
+        test_summary="Tests get analytics engine singleton functionality",
+        method_description="Calls get analytics engine and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
 
-    return suite
+    return suite.finish_suite()

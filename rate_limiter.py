@@ -247,11 +247,12 @@ class AdaptiveRateLimiter:
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for rate_limiter module."""
     from test_framework import TestSuite, suppress_logging
 
-    suite = TestSuite("Rate Limiter Tests")
+    suite = TestSuite("Rate Limiter Tests", "rate_limiter.py")
+    suite.start_suite()
 
     def test_rate_limiter_creation():
         rl = AdaptiveRateLimiter(initial_fill_rate=2.0, capacity=10.0)
@@ -301,12 +302,54 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         metrics = rl.get_metrics()
         assert metrics.total_requests == 2
 
-    suite.add_test("Rate limiter creation", test_rate_limiter_creation)
-    suite.add_test("Rate limiter wait", test_rate_limiter_wait)
-    suite.add_test("Rate limiter 429 backoff", test_rate_limiter_429_backoff)
-    suite.add_test("Rate limiter success increase", test_rate_limiter_success_increase)
-    suite.add_test("Rate limiter metrics", test_rate_limiter_metrics)
-    suite.add_test("Rate limiter reset", test_rate_limiter_reset)
-    suite.add_test("Rate limiter per endpoint", test_rate_limiter_per_endpoint)
+    suite.run_test(
+        test_name="Rate limiter creation",
+        test_func=test_rate_limiter_creation,
+        test_summary="Tests Rate limiter creation functionality",
+        method_description="Calls AdaptiveRateLimiter and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Rate limiter wait",
+        test_func=test_rate_limiter_wait,
+        test_summary="Tests Rate limiter wait functionality",
+        method_description="Calls AdaptiveRateLimiter and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Rate limiter 429 backoff",
+        test_func=test_rate_limiter_429_backoff,
+        test_summary="Tests Rate limiter 429 backoff functionality",
+        method_description="Calls AdaptiveRateLimiter and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Rate limiter success increase",
+        test_func=test_rate_limiter_success_increase,
+        test_summary="Tests Rate limiter success increase functionality",
+        method_description="Calls AdaptiveRateLimiter and verifies the result",
+        expected_outcome="Function returns the expected successful result",
+    )
+    suite.run_test(
+        test_name="Rate limiter metrics",
+        test_func=test_rate_limiter_metrics,
+        test_summary="Tests Rate limiter metrics functionality",
+        method_description="Calls AdaptiveRateLimiter and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Rate limiter reset",
+        test_func=test_rate_limiter_reset,
+        test_summary="Tests Rate limiter reset functionality",
+        method_description="Calls AdaptiveRateLimiter and verifies the result",
+        expected_outcome="Function correctly updates the target",
+    )
+    suite.run_test(
+        test_name="Rate limiter per endpoint",
+        test_func=test_rate_limiter_per_endpoint,
+        test_summary="Tests Rate limiter per endpoint functionality",
+        method_description="Calls AdaptiveRateLimiter and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
+    return suite.finish_suite()

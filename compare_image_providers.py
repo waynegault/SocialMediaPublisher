@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Test Image Providers - Comprehensive Comparison Script
+Compare Image Providers - Comprehensive Comparison Script
 
 This script generates the same image across all available providers and models
 to enable visual comparison of output quality.
 
 Usage:
-    python test_image_providers.py [--prompt "custom prompt"] [--output-dir path]
+    python compare_image_providers.py [--prompt "custom prompt"] [--output-dir path]
 
 Generated images are saved to ./generated_images/provider_comparison/ by default.
 """

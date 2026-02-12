@@ -24,11 +24,10 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from test_framework import TestSuite
+    pass
 
 
 # =============================================================================
@@ -298,7 +297,7 @@ class IntegrationTestSuite:
     def run_test(
         self,
         name: str,
-        test_func: Any,  # noqa: ANN401
+        test_func: Any,
     ) -> IntegrationTestResult:
         """Run a single integration test."""
         import time
@@ -544,12 +543,12 @@ def format_integration_results(results: list[IntegrationTestResult]) -> str:
 # =============================================================================
 
 
-def _create_module_tests() -> "TestSuite":
+def _create_module_tests() -> bool:
     """Create unit tests for this module."""
-    sys.path.insert(0, str(Path(__file__).parent))
     from test_framework import TestSuite
 
-    suite = TestSuite("Integration Tests")
+    suite = TestSuite("Integration Tests", "integration_tests.py")
+    suite.start_suite()
 
     def test_test_story_fixture():
         story = TestStory()
@@ -686,25 +685,113 @@ def _create_module_tests() -> "TestSuite":
         assert config.publish_hour_start == 8
         assert config.quality_threshold == 0.6
 
-    suite.add_test("Test story fixture", test_test_story_fixture)
-    suite.add_test("Mock database init", test_mock_database_init)
-    suite.add_test("Mock database add/get", test_mock_database_add_get)
-    suite.add_test("Mock database unpublished", test_mock_database_unpublished)
-    suite.add_test("Mock database mark published", test_mock_database_mark_published)
-    suite.add_test("Mock LinkedIn API create", test_mock_linkedin_api_create)
-    suite.add_test("Mock LinkedIn API failure", test_mock_linkedin_api_failure)
-    suite.add_test("Mock LinkedIn API reset", test_mock_linkedin_api_reset)
-    suite.add_test("Integration test result", test_integration_test_result)
-    suite.add_test("Integration suite setup", test_integration_suite_setup)
-    suite.add_test("Integration suite run test", test_integration_suite_run_test)
-    suite.add_test("Integration suite run failing", test_integration_suite_run_failing)
-    suite.add_test("Format results", test_format_results)
-    suite.add_test("Run all integration tests", test_run_all_integration_tests)
-    suite.add_test("Test config fixture", test_test_config_fixture)
+    suite.run_test(
+        test_name="Test story fixture",
+        test_func=test_test_story_fixture,
+        test_summary="Tests Test story fixture functionality",
+        method_description="Calls TestStory and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Mock database init",
+        test_func=test_mock_database_init,
+        test_summary="Tests Mock database init functionality",
+        method_description="Calls MockDatabase and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Mock database add/get",
+        test_func=test_mock_database_add_get,
+        test_summary="Tests Mock database add/get functionality",
+        method_description="Calls MockDatabase and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Mock database unpublished",
+        test_func=test_mock_database_unpublished,
+        test_summary="Tests Mock database unpublished functionality",
+        method_description="Calls MockDatabase and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Mock database mark published",
+        test_func=test_mock_database_mark_published,
+        test_summary="Tests Mock database mark published functionality",
+        method_description="Calls MockDatabase and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Mock LinkedIn API create",
+        test_func=test_mock_linkedin_api_create,
+        test_summary="Tests Mock LinkedIn API create functionality",
+        method_description="Calls MockLinkedInAPI and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Mock LinkedIn API failure",
+        test_func=test_mock_linkedin_api_failure,
+        test_summary="Tests Mock LinkedIn API failure functionality",
+        method_description="Calls MockLinkedInAPI and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
+    )
+    suite.run_test(
+        test_name="Mock LinkedIn API reset",
+        test_func=test_mock_linkedin_api_reset,
+        test_summary="Tests Mock LinkedIn API reset functionality",
+        method_description="Calls MockLinkedInAPI and verifies the result",
+        expected_outcome="Function correctly updates the target",
+    )
+    suite.run_test(
+        test_name="Integration test result",
+        test_func=test_integration_test_result,
+        test_summary="Tests Integration test result functionality",
+        method_description="Calls IntegrationTestResult and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Integration suite setup",
+        test_func=test_integration_suite_setup,
+        test_summary="Tests Integration suite setup functionality",
+        method_description="Calls IntegrationTestSuite and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Integration suite run test",
+        test_func=test_integration_suite_run_test,
+        test_summary="Tests Integration suite run test functionality",
+        method_description="Calls IntegrationTestSuite and verifies the result",
+        expected_outcome="Function returns True",
+    )
+    suite.run_test(
+        test_name="Integration suite run failing",
+        test_func=test_integration_suite_run_failing,
+        test_summary="Tests Integration suite run failing functionality",
+        method_description="Calls IntegrationTestSuite and verifies the result",
+        expected_outcome="Function returns False or falsy value",
+    )
+    suite.run_test(
+        test_name="Format results",
+        test_func=test_format_results,
+        test_summary="Tests Format results functionality",
+        method_description="Calls IntegrationTestResult and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
+    )
+    suite.run_test(
+        test_name="Run all integration tests",
+        test_func=test_run_all_integration_tests,
+        test_summary="Tests Run all integration tests functionality",
+        method_description="Calls IntegrationTestSuite and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Test config fixture",
+        test_func=test_test_config_fixture,
+        test_summary="Tests Test config fixture functionality",
+        method_description="Calls TestConfig and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
-
-
+    return suite.finish_suite()
 if __name__ == "__main__":
     # Run integration tests
     print("\n" + "=" * 60)

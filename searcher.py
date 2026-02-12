@@ -6,7 +6,6 @@ import re
 import time
 from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
-from urllib.parse import urlparse
 from ddgs import DDGS
 import requests
 
@@ -15,7 +14,7 @@ from openai import OpenAI
 
 from config import Config
 from database import Database, Story
-from domain_credibility import is_reputable_domain, get_domain_tier
+from domain_credibility import get_domain_tier
 from error_handling import with_enhanced_recovery
 from api_client import api_client
 from text_utils import calculate_similarity
@@ -1801,14 +1800,15 @@ class StorySearcher:
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for searcher module."""
     import os
     import tempfile
 
     from test_framework import TestSuite
 
-    suite = TestSuite("Searcher Tests")
+    suite = TestSuite("Searcher Tests", "searcher.py")
+    suite.start_suite()
 
     def test_calculate_similarity_identical():
         result = calculate_similarity("hello world", "hello world")
@@ -2090,49 +2090,218 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         # Should have at most 1 unique valid URL
         assert len([k for k in results.keys() if k]) <= 1
 
-    suite.add_test(
-        "Calculate similarity - identical", test_calculate_similarity_identical
+    suite.run_test(
+        test_name="Calculate similarity - identical",
+        test_func=test_calculate_similarity_identical,
+        test_summary="Tests Calculate similarity with identical scenario",
+        method_description="Calls calculate similarity and verifies the result",
+        expected_outcome="Function returns the expected value",
     )
-    suite.add_test(
-        "Calculate similarity - different", test_calculate_similarity_different
+    suite.run_test(
+        test_name="Calculate similarity - different",
+        test_func=test_calculate_similarity_different,
+        test_summary="Tests Calculate similarity with different scenario",
+        method_description="Calls calculate similarity and verifies the result",
+        expected_outcome="Function returns the expected value",
     )
-    suite.add_test("Calculate similarity - partial", test_calculate_similarity_partial)
-    suite.add_test("Calculate similarity - empty", test_calculate_similarity_empty)
-    suite.add_test("Validate URL - empty", test_validate_url_empty)
-    suite.add_test("Validate URL - valid format", test_validate_url_valid_format)
-    suite.add_test("Validate URL - invalid format", test_validate_url_invalid_format)
-    suite.add_test("Extract article date - none", test_extract_article_date_none)
-    suite.add_test("Extract article date - valid", test_extract_article_date_valid)
-    suite.add_test("Filter stories by date", test_filter_stories_by_date)
-    suite.add_test("Searcher init", test_searcher_init)
-    suite.add_test("Parse response - empty", test_parse_response_empty)
-    suite.add_test("Parse response - valid JSON", test_parse_response_valid_json)
-    suite.add_test("Normalize stories - list", test_normalize_stories_list)
-    suite.add_test("Normalize stories - dict", test_normalize_stories_dict_with_stories)
-    suite.add_test("Get search feedback - zero", test_get_search_feedback_zero)
-    suite.add_test("Get search feedback - few", test_get_search_feedback_few)
-    suite.add_test("Manual distill", test_manual_distill)
+    suite.run_test(
+        test_name="Calculate similarity - partial",
+        test_func=test_calculate_similarity_partial,
+        test_summary="Tests Calculate similarity with partial scenario",
+        method_description="Calls calculate similarity and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Calculate similarity - empty",
+        test_func=test_calculate_similarity_empty,
+        test_summary="Tests Calculate similarity with empty scenario",
+        method_description="Calls calculate similarity and verifies the result",
+        expected_outcome="Function returns the expected value",
+    )
+    suite.run_test(
+        test_name="Validate URL - empty",
+        test_func=test_validate_url_empty,
+        test_summary="Tests Validate URL with empty scenario",
+        method_description="Calls validate url and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="Validate URL - valid format",
+        test_func=test_validate_url_valid_format,
+        test_summary="Tests Validate URL with valid format scenario",
+        method_description="Calls validate url and verifies the result",
+        expected_outcome="Function returns the expected successful result",
+    )
+    suite.run_test(
+        test_name="Validate URL - invalid format",
+        test_func=test_validate_url_invalid_format,
+        test_summary="Tests Validate URL with invalid format scenario",
+        method_description="Calls validate url and verifies the result",
+        expected_outcome="Function handles invalid input appropriately",
+    )
+    suite.run_test(
+        test_name="Extract article date - none",
+        test_func=test_extract_article_date_none,
+        test_summary="Tests Extract article date with none scenario",
+        method_description="Calls extract article date and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Extract article date - valid",
+        test_func=test_extract_article_date_valid,
+        test_summary="Tests Extract article date with valid scenario",
+        method_description="Calls extract article date and verifies the result",
+        expected_outcome="Function returns the expected successful result",
+    )
+    suite.run_test(
+        test_name="Filter stories by date",
+        test_func=test_filter_stories_by_date,
+        test_summary="Tests Filter stories by date functionality",
+        method_description="Calls filter stories by date and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Searcher init",
+        test_func=test_searcher_init,
+        test_summary="Tests Searcher init functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Parse response - empty",
+        test_func=test_parse_response_empty,
+        test_summary="Tests Parse response with empty scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns an empty collection",
+    )
+    suite.run_test(
+        test_name="Parse response - valid JSON",
+        test_func=test_parse_response_valid_json,
+        test_summary="Tests Parse response with valid json scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected successful result",
+    )
+    suite.run_test(
+        test_name="Normalize stories - list",
+        test_func=test_normalize_stories_list,
+        test_summary="Tests Normalize stories with list scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function correctly processes multiple items",
+    )
+    suite.run_test(
+        test_name="Normalize stories - dict",
+        test_func=test_normalize_stories_dict_with_stories,
+        test_summary="Tests Normalize stories with dict scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Get search feedback - zero",
+        test_func=test_get_search_feedback_zero,
+        test_summary="Tests Get search feedback with zero scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function finds and returns the expected results",
+    )
+    suite.run_test(
+        test_name="Get search feedback - few",
+        test_func=test_get_search_feedback_few,
+        test_summary="Tests Get search feedback with few scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function finds and returns the expected results",
+    )
+    suite.run_test(
+        test_name="Manual distill",
+        test_func=test_manual_distill,
+        test_summary="Tests Manual distill functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
     # New tests
-    suite.add_test("Extract URL keywords", test_extract_url_keywords)
-    suite.add_test("Extract URL keywords - empty", test_extract_url_keywords_empty)
-    suite.add_test("Retry decorator - success", test_retry_decorator_success)
-    suite.add_test(
-        "Retry decorator - eventual success", test_retry_decorator_eventual_success
+    suite.run_test(
+        test_name="Extract URL keywords",
+        test_func=test_extract_url_keywords,
+        test_summary="Tests Extract URL keywords functionality",
+        method_description="Calls extract url keywords and verifies the result",
+        expected_outcome="Function correctly parses and extracts the data",
     )
-    suite.add_test("Redirect URL cache", test_redirect_url_cache)
+    suite.run_test(
+        test_name="Extract URL keywords - empty",
+        test_func=test_extract_url_keywords_empty,
+        test_summary="Tests Extract URL keywords with empty scenario",
+        method_description="Calls extract url keywords and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="Retry decorator - success",
+        test_func=test_retry_decorator_success,
+        test_summary="Tests Retry decorator with success scenario",
+        method_description="Calls retry with backoff and verifies the result",
+        expected_outcome="Function returns the expected value",
+    )
+    suite.run_test(
+        test_name="Retry decorator - eventual success",
+        test_func=test_retry_decorator_eventual_success,
+        test_summary="Tests Retry decorator with eventual success scenario",
+        method_description="Calls retry with backoff and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
+    )
+    suite.run_test(
+        test_name="Redirect URL cache",
+        test_func=test_redirect_url_cache,
+        test_summary="Tests Redirect URL cache functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected value",
+    )
     # Quality score calibration tests
-    suite.add_test("Calibrate score - base", test_calibrate_quality_score_base)
-    suite.add_test(
-        "Calibrate score - with people", test_calibrate_quality_score_with_people
+    suite.run_test(
+        test_name="Calibrate score - base",
+        test_func=test_calibrate_quality_score_base,
+        test_summary="Tests Calibrate score with base scenario",
+        method_description="Calls calibrate quality score and verifies the result",
+        expected_outcome="Function returns the expected value",
     )
-    suite.add_test(
-        "Calibrate score - reputable source",
-        test_calibrate_quality_score_with_reputable_source,
+    suite.run_test(
+        test_name="Calibrate score - with people",
+        test_func=test_calibrate_quality_score_with_people,
+        test_summary="Tests Calibrate score with with people scenario",
+        method_description="Calls calibrate quality score and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test("Calibrate score - max cap", test_calibrate_quality_score_max_cap)
+    suite.run_test(
+        test_name="Calibrate score - reputable source",
+        test_func=test_calibrate_quality_score_with_reputable_source,
+        test_summary="Tests Calibrate score with reputable source scenario",
+        method_description="Calls calibrate quality score and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Calibrate score - max cap",
+        test_func=test_calibrate_quality_score_max_cap,
+        test_summary="Tests Calibrate score with max cap scenario",
+        method_description="Calls calibrate quality score and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
     # URL archiving tests
-    suite.add_test("Archive URL - invalid", test_archive_url_wayback_invalid)
-    suite.add_test("Archive URLs batch - empty", test_archive_urls_batch_empty)
-    suite.add_test("Archive URLs batch - dedup", test_archive_urls_batch_dedup)
+    suite.run_test(
+        test_name="Archive URL - invalid",
+        test_func=test_archive_url_wayback_invalid,
+        test_summary="Tests Archive URL with invalid scenario",
+        method_description="Calls archive url wayback and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Archive URLs batch - empty",
+        test_func=test_archive_urls_batch_empty,
+        test_summary="Tests Archive URLs batch with empty scenario",
+        method_description="Calls archive urls batch and verifies the result",
+        expected_outcome="Function returns an empty collection",
+    )
+    suite.run_test(
+        test_name="Archive URLs batch - dedup",
+        test_func=test_archive_urls_batch_dedup,
+        test_summary="Tests Archive URLs batch with dedup scenario",
+        method_description="Calls archive urls batch and verifies the result",
+        expected_outcome="Function correctly processes multiple items",
+    )
 
-    return suite
+    return suite.finish_suite()

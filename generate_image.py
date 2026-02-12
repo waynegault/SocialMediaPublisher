@@ -248,7 +248,9 @@ def check_requirements() -> None:
 
     try:
         # Check if diffusers is available (FluxPipeline or any pipeline will do)
-        import diffusers  # noqa: F401
+        import diffusers
+
+        _ = diffusers  # Verify import succeeded
     except ImportError as e:
         print(f"❌ diffusers not installed: {e}")
         print("   Run: pip install diffusers")

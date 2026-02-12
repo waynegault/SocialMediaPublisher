@@ -3717,14 +3717,15 @@ Return ONLY valid JSON, no explanation."""
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for company_mention_enricher module."""
     import os
     import tempfile
 
     from test_framework import TestSuite
 
-    suite = TestSuite("Company Mention Enricher Tests")
+    suite = TestSuite("Company Mention Enricher Tests", "company_mention_enricher.py")
+    suite.start_suite()
 
     def test_confirm_organization_exact_match():
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -3756,9 +3757,19 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
-    suite.add_test("Confirm org - exact match", test_confirm_organization_exact_match)
-    suite.add_test(
-        "Confirm org - token overlap", test_confirm_organization_token_overlap
+    suite.run_test(
+        test_name="Confirm org - exact match",
+        test_func=test_confirm_organization_exact_match,
+        test_summary="Tests Confirm org with exact match scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected successful result",
+    )
+    suite.run_test(
+        test_name="Confirm org - token overlap",
+        test_func=test_confirm_organization_token_overlap,
+        test_summary="Tests Confirm org with token overlap scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
 
     def test_validate_mention_valid_sentence():
@@ -3874,25 +3885,68 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
-    suite.add_test(
-        "Validate mention - valid sentence", test_validate_mention_valid_sentence
+    suite.run_test(
+        test_name="Validate mention - valid sentence",
+        test_func=test_validate_mention_valid_sentence,
+        test_summary="Tests Validate mention with valid sentence scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected successful result",
     )
-    suite.add_test(
-        "Validate mention - NO_COMPANY_MENTION", test_validate_mention_no_company
+    suite.run_test(
+        test_name="Validate mention - NO_COMPANY_MENTION",
+        test_func=test_validate_mention_no_company,
+        test_summary="Tests Validate mention with no_company_mention scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected value",
     )
-    suite.add_test("Validate mention - empty string", test_validate_mention_empty)
-    suite.add_test(
-        "Validate mention - with newlines", test_validate_mention_with_newlines
+    suite.run_test(
+        test_name="Validate mention - empty string",
+        test_func=test_validate_mention_empty,
+        test_summary="Tests Validate mention with empty string scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected value",
     )
-    suite.add_test(
-        "Validate mention - with hashtag", test_validate_mention_with_hashtag
+    suite.run_test(
+        test_name="Validate mention - with newlines",
+        test_func=test_validate_mention_with_newlines,
+        test_summary="Tests Validate mention with with newlines scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected value",
     )
-    suite.add_test("Validate mention - with list", test_validate_mention_with_list)
-    suite.add_test(
-        "Validate mention - missing punctuation",
-        test_validate_mention_missing_punctuation,
+    suite.run_test(
+        test_name="Validate mention - with hashtag",
+        test_func=test_validate_mention_with_hashtag,
+        test_summary="Tests Validate mention with with hashtag scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected value",
     )
-    suite.add_test("Build enrichment prompt", test_build_enrichment_prompt)
-    suite.add_test("Get enrichment stats", test_get_enrichment_stats)
+    suite.run_test(
+        test_name="Validate mention - with list",
+        test_func=test_validate_mention_with_list,
+        test_summary="Tests Validate mention with with list scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected value",
+    )
+    suite.run_test(
+        test_name="Validate mention - missing punctuation",
+        test_func=test_validate_mention_missing_punctuation,
+        test_summary="Tests Validate mention with missing punctuation scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected value",
+    )
+    suite.run_test(
+        test_name="Build enrichment prompt",
+        test_func=test_build_enrichment_prompt,
+        test_summary="Tests Build enrichment prompt functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Get enrichment stats",
+        test_func=test_get_enrichment_stats,
+        test_summary="Tests Get enrichment stats functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
+    return suite.finish_suite()

@@ -19,6 +19,13 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Any, Optional, Sequence
 
+from entity_constants import (
+    INVALID_ORG_NAMES,
+    INVALID_ORG_PATTERNS,
+    INVALID_PERSON_NAMES,
+    VALID_SINGLE_WORD_ORGS,
+)
+
 logger = logging.getLogger(__name__)
 
 # Type hints for optional dependencies
@@ -307,13 +314,6 @@ KNOWN_UNIVERSITIES = {
 # =============================================================================
 # These constants are now defined in entity_constants.py to avoid circular imports
 # and to allow modules without spaCy to use them.
-
-from entity_constants import (
-    INVALID_ORG_NAMES,
-    INVALID_ORG_PATTERNS,
-    INVALID_PERSON_NAMES,
-    VALID_SINGLE_WORD_ORGS,
-)
 
 # Re-export for backward compatibility
 __all__ = [
@@ -885,7 +885,7 @@ def get_ner_engine() -> NEREngine:
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for ner_engine module."""
     from typing import TYPE_CHECKING
 
@@ -894,7 +894,8 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
 
     from test_framework import TestSuite
 
-    suite = TestSuite("NER Engine Tests")
+    suite = TestSuite("NER Engine Tests", "ner_engine.py")
+    suite.start_suite()
 
     def test_entity_creation():
         """Test Entity dataclass creation."""
@@ -1023,23 +1024,117 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert e1 is e2
         _ner_engine = None  # Cleanup
 
-    suite.add_test("Entity creation", test_entity_creation)
-    suite.add_test("Entity normalized default", test_entity_normalized_default)
-    suite.add_test("PersonEntity creation", test_person_entity_creation)
-    suite.add_test("OrganizationEntity creation", test_organization_entity_creation)
-    suite.add_test("ExtractionResult creation", test_extraction_result_creation)
-    suite.add_test(
-        "ExtractionResult mention_candidates", test_extraction_result_mention_candidates
+    suite.run_test(
+        test_name="Entity creation",
+        test_func=test_entity_creation,
+        test_summary="Tests Entity creation functionality",
+        method_description="Calls Entity and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test("CHEM_ENG_TERMS defined", test_chem_eng_terms_defined)
-    suite.add_test("COMPANY_SUFFIXES defined", test_company_suffixes_defined)
-    suite.add_test("ACADEMIC_PATTERNS defined", test_academic_patterns_defined)
-    suite.add_test("PROFESSIONAL_TITLES defined", test_professional_titles_defined)
-    suite.add_test("KNOWN_COMPANIES defined", test_known_companies_defined)
-    suite.add_test("KNOWN_UNIVERSITIES defined", test_known_universities_defined)
-    suite.add_test("NEREngine creation", test_ner_engine_creation)
-    suite.add_test("NEREngine extract empty", test_ner_engine_extract_empty)
-    suite.add_test("NEREngine extract basic", test_ner_engine_extract_basic)
-    suite.add_test("get_ner_engine singleton", test_get_ner_engine_singleton)
+    suite.run_test(
+        test_name="Entity normalized default",
+        test_func=test_entity_normalized_default,
+        test_summary="Tests Entity normalized default functionality",
+        method_description="Calls Entity and verifies the result",
+        expected_outcome="Function returns the correct default result",
+    )
+    suite.run_test(
+        test_name="PersonEntity creation",
+        test_func=test_person_entity_creation,
+        test_summary="Tests PersonEntity creation functionality",
+        method_description="Calls PersonEntity and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="OrganizationEntity creation",
+        test_func=test_organization_entity_creation,
+        test_summary="Tests OrganizationEntity creation functionality",
+        method_description="Calls OrganizationEntity and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="ExtractionResult creation",
+        test_func=test_extraction_result_creation,
+        test_summary="Tests ExtractionResult creation functionality",
+        method_description="Calls ExtractionResult and verifies the result",
+        expected_outcome="Function returns an empty collection",
+    )
+    suite.run_test(
+        test_name="ExtractionResult mention_candidates",
+        test_func=test_extraction_result_mention_candidates,
+        test_summary="Tests ExtractionResult mention candidates functionality",
+        method_description="Calls PersonEntity and verifies the result",
+        expected_outcome="Function correctly parses and extracts the data",
+    )
+    suite.run_test(
+        test_name="CHEM_ENG_TERMS defined",
+        test_func=test_chem_eng_terms_defined,
+        test_summary="Tests CHEM ENG TERMS defined functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="COMPANY_SUFFIXES defined",
+        test_func=test_company_suffixes_defined,
+        test_summary="Tests COMPANY SUFFIXES defined functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="ACADEMIC_PATTERNS defined",
+        test_func=test_academic_patterns_defined,
+        test_summary="Tests ACADEMIC PATTERNS defined functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="PROFESSIONAL_TITLES defined",
+        test_func=test_professional_titles_defined,
+        test_summary="Tests PROFESSIONAL TITLES defined functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="KNOWN_COMPANIES defined",
+        test_func=test_known_companies_defined,
+        test_summary="Tests KNOWN COMPANIES defined functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="KNOWN_UNIVERSITIES defined",
+        test_func=test_known_universities_defined,
+        test_summary="Tests KNOWN UNIVERSITIES defined functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="NEREngine creation",
+        test_func=test_ner_engine_creation,
+        test_summary="Tests NEREngine creation functionality",
+        method_description="Calls NEREngine and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="NEREngine extract empty",
+        test_func=test_ner_engine_extract_empty,
+        test_summary="Tests NEREngine extract empty functionality",
+        method_description="Calls NEREngine and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="NEREngine extract basic",
+        test_func=test_ner_engine_extract_basic,
+        test_summary="Tests NEREngine extract basic functionality",
+        method_description="Calls NEREngine and verifies the result",
+        expected_outcome="Function returns the correct default result",
+    )
+    suite.run_test(
+        test_name="get_ner_engine singleton",
+        test_func=test_get_ner_engine_singleton,
+        test_summary="Tests get ner engine singleton functionality",
+        method_description="Calls get ner engine and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
+    return suite.finish_suite()

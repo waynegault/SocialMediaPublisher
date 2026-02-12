@@ -421,11 +421,12 @@ def safe_execute(
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for error_handling module."""
     from test_framework import TestSuite, suppress_logging
 
-    suite = TestSuite("Error Handling Tests")
+    suite = TestSuite("Error Handling Tests", "error_handling.py")
+    suite.start_suite()
 
     def test_retryable_error_creation():
         err = RetryableError("Test error", retry_after=5.0)
@@ -520,24 +521,96 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         result = failing_function()
         assert result is None
 
-    suite.add_test("RetryableError creation", test_retryable_error_creation)
-    suite.add_test("FatalError creation", test_fatal_error_creation)
-    suite.add_test("APIRateLimitError creation", test_api_rate_limit_error)
-    suite.add_test("NetworkTimeoutError creation", test_network_timeout_error)
-    suite.add_test("CircuitBreaker closed state", test_circuit_breaker_closed_state)
-    suite.add_test(
-        "CircuitBreaker opens after failures", test_circuit_breaker_opens_after_failures
+    suite.run_test(
+        test_name="RetryableError creation",
+        test_func=test_retryable_error_creation,
+        test_summary="Tests RetryableError creation functionality",
+        method_description="Calls RetryableError and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
     )
-    suite.add_test("CircuitBreaker reset", test_circuit_breaker_reset)
-    suite.add_test("CircuitBreaker stats", test_circuit_breaker_stats)
-    suite.add_test("RecoveryContext basics", test_recovery_context)
-    suite.add_test("RecoveryContext backoff", test_recovery_context_backoff)
-    suite.add_test(
-        "with_enhanced_recovery decorator", test_with_enhanced_recovery_decorator
+    suite.run_test(
+        test_name="FatalError creation",
+        test_func=test_fatal_error_creation,
+        test_summary="Tests FatalError creation functionality",
+        method_description="Calls FatalError and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
     )
-    suite.add_test(
-        "graceful_degradation decorator", test_graceful_degradation_decorator
+    suite.run_test(
+        test_name="APIRateLimitError creation",
+        test_func=test_api_rate_limit_error,
+        test_summary="Tests APIRateLimitError creation functionality",
+        method_description="Calls APIRateLimitError and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
     )
-    suite.add_test("safe_execute decorator", test_safe_execute_decorator)
+    suite.run_test(
+        test_name="NetworkTimeoutError creation",
+        test_func=test_network_timeout_error,
+        test_summary="Tests NetworkTimeoutError creation functionality",
+        method_description="Calls NetworkTimeoutError and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
+    )
+    suite.run_test(
+        test_name="CircuitBreaker closed state",
+        test_func=test_circuit_breaker_closed_state,
+        test_summary="Tests CircuitBreaker closed state functionality",
+        method_description="Calls CircuitBreaker and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="CircuitBreaker opens after failures",
+        test_func=test_circuit_breaker_opens_after_failures,
+        test_summary="Tests CircuitBreaker opens after failures functionality",
+        method_description="Calls CircuitBreakerConfig and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
+    )
+    suite.run_test(
+        test_name="CircuitBreaker reset",
+        test_func=test_circuit_breaker_reset,
+        test_summary="Tests CircuitBreaker reset functionality",
+        method_description="Calls CircuitBreakerConfig and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
+    )
+    suite.run_test(
+        test_name="CircuitBreaker stats",
+        test_func=test_circuit_breaker_stats,
+        test_summary="Tests CircuitBreaker stats functionality",
+        method_description="Calls CircuitBreaker and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="RecoveryContext basics",
+        test_func=test_recovery_context,
+        test_summary="Tests RecoveryContext basics functionality",
+        method_description="Calls RecoveryContext and verifies the result",
+        expected_outcome="Function returns the correct default result",
+    )
+    suite.run_test(
+        test_name="RecoveryContext backoff",
+        test_func=test_recovery_context_backoff,
+        test_summary="Tests RecoveryContext backoff functionality",
+        method_description="Calls RecoveryContext and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="with_enhanced_recovery decorator",
+        test_func=test_with_enhanced_recovery_decorator,
+        test_summary="Tests with enhanced recovery decorator functionality",
+        method_description="Calls with enhanced recovery and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
+    )
+    suite.run_test(
+        test_name="graceful_degradation decorator",
+        test_func=test_graceful_degradation_decorator,
+        test_summary="Tests graceful degradation decorator functionality",
+        method_description="Calls graceful degradation and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
+    )
+    suite.run_test(
+        test_name="safe_execute decorator",
+        test_func=test_safe_execute_decorator,
+        test_summary="Tests safe execute decorator functionality",
+        method_description="Calls safe execute and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
+    )
 
-    return suite
+    return suite.finish_suite()

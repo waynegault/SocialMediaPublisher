@@ -2214,11 +2214,12 @@ def run_human_validation(database: Database, port: int = 5000) -> None:
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for validation_server module."""
     from test_framework import TestSuite
 
-    suite = TestSuite("Validation Server Tests")
+    suite = TestSuite("Validation Server Tests", "validation_server.py")
+    suite.start_suite()
 
     def test_html_template_exists():
         assert HTML_TEMPLATE is not None
@@ -2261,16 +2262,61 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     def test_validation_server_class_exists():
         assert ValidationServer is not None
 
-    suite.add_test("HTML template exists and is substantial", test_html_template_exists)
-    suite.add_test("HTML has required action buttons", test_html_has_required_buttons)
-    suite.add_test("HTML has navigation controls", test_html_has_navigation)
-    suite.add_test("HTML has edit fields", test_html_has_edit_fields)
-    suite.add_test("HTML has LinkedIn preview elements", test_html_has_linkedin_preview)
-    suite.add_test("HTML has API endpoint references", test_html_has_api_endpoints)
-    suite.add_test(
-        "run_human_validation function exists",
-        test_run_human_validation_function_exists,
+    suite.run_test(
+        test_name="HTML template exists and is substantial",
+        test_func=test_html_template_exists,
+        test_summary="Tests HTML template exists and is substantial functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test("ValidationServer class exists", test_validation_server_class_exists)
+    suite.run_test(
+        test_name="HTML has required action buttons",
+        test_func=test_html_has_required_buttons,
+        test_summary="Tests HTML has required action buttons functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="HTML has navigation controls",
+        test_func=test_html_has_navigation,
+        test_summary="Tests HTML has navigation controls functionality",
+        method_description="Calls navigate and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="HTML has edit fields",
+        test_func=test_html_has_edit_fields,
+        test_summary="Tests HTML has edit fields functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="HTML has LinkedIn preview elements",
+        test_func=test_html_has_linkedin_preview,
+        test_summary="Tests HTML has LinkedIn preview elements functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="HTML has API endpoint references",
+        test_func=test_html_has_api_endpoints,
+        test_summary="Tests HTML has API endpoint references functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="run_human_validation function exists",
+        test_func=test_run_human_validation_function_exists,
+        test_summary="Tests run human validation function exists functionality",
+        method_description="Calls callable and verifies the result",
+        expected_outcome="Function returns the expected successful result",
+    )
+    suite.run_test(
+        test_name="ValidationServer class exists",
+        test_func=test_validation_server_class_exists,
+        test_summary="Tests ValidationServer class exists functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function returns the expected successful result",
+    )
 
-    return suite
+    return suite.finish_suite()

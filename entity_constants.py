@@ -291,3 +291,131 @@ def is_valid_single_word_org(name: str) -> bool:
 
     normalized = name.lower().strip()
     return normalized in VALID_SINGLE_WORD_ORGS
+
+
+# =============================================================================
+# Module Tests
+# =============================================================================
+
+
+def _create_module_tests() -> bool:
+    """Create unit tests for entity_constants module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("Entity Constants", "entity_constants.py")
+    suite.start_suite()
+
+    def test_invalid_org_name_generic():
+        assert is_invalid_org_name("agency") is True
+        assert is_invalid_org_name("department") is True
+
+    def test_invalid_org_name_valid():
+        assert is_invalid_org_name("BASF") is False
+        assert is_invalid_org_name("Google") is False
+
+    def test_invalid_person_name_generic():
+        assert is_invalid_person_name("Anonymous") is True
+        assert is_invalid_person_name("Staff Writer") is True
+
+    def test_invalid_person_name_valid():
+        assert is_invalid_person_name("John Smith") is False
+
+    def test_valid_single_word_org_true():
+        assert is_valid_single_word_org("NASA") is True
+        assert is_valid_single_word_org("BASF") is True
+
+    def test_valid_single_word_org_false():
+        assert is_valid_single_word_org("randomword") is False
+
+    def test_valid_single_word_org_empty():
+        assert is_valid_single_word_org("") is False
+
+    def test_invalid_org_names_set_exists():
+        assert isinstance(INVALID_ORG_NAMES, (set, frozenset))
+        assert len(INVALID_ORG_NAMES) > 0
+
+    def test_invalid_person_names_set_exists():
+        assert isinstance(INVALID_PERSON_NAMES, (set, frozenset))
+        assert len(INVALID_PERSON_NAMES) > 0
+
+    def test_valid_single_word_orgs_set_exists():
+        assert isinstance(VALID_SINGLE_WORD_ORGS, (set, frozenset))
+        assert len(VALID_SINGLE_WORD_ORGS) > 0
+
+    suite.run_test(
+
+        test_name="is_invalid_org_name - generic",
+
+        test_func=test_invalid_org_name_generic,
+
+        test_summary="is_invalid_org_name behavior with generic input",
+
+        method_description="Testing is_invalid_org_name with generic input using boolean return verification",
+
+        expected_outcome="Function returns True for generic input",
+
+    )
+    suite.run_test(
+        test_name="is_invalid_org_name - valid",
+        test_func=test_invalid_org_name_valid,
+        test_summary="is_invalid_org_name behavior with valid input",
+        method_description="Testing is_invalid_org_name with valid input using boolean return verification",
+        expected_outcome="Function returns False for valid input",
+    )
+    suite.run_test(
+        test_name="is_invalid_person_name - generic",
+        test_func=test_invalid_person_name_generic,
+        test_summary="is_invalid_person_name behavior with generic input",
+        method_description="Testing is_invalid_person_name with generic input using boolean return verification",
+        expected_outcome="Function returns True for generic input",
+    )
+    suite.run_test(
+        test_name="is_invalid_person_name - valid",
+        test_func=test_invalid_person_name_valid,
+        test_summary="is_invalid_person_name behavior with valid input",
+        method_description="Testing is_invalid_person_name with valid input using boolean return verification",
+        expected_outcome="Function returns False for valid input",
+    )
+    suite.run_test(
+        test_name="is_valid_single_word_org - true",
+        test_func=test_valid_single_word_org_true,
+        test_summary="is_valid_single_word_org behavior with true input",
+        method_description="Testing is_valid_single_word_org with true input using boolean return verification",
+        expected_outcome="Function returns True for true input",
+    )
+    suite.run_test(
+        test_name="is_valid_single_word_org - false",
+        test_func=test_valid_single_word_org_false,
+        test_summary="is_valid_single_word_org behavior with false input",
+        method_description="Testing is_valid_single_word_org with false input using boolean return verification",
+        expected_outcome="Function returns False for false input",
+    )
+    suite.run_test(
+        test_name="is_valid_single_word_org - empty",
+        test_func=test_valid_single_word_org_empty,
+        test_summary="is_valid_single_word_org behavior with empty input",
+        method_description="Testing is_valid_single_word_org with empty input using boolean return verification",
+        expected_outcome="Function returns False for empty input",
+    )
+    suite.run_test(
+        test_name="INVALID_ORG_NAMES exists",
+        test_func=test_invalid_org_names_set_exists,
+        test_summary="Verify INVALID_ORG_NAMES exists produces correct results",
+        method_description="Testing INVALID_ORG_NAMES exists using type checking and size validation",
+        expected_outcome="INVALID_ORG_NAMES exists returns the correct type; Result falls within expected bounds",
+    )
+    suite.run_test(
+        test_name="INVALID_PERSON_NAMES exists",
+        test_func=test_invalid_person_names_set_exists,
+        test_summary="Verify INVALID_PERSON_NAMES exists produces correct results",
+        method_description="Testing INVALID_PERSON_NAMES exists using type checking and size validation",
+        expected_outcome="INVALID_PERSON_NAMES exists returns the correct type; Result falls within expected bounds",
+    )
+    suite.run_test(
+        test_name="VALID_SINGLE_WORD_ORGS exists",
+        test_func=test_valid_single_word_orgs_set_exists,
+        test_summary="Verify VALID_SINGLE_WORD_ORGS exists produces correct results",
+        method_description="Testing VALID_SINGLE_WORD_ORGS exists using type checking and size validation",
+        expected_outcome="VALID_SINGLE_WORD_ORGS exists returns the correct type; Result falls within expected bounds",
+    )
+    return suite.finish_suite()

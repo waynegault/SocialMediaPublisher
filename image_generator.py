@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Optional
 
 from google import genai
-from google.genai import types
 from openai import OpenAI
 from huggingface_hub import InferenceClient  # type: ignore
 from PIL import Image, ImageDraw, ImageFont
@@ -727,7 +726,7 @@ class ImageGenerator:
         import requests
         from urllib.parse import quote
 
-        logger.info(f"🎨 Trying Pollinations.ai (free, unlimited)...")
+        logger.info("🎨 Trying Pollinations.ai (free, unlimited)...")
 
         try:
             # Pollinations.ai uses a simple URL-based API
@@ -951,7 +950,7 @@ class ImageGenerator:
             logger.debug("No OPENAI_API_KEY configured for DALL-E 3")
             return None
 
-        logger.info(f"🎨 Trying OpenAI DALL-E 3...")
+        logger.info("🎨 Trying OpenAI DALL-E 3...")
 
         try:
             # Create OpenAI client for DALL-E
@@ -1299,7 +1298,7 @@ Keep response under 100 words."""
                 return result
 
             html = response.text
-            base_url = source_url.rsplit("/", 1)[0]  # For resolving relative URLs
+            _base_url = source_url.rsplit("/", 1)[0]  # For resolving relative URLs
 
             # Extract main text content (simple extraction without BeautifulSoup)
             # Remove script and style tags
@@ -1464,7 +1463,7 @@ Do NOT deviate from this appearance description. Include these exact physical tr
 """
         else:
             # No central human character - focus on concepts, technology, environments
-            appearance_instruction = f"""
+            appearance_instruction = """
 IMPORTANT: NO CENTRAL HUMAN CHARACTER IN THIS IMAGE.
 Focus on illustrating the story through:
 - Technology, equipment, machinery, or scientific apparatus relevant to the story
@@ -1493,7 +1492,7 @@ Do NOT include: close-up portraits, waist-up shots of individuals, or any person
                 try:
                     if Config.HUMAN_IN_IMAGE:
                         logger.info(
-                            f"📝 Refining prompt with local LLM (with person)..."
+                            "📝 Refining prompt with local LLM (with person)..."
                         )
                     else:
                         logger.info("📝 Refining prompt with local LLM...")
@@ -1517,7 +1516,7 @@ Do NOT include: close-up portraits, waist-up shots of individuals, or any person
                     try:
                         if Config.HUMAN_IN_IMAGE:
                             logger.info(
-                                f"📝 Refining prompt with Groq (with person)..."
+                                "📝 Refining prompt with Groq (with person)..."
                             )
                         else:
                             logger.info("📝 Refining prompt with Groq...")
@@ -1532,7 +1531,7 @@ Do NOT include: close-up portraits, waist-up shots of individuals, or any person
             # Final fallback to Gemini
             if not refined:
                 if Config.HUMAN_IN_IMAGE:
-                    logger.info(f"📝 Refining prompt with Gemini (with person)...")
+                    logger.info("📝 Refining prompt with Gemini (with person)...")
                 else:
                     logger.info("📝 Refining prompt with Gemini...")
                 response = api_client.gemini_generate(
@@ -1720,7 +1719,7 @@ Return ONLY the alt text, nothing else."""
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for image_generator module."""
     import os
     import tempfile
@@ -1728,7 +1727,8 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     from test_framework import TestSuite
     from PIL import Image
 
-    suite = TestSuite("Image Generator Tests")
+    suite = TestSuite("Image Generator Tests", "image_generator.py")
+    suite.start_suite()
 
     def test_add_ai_watermark():
         # Create a simple test image
@@ -2027,39 +2027,124 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
-    suite.add_test("Add AI watermark", test_add_ai_watermark)
-    suite.add_test("Add AI watermark small image", test_add_ai_watermark_small_image)
-    suite.add_test("Image generator init", test_image_generator_init)
-    suite.add_test("Build image prompt fallback", test_build_image_prompt_fallback)
-    suite.add_test("Ensure image directory", test_ensure_image_directory)
-    suite.add_test(
-        "HuggingFace image - no token", test_generate_huggingface_image_no_token
+    suite.run_test(
+        test_name="Add AI watermark",
+        test_func=test_add_ai_watermark,
+        test_summary="Tests Add AI watermark functionality",
+        method_description="Calls new and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test("Local image - no client", test_generate_local_image_no_client)
-    suite.add_test("Cleanup orphaned images", test_cleanup_orphaned_images)
-    suite.add_test("Get stories with images count", test_get_stories_with_images_count)
-    suite.add_test(
-        "Clean prompt - already has prefix",
-        test_clean_image_prompt_already_starts_with_photo,
+    suite.run_test(
+        test_name="Add AI watermark small image",
+        test_func=test_add_ai_watermark_small_image,
+        test_summary="Tests Add AI watermark small image functionality",
+        method_description="Calls new and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test(
-        "Clean prompt - missing prefix", test_clean_image_prompt_missing_prefix
+    suite.run_test(
+        test_name="Image generator init",
+        test_func=test_image_generator_init,
+        test_summary="Tests Image generator init functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function creates the expected object or result",
     )
-    suite.add_test(
-        "Clean prompt - removes quotes", test_clean_image_prompt_removes_quotes
+    suite.run_test(
+        test_name="Build image prompt fallback",
+        test_func=test_build_image_prompt_fallback,
+        test_summary="Tests Build image prompt fallback functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function creates the expected object or result",
     )
-    suite.add_test(
-        "Fetch source content - no links", test_fetch_source_content_no_links
+    suite.run_test(
+        test_name="Ensure image directory",
+        test_func=test_ensure_image_directory,
+        test_summary="Tests Ensure image directory functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test(
-        "Fetch source content - invalid URL", test_fetch_source_content_invalid_url
+    suite.run_test(
+        test_name="HuggingFace image - no token",
+        test_func=test_generate_huggingface_image_no_token,
+        test_summary="Tests HuggingFace image with no token scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns None as expected",
     )
-    suite.add_test(
-        "Fetch source content - structure", test_fetch_source_content_structure
+    suite.run_test(
+        test_name="Local image - no client",
+        test_func=test_generate_local_image_no_client,
+        test_summary="Tests Local image with no client scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns None as expected",
     )
-    suite.add_test("Extract technical terms", test_extract_technical_terms)
-    suite.add_test(
-        "Extract technical terms - empty", test_extract_technical_terms_empty
+    suite.run_test(
+        test_name="Cleanup orphaned images",
+        test_func=test_cleanup_orphaned_images,
+        test_summary="Tests Cleanup orphaned images functionality",
+        method_description="Calls TemporaryDirectory and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Get stories with images count",
+        test_func=test_get_stories_with_images_count,
+        test_summary="Tests Get stories with images count functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Clean prompt - already has prefix",
+        test_func=test_clean_image_prompt_already_starts_with_photo,
+        test_summary="Tests Clean prompt with already has prefix scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Clean prompt - missing prefix",
+        test_func=test_clean_image_prompt_missing_prefix,
+        test_summary="Tests Clean prompt with missing prefix scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="Clean prompt - removes quotes",
+        test_func=test_clean_image_prompt_removes_quotes,
+        test_summary="Tests Clean prompt with removes quotes scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns False or falsy value",
+    )
+    suite.run_test(
+        test_name="Fetch source content - no links",
+        test_func=test_fetch_source_content_no_links,
+        test_summary="Tests Fetch source content with no links scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns an empty collection",
+    )
+    suite.run_test(
+        test_name="Fetch source content - invalid URL",
+        test_func=test_fetch_source_content_invalid_url,
+        test_summary="Tests Fetch source content with invalid url scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function handles invalid input appropriately",
+    )
+    suite.run_test(
+        test_name="Fetch source content - structure",
+        test_func=test_fetch_source_content_structure,
+        test_summary="Tests Fetch source content with structure scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Extract technical terms",
+        test_func=test_extract_technical_terms,
+        test_summary="Tests Extract technical terms functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function correctly parses and extracts the data",
+    )
+    suite.run_test(
+        test_name="Extract technical terms - empty",
+        test_func=test_extract_technical_terms_empty,
+        test_summary="Tests Extract technical terms with empty scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
     )
 
-    return suite
+    return suite.finish_suite()

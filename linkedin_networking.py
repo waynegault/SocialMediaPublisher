@@ -21,8 +21,6 @@ from pathlib import Path
 from typing import Optional
 
 from config import Config
-from database import Database
-from config import Config
 from rate_limiter import AdaptiveRateLimiter
 
 logger = logging.getLogger(__name__)
@@ -609,7 +607,7 @@ def get_linkedin_networking() -> LinkedInNetworking:
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for linkedin_networking module."""
     from typing import TYPE_CHECKING
 
@@ -620,7 +618,8 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     import tempfile
     import os
 
-    suite = TestSuite("LinkedIn Networking Tests")
+    suite = TestSuite("LinkedIn Networking Tests", "linkedin_networking.py")
+    suite.start_suite()
 
     def test_connection_status_enum():
         """Test ConnectionStatus enum values."""
@@ -740,23 +739,96 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert n1 is n2
         _networking = None  # Cleanup
 
-    suite.add_test("ConnectionStatus enum", test_connection_status_enum)
-    suite.add_test("ConnectionRequest creation", test_connection_request_creation)
-    suite.add_test("ConnectionRequest to_dict", test_connection_request_to_dict)
-    suite.add_test("ConnectionStats creation", test_connection_stats_creation)
-    suite.add_test("Weekly connection limit", test_weekly_connection_limit)
-    suite.add_test("Daily connection limit", test_daily_connection_limit)
-    suite.add_test("WARM_INTRO_TEMPLATES defined", test_warm_intro_templates_defined)
-    suite.add_test("DEFAULT_CONNECTION_MESSAGE", test_default_connection_message)
-    suite.add_test("LinkedInNetworking creation", test_linkedin_networking_creation)
-    suite.add_test("Networking custom role", test_networking_custom_role)
-    suite.add_test("Create connection request", test_create_connection_request)
-    suite.add_test(
-        "Create connection request custom",
-        test_create_connection_request_custom_message,
+    suite.run_test(
+        test_name="ConnectionStatus enum",
+        test_func=test_connection_status_enum,
+        test_summary="Tests ConnectionStatus enum functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test(
-        "get_linkedin_networking singleton", test_get_linkedin_networking_singleton
+    suite.run_test(
+        test_name="ConnectionRequest creation",
+        test_func=test_connection_request_creation,
+        test_summary="Tests ConnectionRequest creation functionality",
+        method_description="Calls ConnectionRequest and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="ConnectionRequest to_dict",
+        test_func=test_connection_request_to_dict,
+        test_summary="Tests ConnectionRequest to dict functionality",
+        method_description="Calls ConnectionRequest and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="ConnectionStats creation",
+        test_func=test_connection_stats_creation,
+        test_summary="Tests ConnectionStats creation functionality",
+        method_description="Calls ConnectionStats and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Weekly connection limit",
+        test_func=test_weekly_connection_limit,
+        test_summary="Tests Weekly connection limit functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Daily connection limit",
+        test_func=test_daily_connection_limit,
+        test_summary="Tests Daily connection limit functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="WARM_INTRO_TEMPLATES defined",
+        test_func=test_warm_intro_templates_defined,
+        test_summary="Tests WARM INTRO TEMPLATES defined functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="DEFAULT_CONNECTION_MESSAGE",
+        test_func=test_default_connection_message,
+        test_summary="Tests DEFAULT CONNECTION MESSAGE functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function returns the correct default result",
+    )
+    suite.run_test(
+        test_name="LinkedInNetworking creation",
+        test_func=test_linkedin_networking_creation,
+        test_summary="Tests LinkedInNetworking creation functionality",
+        method_description="Calls mkdtemp and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Networking custom role",
+        test_func=test_networking_custom_role,
+        test_summary="Tests Networking custom role functionality",
+        method_description="Calls mkdtemp and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Create connection request",
+        test_func=test_create_connection_request,
+        test_summary="Tests Create connection request functionality",
+        method_description="Calls mkdtemp and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Create connection request custom",
+        test_func=test_create_connection_request_custom_message,
+        test_summary="Tests Create connection request custom functionality",
+        method_description="Calls mkdtemp and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="get_linkedin_networking singleton",
+        test_func=test_get_linkedin_networking_singleton,
+        test_summary="Tests get linkedin networking singleton functionality",
+        method_description="Calls get linkedin networking and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
 
-    return suite
+    return suite.finish_suite()

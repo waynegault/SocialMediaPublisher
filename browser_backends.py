@@ -12,9 +12,7 @@ import asyncio
 import logging
 import os
 import random
-import re
 import subprocess
-import sys
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Optional
@@ -653,3 +651,135 @@ def is_captcha_page(page_source: str) -> bool:
     ]
 
     return any(indicator in lower_source for indicator in indicators)
+
+
+# =============================================================================
+# Module Tests
+# =============================================================================
+
+
+def _create_module_tests() -> bool:
+    """Create unit tests for browser_backends module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("Browser Backends", "browser_backends.py")
+    suite.start_suite()
+
+    def test_is_captcha_page_true():
+        html = "<html><body>Please complete the captcha to continue</body></html>"
+        assert is_captcha_page(html) is True
+
+    def test_is_captcha_page_recaptcha():
+        html = '<html><body><div class="recaptcha">Verify</div></body></html>'
+        assert is_captcha_page(html) is True
+
+    def test_is_captcha_page_hcaptcha():
+        html = "<html><body>hcaptcha challenge detected</body></html>"
+        assert is_captcha_page(html) is True
+
+    def test_is_captcha_page_false():
+        html = "<html><body><h1>Welcome to LinkedIn</h1></body></html>"
+        assert is_captcha_page(html) is False
+
+    def test_is_captcha_page_empty():
+        assert is_captcha_page("") is False
+
+    def test_is_captcha_page_unusual_traffic():
+        html = "<html><body>We detected unusual traffic from your network</body></html>"
+        assert is_captcha_page(html) is True
+
+    def test_is_captcha_verify_human():
+        html = "<html><body>Please verify you are human</body></html>"
+        assert is_captcha_page(html) is True
+
+    def test_browser_backend_abstract():
+        # Ensure BrowserBackend can't be instantiated directly
+        try:
+            BrowserBackend()  # type: ignore
+            assert False, "Should have raised TypeError"
+        except TypeError:
+            pass
+
+    def test_uc_backend_class_exists():
+        assert callable(UCBrowserBackend)
+
+    def test_nodriver_backend_class_exists():
+        assert callable(NodriverBackend)
+
+    suite.run_test(
+
+        test_name="is_captcha_page - captcha",
+
+        test_func=test_is_captcha_page_true,
+
+        test_summary="is_captcha_page behavior with captcha input",
+
+        method_description="Testing is_captcha_page with captcha input using boolean return verification",
+
+        expected_outcome="Function returns True for captcha input",
+
+    )
+    suite.run_test(
+        test_name="is_captcha_page - recaptcha",
+        test_func=test_is_captcha_page_recaptcha,
+        test_summary="is_captcha_page behavior with recaptcha input",
+        method_description="Testing is_captcha_page with recaptcha input using boolean return verification",
+        expected_outcome="Function returns True for recaptcha input",
+    )
+    suite.run_test(
+        test_name="is_captcha_page - hcaptcha",
+        test_func=test_is_captcha_page_hcaptcha,
+        test_summary="is_captcha_page behavior with hcaptcha input",
+        method_description="Testing is_captcha_page with hcaptcha input using boolean return verification",
+        expected_outcome="Function returns True for hcaptcha input",
+    )
+    suite.run_test(
+        test_name="is_captcha_page - false",
+        test_func=test_is_captcha_page_false,
+        test_summary="is_captcha_page behavior with false input",
+        method_description="Testing is_captcha_page with false input using boolean return verification",
+        expected_outcome="Function returns False for false input",
+    )
+    suite.run_test(
+        test_name="is_captcha_page - empty",
+        test_func=test_is_captcha_page_empty,
+        test_summary="is_captcha_page behavior with empty input",
+        method_description="Testing is_captcha_page with empty input using boolean return verification",
+        expected_outcome="Function returns False for empty input",
+    )
+    suite.run_test(
+        test_name="is_captcha_page - unusual traffic",
+        test_func=test_is_captcha_page_unusual_traffic,
+        test_summary="is_captcha_page behavior with unusual traffic input",
+        method_description="Testing is_captcha_page with unusual traffic input using boolean return verification",
+        expected_outcome="Function returns True for unusual traffic input",
+    )
+    suite.run_test(
+        test_name="is_captcha_page - verify human",
+        test_func=test_is_captcha_verify_human,
+        test_summary="is_captcha_page behavior with verify human input",
+        method_description="Testing is_captcha_page with verify human input using boolean return verification",
+        expected_outcome="Function returns True for verify human input",
+    )
+    suite.run_test(
+        test_name="BrowserBackend abstract",
+        test_func=test_browser_backend_abstract,
+        test_summary="Verify BrowserBackend abstract produces correct results",
+        method_description="Testing BrowserBackend abstract using error handling validation",
+        expected_outcome="BrowserBackend abstract raises appropriate error for invalid input",
+    )
+    suite.run_test(
+        test_name="UCBrowserBackend class",
+        test_func=test_uc_backend_class_exists,
+        test_summary="Verify UCBrowserBackend class produces correct results",
+        method_description="Testing UCBrowserBackend class",
+        expected_outcome="All assertions pass confirming UCBrowserBackend class works correctly",
+    )
+    suite.run_test(
+        test_name="NodriverBackend class",
+        test_func=test_nodriver_backend_class_exists,
+        test_summary="Verify NodriverBackend class produces correct results",
+        method_description="Testing NodriverBackend class",
+        expected_outcome="All assertions pass confirming NodriverBackend class works correctly",
+    )
+    return suite.finish_suite()

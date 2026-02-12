@@ -37,7 +37,7 @@ import requests
 from api_client import api_client
 
 if TYPE_CHECKING:
-    from test_framework import TestSuite
+    pass
 
 
 # =============================================================================
@@ -815,14 +815,14 @@ class DigestGenerator:
 # =============================================================================
 
 
-def _create_module_tests() -> "TestSuite":
+def _create_module_tests() -> bool:
     """Create unit tests for this module."""
     import sys
 
-    sys.path.insert(0, str(Path(__file__).parent))
     from test_framework import TestSuite
 
-    suite = TestSuite("Notifications Tests")
+    suite = TestSuite("Notifications Tests", "notifications.py")
+    suite.start_suite()
 
     def test_notification_creation():
         notif = Notification(
@@ -864,7 +864,6 @@ def _create_module_tests() -> "TestSuite":
 
     def test_console_channel_send():
         import io
-        import sys
 
         channel = ConsoleChannel("[TEST]")
         notif = Notification(
@@ -941,33 +940,113 @@ def _create_module_tests() -> "TestSuite":
         summary = digest.generate_daily_summary()
         assert summary["posts_published"] == 2
 
-    suite.add_test("Notification creation", test_notification_creation)
-    suite.add_test("Format notification", test_format_notification)
-    suite.add_test(
-        "Format notification missing key", test_format_notification_missing_key
+    suite.run_test(
+        test_name="Notification creation",
+        test_func=test_notification_creation,
+        test_summary="Tests Notification creation functionality",
+        method_description="Calls Notification and verifies the result",
+        expected_outcome="Function returns False or falsy value",
     )
-    suite.add_test("Format notification unknown", test_format_notification_unknown)
-    suite.add_test("Console channel", test_console_channel)
-    suite.add_test("Console channel send", test_console_channel_send)
-    suite.add_test("File channel name", test_file_channel_name)
-    suite.add_test("Slack channel name", test_slack_channel_name)
-    suite.add_test("Slack channel test connection", test_slack_channel_test_connection)
-    suite.add_test("Email channel name", test_email_channel_name)
-    suite.add_test("Notification manager init", test_notification_manager_init)
-    suite.add_test(
-        "Notification manager add channel", test_notification_manager_add_channel
+    suite.run_test(
+        test_name="Format notification",
+        test_func=test_format_notification,
+        test_summary="Tests Format notification functionality",
+        method_description="Calls format notification and verifies the result",
+        expected_outcome="Function produces correctly formatted output",
     )
-    suite.add_test(
-        "Notification manager remove channel", test_notification_manager_remove_channel
+    suite.run_test(
+        test_name="Format notification missing key",
+        test_func=test_format_notification_missing_key,
+        test_summary="Tests Format notification missing key functionality",
+        method_description="Calls format notification and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
     )
-    suite.add_test(
-        "Notification manager test channels", test_notification_manager_test_channels
+    suite.run_test(
+        test_name="Format notification unknown",
+        test_func=test_format_notification_unknown,
+        test_summary="Tests Format notification unknown functionality",
+        method_description="Calls format notification and verifies the result",
+        expected_outcome="Function produces correctly formatted output",
     )
-    suite.add_test("Digest generator", test_digest_generator)
+    suite.run_test(
+        test_name="Console channel",
+        test_func=test_console_channel,
+        test_summary="Tests Console channel functionality",
+        method_description="Calls ConsoleChannel and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Console channel send",
+        test_func=test_console_channel_send,
+        test_summary="Tests Console channel send functionality",
+        method_description="Calls ConsoleChannel and verifies the result",
+        expected_outcome="Function returns True",
+    )
+    suite.run_test(
+        test_name="File channel name",
+        test_func=test_file_channel_name,
+        test_summary="Tests File channel name functionality",
+        method_description="Calls FileChannel and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Slack channel name",
+        test_func=test_slack_channel_name,
+        test_summary="Tests Slack channel name functionality",
+        method_description="Calls SlackChannel and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Slack channel test connection",
+        test_func=test_slack_channel_test_connection,
+        test_summary="Tests Slack channel test connection functionality",
+        method_description="Calls SlackChannel and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Email channel name",
+        test_func=test_email_channel_name,
+        test_summary="Tests Email channel name functionality",
+        method_description="Calls EmailChannel and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Notification manager init",
+        test_func=test_notification_manager_init,
+        test_summary="Tests Notification manager init functionality",
+        method_description="Calls NotificationManager and verifies the result",
+        expected_outcome="Function returns an empty collection",
+    )
+    suite.run_test(
+        test_name="Notification manager add channel",
+        test_func=test_notification_manager_add_channel,
+        test_summary="Tests Notification manager add channel functionality",
+        method_description="Calls NotificationManager and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Notification manager remove channel",
+        test_func=test_notification_manager_remove_channel,
+        test_summary="Tests Notification manager remove channel functionality",
+        method_description="Calls NotificationManager and verifies the result",
+        expected_outcome="Function removes the target correctly",
+    )
+    suite.run_test(
+        test_name="Notification manager test channels",
+        test_func=test_notification_manager_test_channels,
+        test_summary="Tests Notification manager test channels functionality",
+        method_description="Calls NotificationManager and verifies the result",
+        expected_outcome="Function returns True",
+    )
+    suite.run_test(
+        test_name="Digest generator",
+        test_func=test_digest_generator,
+        test_summary="Tests Digest generator functionality",
+        method_description="Calls NotificationManager and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
-
-
+    return suite.finish_suite()
 if __name__ == "__main__":
     suite = _create_module_tests()
     suite.run()

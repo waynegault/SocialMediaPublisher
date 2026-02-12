@@ -838,7 +838,7 @@ api_client = RateLimitedAPIClient()
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for api_client module."""
     from typing import TYPE_CHECKING
 
@@ -847,7 +847,8 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
 
     from test_framework import TestSuite
 
-    suite = TestSuite("API Client Tests")
+    suite = TestSuite("API Client Tests", "api_client.py")
+    suite.start_suite()
 
     def test_api_client_creation():
         """Test RateLimitedAPIClient creation."""
@@ -926,18 +927,96 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         client = RateLimitedAPIClient()
         client.log_metrics()  # Should not raise
 
-    suite.add_test("API client creation", test_api_client_creation)
-    suite.add_test("Parse retry-after found", test_parse_retry_after_found)
-    suite.add_test("Parse retry-after not found", test_parse_retry_after_not_found)
-    suite.add_test("Is rate limit error - 429", test_is_rate_limit_error_429)
-    suite.add_test("Is rate limit error - quota", test_is_rate_limit_error_quota)
-    suite.add_test("Is not rate limit error", test_is_rate_limit_error_not_rate_limit)
-    suite.add_test("Get all metrics", test_get_all_metrics)
-    suite.add_test("Gemini limiter config", test_gemini_limiter_config)
-    suite.add_test("Imagen limiter config", test_imagen_limiter_config)
-    suite.add_test("LinkedIn limiter config", test_linkedin_limiter_config)
-    suite.add_test("HTTP limiter config", test_http_limiter_config)
-    suite.add_test("Global api_client exists", test_global_api_client_exists)
-    suite.add_test("Log metrics no error", test_log_metrics_no_error)
+    suite.run_test(
+        test_name="API client creation",
+        test_func=test_api_client_creation,
+        test_summary="Tests API client creation functionality",
+        method_description="Calls RateLimitedAPIClient and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Parse retry-after found",
+        test_func=test_parse_retry_after_found,
+        test_summary="Tests Parse retry-after found functionality",
+        method_description="Calls RateLimitedAPIClient and verifies the result",
+        expected_outcome="Function returns the expected value",
+    )
+    suite.run_test(
+        test_name="Parse retry-after not found",
+        test_func=test_parse_retry_after_not_found,
+        test_summary="Tests Parse retry-after not found functionality",
+        method_description="Calls RateLimitedAPIClient and verifies the result",
+        expected_outcome="Function returns the expected value",
+    )
+    suite.run_test(
+        test_name="Is rate limit error - 429",
+        test_func=test_is_rate_limit_error_429,
+        test_summary="Tests Is rate limit error with 429 scenario",
+        method_description="Calls RateLimitedAPIClient and verifies the result",
+        expected_outcome="Function handles invalid input appropriately",
+    )
+    suite.run_test(
+        test_name="Is rate limit error - quota",
+        test_func=test_is_rate_limit_error_quota,
+        test_summary="Tests Is rate limit error with quota scenario",
+        method_description="Calls RateLimitedAPIClient and verifies the result",
+        expected_outcome="Function handles invalid input appropriately",
+    )
+    suite.run_test(
+        test_name="Is not rate limit error",
+        test_func=test_is_rate_limit_error_not_rate_limit,
+        test_summary="Tests Is not rate limit error functionality",
+        method_description="Calls RateLimitedAPIClient and verifies the result",
+        expected_outcome="Function handles invalid input appropriately",
+    )
+    suite.run_test(
+        test_name="Get all metrics",
+        test_func=test_get_all_metrics,
+        test_summary="Tests Get all metrics functionality",
+        method_description="Calls RateLimitedAPIClient and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Gemini limiter config",
+        test_func=test_gemini_limiter_config,
+        test_summary="Tests Gemini limiter config functionality",
+        method_description="Calls RateLimitedAPIClient and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Imagen limiter config",
+        test_func=test_imagen_limiter_config,
+        test_summary="Tests Imagen limiter config functionality",
+        method_description="Calls RateLimitedAPIClient and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="LinkedIn limiter config",
+        test_func=test_linkedin_limiter_config,
+        test_summary="Tests LinkedIn limiter config functionality",
+        method_description="Calls RateLimitedAPIClient and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="HTTP limiter config",
+        test_func=test_http_limiter_config,
+        test_summary="Tests HTTP limiter config functionality",
+        method_description="Calls RateLimitedAPIClient and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Global api_client exists",
+        test_func=test_global_api_client_exists,
+        test_summary="Tests Global api client exists functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Log metrics no error",
+        test_func=test_log_metrics_no_error,
+        test_summary="Tests Log metrics no error functionality",
+        method_description="Calls RateLimitedAPIClient and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
 
-    return suite
+    return suite.finish_suite()

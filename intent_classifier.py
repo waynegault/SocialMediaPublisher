@@ -16,7 +16,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -674,7 +674,7 @@ def get_intent_classifier() -> IntentClassifier:
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for intent_classifier module."""
     from typing import TYPE_CHECKING
 
@@ -683,7 +683,8 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
 
     from test_framework import TestSuite
 
-    suite = TestSuite("Intent Classifier Tests")
+    suite = TestSuite("Intent Classifier Tests", "intent_classifier.py")
+    suite.start_suite()
 
     def test_story_intent_enum():
         """Test StoryIntent enum values."""
@@ -812,28 +813,96 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert c1 is c2
         _intent_classifier = None  # Cleanup
 
-    suite.add_test("StoryIntent enum", test_story_intent_enum)
-    suite.add_test("IntentScore creation", test_intent_score_creation)
-    suite.add_test("ClassificationResult creation", test_classification_result_creation)
-    suite.add_test(
-        "ClassificationResult top_intents", test_classification_result_top_intents
+    suite.run_test(
+        test_name="StoryIntent enum",
+        test_func=test_story_intent_enum,
+        test_summary="Tests StoryIntent enum functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test("INTENT_KEYWORDS defined", test_intent_keywords_defined)
-    suite.add_test(
-        "CAREER_ALIGNMENT_WEIGHTS defined", test_career_alignment_weights_defined
+    suite.run_test(
+        test_name="IntentScore creation",
+        test_func=test_intent_score_creation,
+        test_summary="Tests IntentScore creation functionality",
+        method_description="Calls IntentScore and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test("IntentClassifier creation", test_intent_classifier_creation)
-    suite.add_test("Classifier skill showcase", test_classifier_skill_showcase)
-    suite.add_test("Classifier negative content", test_classifier_negative_content)
-    suite.add_test("Classifier neutral content", test_classifier_neutral_content)
-    suite.add_test(
-        "classify_story_intent function", test_classify_story_intent_function
+    suite.run_test(
+        test_name="ClassificationResult creation",
+        test_func=test_classification_result_creation,
+        test_summary="Tests ClassificationResult creation functionality",
+        method_description="Calls ClassificationResult and verifies the result",
+        expected_outcome="Function returns None as expected",
     )
-    suite.add_test(
-        "filter_career_relevant_stories", test_filter_career_relevant_stories
+    suite.run_test(
+        test_name="ClassificationResult top_intents",
+        test_func=test_classification_result_top_intents,
+        test_summary="Tests ClassificationResult top intents functionality",
+        method_description="Calls ClassificationResult and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test(
-        "get_intent_classifier singleton", test_get_intent_classifier_singleton
+    suite.run_test(
+        test_name="INTENT_KEYWORDS defined",
+        test_func=test_intent_keywords_defined,
+        test_summary="Tests INTENT KEYWORDS defined functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="CAREER_ALIGNMENT_WEIGHTS defined",
+        test_func=test_career_alignment_weights_defined,
+        test_summary="Tests CAREER ALIGNMENT WEIGHTS defined functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="IntentClassifier creation",
+        test_func=test_intent_classifier_creation,
+        test_summary="Tests IntentClassifier creation functionality",
+        method_description="Calls IntentClassifier and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Classifier skill showcase",
+        test_func=test_classifier_skill_showcase,
+        test_summary="Tests Classifier skill showcase functionality",
+        method_description="Calls IntentClassifier and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Classifier negative content",
+        test_func=test_classifier_negative_content,
+        test_summary="Tests Classifier negative content functionality",
+        method_description="Calls IntentClassifier and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Classifier neutral content",
+        test_func=test_classifier_neutral_content,
+        test_summary="Tests Classifier neutral content functionality",
+        method_description="Calls IntentClassifier and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="classify_story_intent function",
+        test_func=test_classify_story_intent_function,
+        test_summary="Tests classify story intent function functionality",
+        method_description="Calls classify story intent and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="filter_career_relevant_stories",
+        test_func=test_filter_career_relevant_stories,
+        test_summary="Tests filter career relevant stories functionality",
+        method_description="Calls filter career relevant stories and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="get_intent_classifier singleton",
+        test_func=test_get_intent_classifier_singleton,
+        test_summary="Tests get intent classifier singleton functionality",
+        method_description="Calls get intent classifier and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
 
-    return suite
+    return suite.finish_suite()

@@ -26,7 +26,7 @@ API Documentation: https://rapidapi.com/freshdata-freshdata-default/api/fresh-li
 import logging
 import hashlib
 import time
-from typing import Optional, List, Dict, Any, Callable
+from typing import Optional, List, Dict, Any
 
 import requests
 

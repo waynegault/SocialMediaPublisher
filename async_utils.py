@@ -908,11 +908,12 @@ async def retry_async(
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for async_utils module."""
     from test_framework import TestSuite
 
-    suite = TestSuite("Async Utilities Tests")
+    suite = TestSuite("Async Utilities Tests", "async_utils.py")
+    suite.start_suite()
 
     def test_run_async():
         """Test sync wrapper for async code."""
@@ -990,11 +991,47 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         error_response = AsyncHTTPResponse(status=500, headers={}, text="")
         assert error_response.ok is False
 
-    suite.add_test("run_async wrapper", test_run_async)
-    suite.add_test("async_to_sync decorator", test_async_to_sync_decorator)
-    suite.add_test("sync_to_async decorator", test_sync_to_async_decorator)
-    suite.add_test("ConcurrentProcessor", test_concurrent_processor)
-    suite.add_test("ProcessingResult dataclass", test_processing_result)
-    suite.add_test("AsyncHTTPResponse dataclass", test_async_http_response)
+    suite.run_test(
+        test_name="run_async wrapper",
+        test_func=test_run_async,
+        test_summary="Tests run async wrapper functionality",
+        method_description="Calls async func and verifies the result",
+        expected_outcome="Function returns the expected value",
+    )
+    suite.run_test(
+        test_name="async_to_sync decorator",
+        test_func=test_async_to_sync_decorator,
+        test_summary="Tests async to sync decorator functionality",
+        method_description="Calls async add and verifies the result",
+        expected_outcome="Function returns the expected value",
+    )
+    suite.run_test(
+        test_name="sync_to_async decorator",
+        test_func=test_sync_to_async_decorator,
+        test_summary="Tests sync to async decorator functionality",
+        method_description="Calls sync multiply and verifies the result",
+        expected_outcome="Function returns the expected value",
+    )
+    suite.run_test(
+        test_name="ConcurrentProcessor",
+        test_func=test_concurrent_processor,
+        test_summary="Tests ConcurrentProcessor functionality",
+        method_description="Calls process item and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="ProcessingResult dataclass",
+        test_func=test_processing_result,
+        test_summary="Tests ProcessingResult dataclass functionality",
+        method_description="Calls ProcessingResult and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="AsyncHTTPResponse dataclass",
+        test_func=test_async_http_response,
+        test_summary="Tests AsyncHTTPResponse dataclass functionality",
+        method_description="Calls AsyncHTTPResponse and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
+    return suite.finish_suite()

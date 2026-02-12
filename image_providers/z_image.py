@@ -103,7 +103,7 @@ class ZImageProvider(ImageProvider):
         try:
             import torch
             if self.device == "cuda" and torch.cuda.is_available():
-                vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                _vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
                 # No auto-adjustment needed — use official recommended guidance_scale=4.0
         except Exception:
             pass  # Silently ignore if can't detect
@@ -174,6 +174,7 @@ class ZImageProvider(ImageProvider):
         One-time cost: ~8-10s for pinning ~11.7GB of transformer + text_encoder weights.
         """
         try:
+            import torch
             from accelerate.hooks import AlignDevicesHook
 
             pinned_total = 0

@@ -142,7 +142,7 @@ class Scheduler:
             # Spread stories evenly across the publishing window
             slot_duration = daily_hours / max(max_per_day, 1)
             slot_start = start_hour + (stories_on_current_day * slot_duration)
-            slot_end = slot_start + slot_duration
+            _slot_end = slot_start + slot_duration
 
             # Pick a random time within this slot
             random_minutes = random.randint(0, int(slot_duration * 60) - 1)
@@ -242,14 +242,15 @@ class Scheduler:
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for scheduler module."""
     import os
     import tempfile
 
     from test_framework import TestSuite
 
-    suite = TestSuite("Scheduler Tests")
+    suite = TestSuite("Scheduler Tests", "scheduler.py")
+    suite.start_suite()
 
     def test_scheduler_init():
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -330,10 +331,40 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
-    suite.add_test("Scheduler init", test_scheduler_init)
-    suite.add_test("Get next valid start time", test_get_next_valid_start_time)
-    suite.add_test("Adjust to valid hours", test_adjust_to_valid_hours)
-    suite.add_test("Calculate schedule times", test_calculate_schedule_times)
-    suite.add_test("Get schedule summary empty", test_get_schedule_summary_empty)
+    suite.run_test(
+        test_name="Scheduler init",
+        test_func=test_scheduler_init,
+        test_summary="Tests Scheduler init functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Get next valid start time",
+        test_func=test_get_next_valid_start_time,
+        test_summary="Tests Get next valid start time functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected successful result",
+    )
+    suite.run_test(
+        test_name="Adjust to valid hours",
+        test_func=test_adjust_to_valid_hours,
+        test_summary="Tests Adjust to valid hours functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected successful result",
+    )
+    suite.run_test(
+        test_name="Calculate schedule times",
+        test_func=test_calculate_schedule_times,
+        test_summary="Tests Calculate schedule times functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Get schedule summary empty",
+        test_func=test_get_schedule_summary_empty,
+        test_summary="Tests Get schedule summary empty functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
 
-    return suite
+    return suite.finish_suite()

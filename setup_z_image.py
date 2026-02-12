@@ -61,8 +61,9 @@ def check_diffusers():
     """Check diffusers installation."""
     try:
         # ZImagePipeline is new in diffusers, type stubs may not have it
-        from diffusers import ZImagePipeline  # type: ignore[attr-defined]  # noqa: F401
+        from diffusers import ZImagePipeline as _Pipeline  # type: ignore[attr-defined]
 
+        _ = _Pipeline  # Verify import succeeded
         print("✓ diffusers installed with ZImagePipeline support")
         return True
     except ImportError as e:

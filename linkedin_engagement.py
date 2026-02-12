@@ -12,7 +12,6 @@ Features:
 TASK 2.3: Comment Engagement Automation
 """
 
-import hashlib
 import json
 import logging
 import random
@@ -693,7 +692,7 @@ def get_linkedin_engagement() -> LinkedInEngagement:
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for linkedin_engagement module."""
     from typing import TYPE_CHECKING
 
@@ -704,7 +703,8 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
     import tempfile
     import os
 
-    suite = TestSuite("LinkedIn Engagement Tests")
+    suite = TestSuite("LinkedIn Engagement Tests", "linkedin_engagement.py")
+    suite.start_suite()
 
     def test_engagement_type_enum():
         """Test EngagementType enum values."""
@@ -831,22 +831,110 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert e1 is e2
         _engagement = None  # Cleanup
 
-    suite.add_test("EngagementType enum", test_engagement_type_enum)
-    suite.add_test("CommentStatus enum", test_comment_status_enum)
-    suite.add_test("TargetPost creation", test_target_post_creation)
-    suite.add_test("EngagementAction creation", test_engagement_action_creation)
-    suite.add_test("EngagementAction to_dict", test_engagement_action_to_dict)
-    suite.add_test("EngagementStats creation", test_engagement_stats_creation)
-    suite.add_test("COMMENT_TEMPLATES defined", test_comment_templates_defined)
-    suite.add_test("SPAM_PATTERNS defined", test_spam_patterns_defined)
-    suite.add_test("Daily comment limit", test_daily_comment_limit)
-    suite.add_test("Hourly comment limit", test_hourly_comment_limit)
-    suite.add_test("Min comment interval", test_min_comment_interval)
-    suite.add_test("LinkedInEngagement creation", test_linkedin_engagement_creation)
-    suite.add_test("Engagement default keywords", test_engagement_default_keywords)
-    suite.add_test("Engagement custom keywords", test_engagement_custom_keywords)
-    suite.add_test(
-        "get_linkedin_engagement singleton", test_get_linkedin_engagement_singleton
+    suite.run_test(
+        test_name="EngagementType enum",
+        test_func=test_engagement_type_enum,
+        test_summary="Tests EngagementType enum functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="CommentStatus enum",
+        test_func=test_comment_status_enum,
+        test_summary="Tests CommentStatus enum functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="TargetPost creation",
+        test_func=test_target_post_creation,
+        test_summary="Tests TargetPost creation functionality",
+        method_description="Calls TargetPost and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="EngagementAction creation",
+        test_func=test_engagement_action_creation,
+        test_summary="Tests EngagementAction creation functionality",
+        method_description="Calls EngagementAction and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="EngagementAction to_dict",
+        test_func=test_engagement_action_to_dict,
+        test_summary="Tests EngagementAction to dict functionality",
+        method_description="Calls EngagementAction and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="EngagementStats creation",
+        test_func=test_engagement_stats_creation,
+        test_summary="Tests EngagementStats creation functionality",
+        method_description="Calls EngagementStats and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="COMMENT_TEMPLATES defined",
+        test_func=test_comment_templates_defined,
+        test_summary="Tests COMMENT TEMPLATES defined functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="SPAM_PATTERNS defined",
+        test_func=test_spam_patterns_defined,
+        test_summary="Tests SPAM PATTERNS defined functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Daily comment limit",
+        test_func=test_daily_comment_limit,
+        test_summary="Tests Daily comment limit functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Hourly comment limit",
+        test_func=test_hourly_comment_limit,
+        test_summary="Tests Hourly comment limit functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Min comment interval",
+        test_func=test_min_comment_interval,
+        test_summary="Tests Min comment interval functionality",
+        method_description="Invokes the function under test and validates behavior",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="LinkedInEngagement creation",
+        test_func=test_linkedin_engagement_creation,
+        test_summary="Tests LinkedInEngagement creation functionality",
+        method_description="Calls mkdtemp and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Engagement default keywords",
+        test_func=test_engagement_default_keywords,
+        test_summary="Tests Engagement default keywords functionality",
+        method_description="Calls mkdtemp and verifies the result",
+        expected_outcome="Function returns the correct default result",
+    )
+    suite.run_test(
+        test_name="Engagement custom keywords",
+        test_func=test_engagement_custom_keywords,
+        test_summary="Tests Engagement custom keywords functionality",
+        method_description="Calls mkdtemp and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="get_linkedin_engagement singleton",
+        test_func=test_get_linkedin_engagement_singleton,
+        test_summary="Tests get linkedin engagement singleton functionality",
+        method_description="Calls get linkedin engagement and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
 
-    return suite
+    return suite.finish_suite()

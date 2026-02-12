@@ -125,10 +125,10 @@ def check_z_image_available() -> dict[str, object]:
 
     # Check diffusers with ZImagePipeline
     try:
-        from diffusers import ZImagePipeline  # type: ignore[attr-defined]
+        from diffusers import ZImagePipeline as _ZImagePipeline  # type: ignore[attr-defined]
 
         status["diffusers_installed"] = True
-        status["z_image_pipeline_available"] = True
+        status["z_image_pipeline_available"] = _ZImagePipeline is not None
     except ImportError as e:
         status["diffusers_installed"] = False
         if "ZImagePipeline" in str(e) or "cannot import name" in str(e):
@@ -190,7 +190,7 @@ def offer_z_image_install(interactive: bool = True) -> bool:
     print("\n" + "=" * 60)
     print("🎨 Z-Image Local Image Generation")
     print("=" * 60)
-    print(f"\nZ-Image provides high-quality local image generation.")
+    print("\nZ-Image provides high-quality local image generation.")
     print(f"Status: {'✓ Available' if status['available'] else '✗ Not configured'}")
 
     if status["cuda_available"]:
@@ -199,7 +199,7 @@ def offer_z_image_install(interactive: bool = True) -> bool:
         print("GPU: No CUDA GPU detected")
 
     if missing and isinstance(missing, list):
-        print(f"\nMissing components:")
+        print("\nMissing components:")
         for item in missing:
             print(f"  • {item}")
 

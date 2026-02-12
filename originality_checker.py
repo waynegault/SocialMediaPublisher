@@ -9,7 +9,6 @@ This module provides:
 
 import logging
 import re
-from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -478,11 +477,12 @@ RECOMMENDATION: [one sentence]"""
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for originality_checker module."""
     from test_framework import TestSuite
 
-    suite = TestSuite("Originality Checker Tests")
+    suite = TestSuite("Originality Checker Tests", "originality_checker.py")
+    suite.start_suite()
 
     def test_word_similarity_identical():
         checker = OriginalityChecker()
@@ -646,22 +646,110 @@ RECOMMENDATION: Rephrase the first paragraph."""
         assert len(result["issues"]) == 2
         assert "verbatim copying" in result["issues"]
 
-    suite.add_test("Word similarity - identical", test_word_similarity_identical)
-    suite.add_test("Word similarity - different", test_word_similarity_different)
-    suite.add_test("Word similarity - partial", test_word_similarity_partial)
-    suite.add_test("N-gram overlap - identical", test_ngram_overlap_identical)
-    suite.add_test("N-gram overlap - different", test_ngram_overlap_different)
-    suite.add_test("N-gram extraction", test_ngram_extraction)
-    suite.add_test("Check originality - original", test_check_originality_original)
-    suite.add_test("Check originality - copied", test_check_originality_copied)
-    suite.add_test("Check originality - empty", test_check_originality_empty)
-    suite.add_test("Check story originality", test_check_story_originality)
-    suite.add_test("Format citation", test_format_citation)
-    suite.add_test("Format citation - no title", test_format_citation_no_title)
-    suite.add_test("Suggest citations", test_suggest_citations)
-    suite.add_test("Parse LLM assessment", test_parse_llm_assessment)
-    suite.add_test(
-        "Parse LLM assessment - with issues", test_parse_llm_assessment_with_issues
+    suite.run_test(
+        test_name="Word similarity - identical",
+        test_func=test_word_similarity_identical,
+        test_summary="Tests Word similarity with identical scenario",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Word similarity - different",
+        test_func=test_word_similarity_different,
+        test_summary="Tests Word similarity with different scenario",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Word similarity - partial",
+        test_func=test_word_similarity_partial,
+        test_summary="Tests Word similarity with partial scenario",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="N-gram overlap - identical",
+        test_func=test_ngram_overlap_identical,
+        test_summary="Tests N-gram overlap with identical scenario",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="N-gram overlap - different",
+        test_func=test_ngram_overlap_different,
+        test_summary="Tests N-gram overlap with different scenario",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="N-gram extraction",
+        test_func=test_ngram_extraction,
+        test_summary="Tests N-gram extraction functionality",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function correctly parses and extracts the data",
+    )
+    suite.run_test(
+        test_name="Check originality - original",
+        test_func=test_check_originality_original,
+        test_summary="Tests Check originality with original scenario",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Check originality - copied",
+        test_func=test_check_originality_copied,
+        test_summary="Tests Check originality with copied scenario",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function returns False or falsy value",
+    )
+    suite.run_test(
+        test_name="Check originality - empty",
+        test_func=test_check_originality_empty,
+        test_summary="Tests Check originality with empty scenario",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function returns True",
+    )
+    suite.run_test(
+        test_name="Check story originality",
+        test_func=test_check_story_originality,
+        test_summary="Tests Check story originality functionality",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Format citation",
+        test_func=test_format_citation,
+        test_summary="Tests Format citation functionality",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function produces correctly formatted output",
+    )
+    suite.run_test(
+        test_name="Format citation - no title",
+        test_func=test_format_citation_no_title,
+        test_summary="Tests Format citation with no title scenario",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="Suggest citations",
+        test_func=test_suggest_citations,
+        test_summary="Tests Suggest citations functionality",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Parse LLM assessment",
+        test_func=test_parse_llm_assessment,
+        test_summary="Tests Parse LLM assessment functionality",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function returns True",
+    )
+    suite.run_test(
+        test_name="Parse LLM assessment - with issues",
+        test_func=test_parse_llm_assessment_with_issues,
+        test_summary="Tests Parse LLM assessment with with issues scenario",
+        method_description="Calls OriginalityChecker and verifies the result",
+        expected_outcome="Function correctly parses and extracts the data",
     )
 
-    return suite
+    return suite.finish_suite()

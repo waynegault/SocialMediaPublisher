@@ -686,11 +686,12 @@ def format_test_results(summary: TestSummary) -> str:
 # =============================================================================
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for ab_testing module."""
     from test_framework import TestSuite
 
-    suite = TestSuite("A/B Testing Tests")
+    suite = TestSuite("A/B Testing Tests", "ab_testing.py")
+    suite.start_suite()
 
     def test_variant_creation():
         variant = Variant(
@@ -891,22 +892,110 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         assert "v1" in formatted
         assert "75.0%" in formatted
 
-    suite.add_test("Variant creation", test_variant_creation)
-    suite.add_test("Variant result engagement", test_variant_result_engagement)
-    suite.add_test(
-        "Variant result zero impressions", test_variant_result_zero_impressions
+    suite.run_test(
+        test_name="Variant creation",
+        test_func=test_variant_creation,
+        test_summary="Tests Variant creation functionality",
+        method_description="Calls Variant and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
     )
-    suite.add_test("AB test creation", test_ab_test_creation)
-    suite.add_test("AB test min variants", test_ab_test_min_variants)
-    suite.add_test("Get variant deterministic", test_get_variant_deterministic)
-    suite.add_test("Get variant different content", test_get_variant_different_content)
-    suite.add_test("Record metrics", test_record_metrics)
-    suite.add_test("Get test summary", test_get_test_summary)
-    suite.add_test("Declare winner", test_declare_winner)
-    suite.add_test("Get active tests", test_get_active_tests)
-    suite.add_test("Create headline test", test_create_headline_test)
-    suite.add_test("Create CTA test", test_create_cta_test)
-    suite.add_test("Create emoji test", test_create_emoji_test)
-    suite.add_test("Format test results", test_format_test_results)
+    suite.run_test(
+        test_name="Variant result engagement",
+        test_func=test_variant_result_engagement,
+        test_summary="Tests Variant result engagement functionality",
+        method_description="Calls VariantResult and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Variant result zero impressions",
+        test_func=test_variant_result_zero_impressions,
+        test_summary="Tests Variant result zero impressions functionality",
+        method_description="Calls VariantResult and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="AB test creation",
+        test_func=test_ab_test_creation,
+        test_summary="Tests AB test creation functionality",
+        method_description="Calls ABTestManager and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="AB test min variants",
+        test_func=test_ab_test_min_variants,
+        test_summary="Tests AB test min variants functionality",
+        method_description="Calls ABTest and verifies the result",
+        expected_outcome="Function raises the expected error or exception",
+    )
+    suite.run_test(
+        test_name="Get variant deterministic",
+        test_func=test_get_variant_deterministic,
+        test_summary="Tests Get variant deterministic functionality",
+        method_description="Calls ABTestManager and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Get variant different content",
+        test_func=test_get_variant_different_content,
+        test_summary="Tests Get variant different content functionality",
+        method_description="Calls ABTestManager and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Record metrics",
+        test_func=test_record_metrics,
+        test_summary="Tests Record metrics functionality",
+        method_description="Calls ABTestManager and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Get test summary",
+        test_func=test_get_test_summary,
+        test_summary="Tests Get test summary functionality",
+        method_description="Calls ABTestManager and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Declare winner",
+        test_func=test_declare_winner,
+        test_summary="Tests Declare winner functionality",
+        method_description="Calls ABTestManager and verifies the result",
+        expected_outcome="Function returns True",
+    )
+    suite.run_test(
+        test_name="Get active tests",
+        test_func=test_get_active_tests,
+        test_summary="Tests Get active tests functionality",
+        method_description="Calls ABTestManager and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Create headline test",
+        test_func=test_create_headline_test,
+        test_summary="Tests Create headline test functionality",
+        method_description="Calls ABTestManager and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Create CTA test",
+        test_func=test_create_cta_test,
+        test_summary="Tests Create CTA test functionality",
+        method_description="Calls ABTestManager and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Create emoji test",
+        test_func=test_create_emoji_test,
+        test_summary="Tests Create emoji test functionality",
+        method_description="Calls ABTestManager and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Format test results",
+        test_func=test_format_test_results,
+        test_summary="Tests Format test results functionality",
+        method_description="Calls TestSummary and verifies the result",
+        expected_outcome="Function produces correctly formatted output",
+    )
 
-    return suite
+    return suite.finish_suite()

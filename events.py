@@ -24,13 +24,11 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 import time
 from abc import ABC
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -42,7 +40,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 if TYPE_CHECKING:
-    from test_framework import TestSuite
+    pass
 
 
 logger = logging.getLogger(__name__)
@@ -708,12 +706,12 @@ def on(
 # =============================================================================
 
 
-def _create_module_tests() -> "TestSuite":
+def _create_module_tests() -> bool:
     """Create unit tests for this module."""
-    sys.path.insert(0, str(Path(__file__).parent))
     from test_framework import TestSuite
 
-    suite = TestSuite("Event System")
+    suite = TestSuite("Event System", "events.py")
+    suite.start_suite()
 
     def test_event_base():
         event = StoryDiscovered(title="Test", url="http://test.com")
@@ -842,24 +840,106 @@ def _create_module_tests() -> "TestSuite":
         assert counts.get("StoryDiscovered") == 2
         assert counts.get("StoryPublished") == 1
 
-    suite.add_test("Event base class", test_event_base)
-    suite.add_test("Event timestamp", test_event_timestamp)
-    suite.add_test("Event bus init", test_event_bus_init)
-    suite.add_test("Event bus subscribe", test_event_bus_subscribe)
-    suite.add_test("Event bus emit", test_event_bus_emit)
-    suite.add_test("Event bus decorator", test_event_bus_decorator)
-    suite.add_test("Event bus priority", test_event_bus_priority)
-    suite.add_test("Event bus filter", test_event_bus_filter)
-    suite.add_test("Event bus unsubscribe", test_event_bus_unsubscribe)
-    suite.add_test("Event bus history", test_event_bus_history)
-    suite.add_test("Event bus pause", test_event_bus_pause)
-    suite.add_test("Event bus global handler", test_event_bus_global_handler)
-    suite.add_test("Webhook config", test_webhook_config)
-    suite.add_test("Event aggregator", test_event_aggregator)
+    suite.run_test(
+        test_name="Event base class",
+        test_func=test_event_base,
+        test_summary="Tests Event base class functionality",
+        method_description="Calls StoryDiscovered and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Event timestamp",
+        test_func=test_event_timestamp,
+        test_summary="Tests Event timestamp functionality",
+        method_description="Calls StoryPublished and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Event bus init",
+        test_func=test_event_bus_init,
+        test_summary="Tests Event bus init functionality",
+        method_description="Calls EventBus and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Event bus subscribe",
+        test_func=test_event_bus_subscribe,
+        test_summary="Tests Event bus subscribe functionality",
+        method_description="Calls EventBus and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Event bus emit",
+        test_func=test_event_bus_emit,
+        test_summary="Tests Event bus emit functionality",
+        method_description="Calls EventBus and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Event bus decorator",
+        test_func=test_event_bus_decorator,
+        test_summary="Tests Event bus decorator functionality",
+        method_description="Calls EventBus and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Event bus priority",
+        test_func=test_event_bus_priority,
+        test_summary="Tests Event bus priority functionality",
+        method_description="Calls EventBus and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Event bus filter",
+        test_func=test_event_bus_filter,
+        test_summary="Tests Event bus filter functionality",
+        method_description="Calls EventBus and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Event bus unsubscribe",
+        test_func=test_event_bus_unsubscribe,
+        test_summary="Tests Event bus unsubscribe functionality",
+        method_description="Calls EventBus and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Event bus history",
+        test_func=test_event_bus_history,
+        test_summary="Tests Event bus history functionality",
+        method_description="Calls EventBus and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Event bus pause",
+        test_func=test_event_bus_pause,
+        test_summary="Tests Event bus pause functionality",
+        method_description="Calls EventBus and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Event bus global handler",
+        test_func=test_event_bus_global_handler,
+        test_summary="Tests Event bus global handler functionality",
+        method_description="Calls EventBus and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Webhook config",
+        test_func=test_webhook_config,
+        test_summary="Tests Webhook config functionality",
+        method_description="Calls WebhookConfig and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Event aggregator",
+        test_func=test_event_aggregator,
+        test_summary="Tests Event aggregator functionality",
+        method_description="Calls EventBus and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
-
-
+    return suite.finish_suite()
 if __name__ == "__main__":
     # Demo usage
     print("Event-Driven Architecture Demo")

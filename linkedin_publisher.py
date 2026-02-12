@@ -10,7 +10,6 @@ from urllib.parse import quote
 
 from config import Config
 from database import Database, Story
-from opportunity_messages import get_random_opportunity_message
 from api_client import api_client
 from url_utils import extract_linkedin_public_id
 
@@ -215,10 +214,7 @@ class LinkedInPublisher:
             with open(image_path, "rb") as image_file:
                 image_data = image_file.read()
 
-            upload_headers = {
-                "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
-                "Content-Type": "application/octet-stream",
-            }
+            upload_headers = {**self._get_headers(), "Content-Type": "application/octet-stream"}
 
             # Use centralized client for rate limiting and retry logic
             upload_response = api_client.http_put(
@@ -832,11 +828,7 @@ class LinkedInPublisher:
             # Use a known valid version (LinkedIn's Marketing APIs)
             version = "202501"
 
-            headers = {
-                "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
-                "X-Restli-Protocol-Version": "2.0.0",
-                "Linkedin-Version": version,
-            }
+            headers = {**self._get_headers(), "Linkedin-Version": version}
 
             response = api_client.linkedin_request(
                 method="GET",
@@ -1000,11 +992,7 @@ class LinkedInPublisher:
 
             # LinkedIn REST API version header
             version = "202501"
-            headers = {
-                "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
-                "X-Restli-Protocol-Version": "2.0.0",
-                "Linkedin-Version": version,
-            }
+            headers = {**self._get_headers(), "Linkedin-Version": version}
 
             response = api_client.linkedin_request(
                 method="GET",
@@ -1068,10 +1056,7 @@ class LinkedInPublisher:
 
             url = f"https://api.linkedin.com/v2/socialActions/{post_urn}"
 
-            headers = {
-                "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
-                "X-Restli-Protocol-Version": "2.0.0",
-            }
+            headers = self._get_headers()
 
             response = api_client.linkedin_request(
                 method="GET",
@@ -1163,14 +1148,15 @@ class LinkedInPublisher:
 # ============================================================================
 # Unit Tests
 # ============================================================================
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
+def _create_module_tests() -> bool:
     """Create unit tests for linkedin_publisher module."""
     import os
     import tempfile
 
     from test_framework import TestSuite
 
-    suite = TestSuite("LinkedIn Publisher Tests")
+    suite = TestSuite("LinkedIn Publisher Tests", "linkedin_publisher.py")
+    suite.start_suite()
 
     def test_publisher_init():
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -1443,24 +1429,124 @@ def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
         finally:
             os.unlink(db_path)
 
-    suite.add_test("Publisher init", test_publisher_init)
-    suite.add_test("Get headers", test_get_headers)
-    suite.add_test("Format post text", test_format_post_text)
-    suite.add_test("Build image post payload", test_build_image_post_payload)
-    suite.add_test("Build article post payload", test_build_article_post_payload)
-    suite.add_test("Valid URN - person", test_is_valid_urn_valid_person)
-    suite.add_test("Valid URN - organization", test_is_valid_urn_valid_organization)
-    suite.add_test("Invalid URN formats", test_is_valid_urn_invalid_format)
-    suite.add_test("Get post URL", test_get_post_url)
-    suite.add_test("Format mentions - empty", test_format_mentions_empty)
-    suite.add_test("Format mentions - with URN", test_format_mentions_with_urn)
-    suite.add_test(
-        "Format mentions - URL fallback", test_format_mentions_with_url_fallback
+    suite.run_test(
+        test_name="Publisher init",
+        test_func=test_publisher_init,
+        test_summary="Tests Publisher init functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function creates the expected object or result",
     )
-    suite.add_test("Verify post exists - no token", test_verify_post_exists_no_token)
-    suite.add_test("Fetch analytics - no post ID", test_fetch_post_analytics_no_post_id)
-    suite.add_test("Refresh analytics - empty", test_refresh_all_analytics_empty)
-    suite.add_test("Preview post", test_preview_post)
-    suite.add_test("Preview post - warnings", test_preview_post_warnings)
+    suite.run_test(
+        test_name="Get headers",
+        test_func=test_get_headers,
+        test_summary="Tests Get headers functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Format post text",
+        test_func=test_format_post_text,
+        test_summary="Tests Format post text functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces correctly formatted output",
+    )
+    suite.run_test(
+        test_name="Build image post payload",
+        test_func=test_build_image_post_payload,
+        test_summary="Tests Build image post payload functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Build article post payload",
+        test_func=test_build_article_post_payload,
+        test_summary="Tests Build article post payload functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Valid URN - person",
+        test_func=test_is_valid_urn_valid_person,
+        test_summary="Tests Valid URN with person scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected successful result",
+    )
+    suite.run_test(
+        test_name="Valid URN - organization",
+        test_func=test_is_valid_urn_valid_organization,
+        test_summary="Tests Valid URN with organization scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected successful result",
+    )
+    suite.run_test(
+        test_name="Invalid URN formats",
+        test_func=test_is_valid_urn_invalid_format,
+        test_summary="Tests Invalid URN formats functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function handles invalid input appropriately",
+    )
+    suite.run_test(
+        test_name="Get post URL",
+        test_func=test_get_post_url,
+        test_summary="Tests Get post URL functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Format mentions - empty",
+        test_func=test_format_mentions_empty,
+        test_summary="Tests Format mentions with empty scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns the expected value",
+    )
+    suite.run_test(
+        test_name="Format mentions - with URN",
+        test_func=test_format_mentions_with_urn,
+        test_summary="Tests Format mentions with with urn scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces correctly formatted output",
+    )
+    suite.run_test(
+        test_name="Format mentions - URL fallback",
+        test_func=test_format_mentions_with_url_fallback,
+        test_summary="Tests Format mentions with url fallback scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces correctly formatted output",
+    )
+    suite.run_test(
+        test_name="Verify post exists - no token",
+        test_func=test_verify_post_exists_no_token,
+        test_summary="Tests Verify post exists with no token scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Fetch analytics - no post ID",
+        test_func=test_fetch_post_analytics_no_post_id,
+        test_summary="Tests Fetch analytics with no post id scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function returns None as expected",
+    )
+    suite.run_test(
+        test_name="Refresh analytics - empty",
+        test_func=test_refresh_all_analytics_empty,
+        test_summary="Tests Refresh analytics with empty scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function handles empty or missing input gracefully",
+    )
+    suite.run_test(
+        test_name="Preview post",
+        test_func=test_preview_post,
+        test_summary="Tests Preview post functionality",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Preview post - warnings",
+        test_func=test_preview_post_warnings,
+        test_summary="Tests Preview post with warnings scenario",
+        method_description="Calls NamedTemporaryFile and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
+    return suite.finish_suite()

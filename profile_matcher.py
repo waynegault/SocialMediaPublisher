@@ -46,9 +46,7 @@ from typing import Optional
 
 from text_utils import (
     COMMON_FIRST_NAMES,
-    CONTEXT_STOPWORDS,
     build_context_keywords,
-    is_common_name,
 )
 from url_utils import extract_linkedin_public_id
 
@@ -1490,3 +1488,208 @@ def create_person_context(
         story_title=story_title,
         story_category=story_category,
     )
+
+
+# =============================================================================
+# Module Tests
+# =============================================================================
+
+
+def _create_module_tests() -> bool:
+    """Create unit tests for profile_matcher module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("Profile Matcher", "profile_matcher.py")
+    suite.start_suite()
+
+    def test_get_required_signals_very_common():
+        # Both first and last are common => 3
+        result = get_required_signals("John", "Smith")
+        assert result == 3
+
+    def test_get_required_signals_common_first():
+        # Only first name is common => 2
+        result = get_required_signals("John", "Xiangzhou")
+        assert result == 2
+
+    def test_get_required_signals_uncommon():
+        # Neither is common => 1
+        result = get_required_signals("Xiaoying", "Zhang")
+        assert result == 1
+
+    def test_role_type_enum():
+        assert RoleType.ACADEMIC is not None
+        assert RoleType.EXECUTIVE is not None
+        assert RoleType.OTHER is not None
+
+    def test_match_confidence_enum():
+        assert MatchConfidence.HIGH is not None
+        assert MatchConfidence.MEDIUM is not None
+        assert MatchConfidence.LOW is not None
+        assert MatchConfidence.VERIFIED is not None
+
+    def test_match_signal_dataclass():
+        sig = MatchSignal(name="org_match", weight=2.0, description="Organization matched")
+        assert sig.name == "org_match"
+        assert sig.weight == 2.0
+
+    def test_person_context_creation():
+        ctx = PersonContext(
+            name="Jane Doe",
+            organization="Acme Corp",
+            position="CTO",
+        )
+        assert ctx.name == "Jane Doe"
+        assert ctx.organization == "Acme Corp"
+
+    def test_person_context_search_terms():
+        ctx = PersonContext(
+            name="Jane Doe",
+            organization="Acme Corp",
+            department="Engineering",
+        )
+        terms = ctx.to_search_terms()
+        assert "Jane Doe" in terms
+        assert "Acme Corp" in terms
+
+    def test_person_context_keywords():
+        ctx = PersonContext(
+            name="John Smith",
+            organization="BASF",
+            department="R&D",
+            position="Director",
+        )
+        kw = ctx.get_context_keywords()
+        assert isinstance(kw, set)
+
+    def test_create_person_context_from_dict():
+        d = {"name": "Alice Wonder", "company": "Acme", "position": "Engineer"}
+        ctx = create_person_context(d)
+        assert ctx.name == "Alice Wonder"
+        assert ctx.organization == "Acme"
+        assert ctx.position == "Engineer"
+
+    def test_profile_candidate_defaults():
+        c = ProfileCandidate(linkedin_url="https://linkedin.com/in/test", vanity_name="test")
+        assert c.confidence_score == 0.0
+        assert c.positive_signals == []
+
+    def test_exclusion_result_dataclass():
+        er = ExclusionResult(rejected=True, reasons=["HR recruiter"])
+        assert er.rejected is True
+        assert len(er.reasons) == 1
+
+    def test_scored_candidate_dataclass():
+        sc = ScoredCandidate(score=0.85, signals=["org_match"])
+        assert sc.score == 0.85
+        assert "org_match" in sc.signals
+
+    def test_profile_matcher_class():
+        pm = ProfileMatcher()
+        assert pm is not None
+
+    suite.run_test(
+
+        test_name="get_required_signals - very common",
+
+        test_func=test_get_required_signals_very_common,
+
+        test_summary="get_required_signals behavior with very common input",
+
+        method_description="Testing get_required_signals with very common input using equality assertions",
+
+        expected_outcome="get_required_signals returns the expected value; Result falls within expected bounds",
+
+    )
+    suite.run_test(
+        test_name="get_required_signals - common first",
+        test_func=test_get_required_signals_common_first,
+        test_summary="get_required_signals behavior with common first input",
+        method_description="Testing get_required_signals with common first input using equality assertions",
+        expected_outcome="get_required_signals returns the expected value; Result falls within expected bounds",
+    )
+    suite.run_test(
+        test_name="get_required_signals - uncommon",
+        test_func=test_get_required_signals_uncommon,
+        test_summary="get_required_signals behavior with uncommon input",
+        method_description="Testing get_required_signals with uncommon input using equality assertions",
+        expected_outcome="get_required_signals returns the expected value; Result falls within expected bounds",
+    )
+    suite.run_test(
+        test_name="RoleType enum",
+        test_func=test_role_type_enum,
+        test_summary="Verify RoleType enum produces correct results",
+        method_description="Testing RoleType enum using null safety checks",
+        expected_outcome="RoleType enum returns a valid result",
+    )
+    suite.run_test(
+        test_name="MatchConfidence enum",
+        test_func=test_match_confidence_enum,
+        test_summary="Verify MatchConfidence enum produces correct results",
+        method_description="Testing MatchConfidence enum using null safety checks",
+        expected_outcome="MatchConfidence enum returns a valid result",
+    )
+    suite.run_test(
+        test_name="MatchSignal dataclass",
+        test_func=test_match_signal_dataclass,
+        test_summary="Verify MatchSignal dataclass produces correct results",
+        method_description="Testing MatchSignal dataclass using equality assertions",
+        expected_outcome="MatchSignal dataclass returns the expected value",
+    )
+    suite.run_test(
+        test_name="PersonContext creation",
+        test_func=test_person_context_creation,
+        test_summary="Verify PersonContext creation produces correct results",
+        method_description="Testing PersonContext creation using equality assertions",
+        expected_outcome="PersonContext creation returns the expected value",
+    )
+    suite.run_test(
+        test_name="PersonContext search terms",
+        test_func=test_person_context_search_terms,
+        test_summary="Verify PersonContext search terms produces correct results",
+        method_description="Testing PersonContext search terms using membership verification",
+        expected_outcome="Result contains expected elements",
+    )
+    suite.run_test(
+        test_name="PersonContext keywords",
+        test_func=test_person_context_keywords,
+        test_summary="Verify PersonContext keywords produces correct results",
+        method_description="Testing PersonContext keywords using type checking",
+        expected_outcome="PersonContext keywords returns the correct type",
+    )
+    suite.run_test(
+        test_name="create_person_context from dict",
+        test_func=test_create_person_context_from_dict,
+        test_summary="Verify create_person_context from dict produces correct results",
+        method_description="Testing create_person_context from dict using equality assertions",
+        expected_outcome="create_person_context from dict returns the expected value",
+    )
+    suite.run_test(
+        test_name="ProfileCandidate defaults",
+        test_func=test_profile_candidate_defaults,
+        test_summary="Verify ProfileCandidate defaults produces correct results",
+        method_description="Testing ProfileCandidate defaults using equality assertions",
+        expected_outcome="ProfileCandidate defaults returns the expected value",
+    )
+    suite.run_test(
+        test_name="ExclusionResult dataclass",
+        test_func=test_exclusion_result_dataclass,
+        test_summary="Verify ExclusionResult dataclass produces correct results",
+        method_description="Testing ExclusionResult dataclass using equality assertions and boolean return verification",
+        expected_outcome="ExclusionResult dataclass returns True for matching input",
+    )
+    suite.run_test(
+        test_name="ScoredCandidate dataclass",
+        test_func=test_scored_candidate_dataclass,
+        test_summary="Verify ScoredCandidate dataclass produces correct results",
+        method_description="Testing ScoredCandidate dataclass using equality assertions and membership verification",
+        expected_outcome="ScoredCandidate dataclass returns the expected value",
+    )
+    suite.run_test(
+        test_name="ProfileMatcher class",
+        test_func=test_profile_matcher_class,
+        test_summary="Verify ProfileMatcher class produces correct results",
+        method_description="Testing ProfileMatcher class using null safety checks",
+        expected_outcome="ProfileMatcher class returns a valid result",
+    )
+    return suite.finish_suite()

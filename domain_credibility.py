@@ -296,104 +296,171 @@ def is_primary_source(url: str) -> bool:
 # ============================================================================
 
 
-def _create_module_tests():
+def _create_module_tests() -> bool:
     """Create test suite for domain credibility module."""
     from test_framework import TestSuite
 
-    suite = TestSuite("Domain Credibility")
+    suite = TestSuite("Domain Credibility", "domain_credibility.py")
+    suite.start_suite()
 
-    # Test tier 1 domains
-    suite.add_test(
-        "Tier 1 domain - Nature",
-        lambda: get_domain_tier("https://www.nature.com/article") == 1,
+    def test_tier1_nature():
+        assert get_domain_tier("https://www.nature.com/article") == 1
+
+    def test_tier1_nih():
+        assert get_domain_tier("https://www.nih.gov/news") == 1
+
+    def test_tier2_techcrunch():
+        assert get_domain_tier("https://techcrunch.com/2024/01/01/story") == 2
+
+    def test_tier3_latimes():
+        assert get_domain_tier("https://www.latimes.com/news") == 3
+
+    def test_low_credibility_dailymail():
+        assert get_domain_tier("https://www.dailymail.co.uk/news") == 4
+
+    def test_unknown_domain():
+        assert get_domain_tier("https://random-blog.com/post") == 0
+
+    def test_reputable_mit():
+        assert is_reputable_domain("https://news.mit.edu/story") is True
+
+    def test_not_reputable_random():
+        assert is_reputable_domain("https://randomsite.com/post") is False
+
+    def test_academic_stanford():
+        assert is_academic_domain("https://news.stanford.edu/article") is True
+
+    def test_government_nasa():
+        assert is_government_domain("https://www.nasa.gov/news") is True
+
+    def test_score_tier1():
+        assert get_credibility_score("https://nature.com/article") == 1.0
+
+    def test_score_low_credibility():
+        assert get_credibility_score("https://dailymail.co.uk/news") == 0.1
+
+    def test_extract_domain_with_www():
+        assert extract_domain("https://www.nature.com/article") == "nature.com"
+
+    def test_extract_domain_without_www():
+        assert extract_domain("https://techcrunch.com/news") == "techcrunch.com"
+
+    def test_primary_source_newsroom():
+        assert is_primary_source("https://newsroom.google.com/article") is True
+
+    suite.run_test(
+
+        test_name="Tier 1 domain - Nature",
+
+        test_func=test_tier1_nature,
+
+        test_summary="Tier 1 domain behavior with Nature input",
+
+        method_description="Testing Tier 1 domain with Nature input using equality assertions",
+
+        expected_outcome="Tier 1 domain returns the expected value",
+
     )
-
-    suite.add_test(
-        "Tier 1 domain - NIH gov",
-        lambda: get_domain_tier("https://www.nih.gov/news") == 1,
+    suite.run_test(
+        test_name="Tier 1 domain - NIH gov",
+        test_func=test_tier1_nih,
+        test_summary="Tier 1 domain behavior with NIH gov input",
+        method_description="Testing Tier 1 domain with NIH gov input using equality assertions",
+        expected_outcome="Tier 1 domain returns the expected value",
     )
-
-    # Test tier 2 domains
-    suite.add_test(
-        "Tier 2 domain - TechCrunch",
-        lambda: get_domain_tier("https://techcrunch.com/2024/01/01/story") == 2,
+    suite.run_test(
+        test_name="Tier 2 domain - TechCrunch",
+        test_func=test_tier2_techcrunch,
+        test_summary="Tier 2 domain behavior with TechCrunch input",
+        method_description="Testing Tier 2 domain with TechCrunch input using equality assertions",
+        expected_outcome="Tier 2 domain returns the expected value",
     )
-
-    # Test tier 3 domains
-    suite.add_test(
-        "Tier 3 domain - LA Times",
-        lambda: get_domain_tier("https://www.latimes.com/news") == 3,
+    suite.run_test(
+        test_name="Tier 3 domain - LA Times",
+        test_func=test_tier3_latimes,
+        test_summary="Tier 3 domain behavior with LA Times input",
+        method_description="Testing Tier 3 domain with LA Times input using equality assertions",
+        expected_outcome="Tier 3 domain returns the expected value",
     )
-
-    # Test low credibility
-    suite.add_test(
-        "Low credibility - Daily Mail",
-        lambda: get_domain_tier("https://www.dailymail.co.uk/news") == 4,
+    suite.run_test(
+        test_name="Low credibility - Daily Mail",
+        test_func=test_low_credibility_dailymail,
+        test_summary="Low credibility behavior with Daily Mail input",
+        method_description="Testing Low credibility with Daily Mail input using equality assertions",
+        expected_outcome="Low credibility returns the expected value",
     )
-
-    # Test unknown domain
-    suite.add_test(
-        "Unknown domain",
-        lambda: get_domain_tier("https://random-blog.com/post") == 0,
+    suite.run_test(
+        test_name="Unknown domain",
+        test_func=test_unknown_domain,
+        test_summary="Verify Unknown domain produces correct results",
+        method_description="Testing Unknown domain using equality assertions",
+        expected_outcome="Unknown domain returns the expected value",
     )
-
-    # Test is_reputable_domain
-    suite.add_test(
-        "is_reputable_domain - MIT",
-        lambda: is_reputable_domain("https://news.mit.edu/story") is True,
+    suite.run_test(
+        test_name="is_reputable_domain - MIT",
+        test_func=test_reputable_mit,
+        test_summary="is_reputable_domain behavior with MIT input",
+        method_description="Testing is_reputable_domain with MIT input using boolean return verification",
+        expected_outcome="Function returns True for MIT input",
     )
-
-    suite.add_test(
-        "is_reputable_domain - random site",
-        lambda: is_reputable_domain("https://randomsite.com/post") is False,
+    suite.run_test(
+        test_name="is_reputable_domain - random site",
+        test_func=test_not_reputable_random,
+        test_summary="is_reputable_domain behavior with random site input",
+        method_description="Testing is_reputable_domain with random site input using boolean return verification",
+        expected_outcome="Function returns False for random site input",
     )
-
-    # Test academic domain detection
-    suite.add_test(
-        "is_academic_domain - Stanford",
-        lambda: is_academic_domain("https://news.stanford.edu/article") is True,
+    suite.run_test(
+        test_name="is_academic_domain - Stanford",
+        test_func=test_academic_stanford,
+        test_summary="is_academic_domain behavior with Stanford input",
+        method_description="Testing is_academic_domain with Stanford input using boolean return verification",
+        expected_outcome="Function returns True for Stanford input",
     )
-
-    # Test government domain detection
-    suite.add_test(
-        "is_government_domain - NASA",
-        lambda: is_government_domain("https://www.nasa.gov/news") is True,
+    suite.run_test(
+        test_name="is_government_domain - NASA",
+        test_func=test_government_nasa,
+        test_summary="is_government_domain behavior with NASA input",
+        method_description="Testing is_government_domain with NASA input using boolean return verification",
+        expected_outcome="Function returns True for NASA input",
     )
-
-    # Test credibility score
-    suite.add_test(
-        "credibility_score - Tier 1",
-        lambda: get_credibility_score("https://nature.com/article") == 1.0,
+    suite.run_test(
+        test_name="credibility_score - Tier 1",
+        test_func=test_score_tier1,
+        test_summary="credibility_score behavior with Tier 1 input",
+        method_description="Testing credibility_score with Tier 1 input using equality assertions",
+        expected_outcome="credibility_score returns the expected value",
     )
-
-    suite.add_test(
-        "credibility_score - Low credibility",
-        lambda: get_credibility_score("https://dailymail.co.uk/news") == 0.1,
+    suite.run_test(
+        test_name="credibility_score - Low credibility",
+        test_func=test_score_low_credibility,
+        test_summary="credibility_score behavior with Low credibility input",
+        method_description="Testing credibility_score with Low credibility input using equality assertions",
+        expected_outcome="credibility_score returns the expected value",
     )
-
-    # Test extract_domain
-    suite.add_test(
-        "extract_domain - with www",
-        lambda: extract_domain("https://www.nature.com/article") == "nature.com",
+    suite.run_test(
+        test_name="extract_domain - with www",
+        test_func=test_extract_domain_with_www,
+        test_summary="extract_domain behavior with with www input",
+        method_description="Testing extract_domain with with www input using equality assertions",
+        expected_outcome="extract_domain returns the expected value",
     )
-
-    suite.add_test(
-        "extract_domain - without www",
-        lambda: extract_domain("https://techcrunch.com/news") == "techcrunch.com",
+    suite.run_test(
+        test_name="extract_domain - without www",
+        test_func=test_extract_domain_without_www,
+        test_summary="extract_domain behavior with without www input",
+        method_description="Testing extract_domain with without www input using equality assertions",
+        expected_outcome="extract_domain returns the expected value",
     )
-
-    # Test primary source detection
-    suite.add_test(
-        "is_primary_source - newsroom",
-        lambda: is_primary_source("https://newsroom.google.com/article") is True,
+    suite.run_test(
+        test_name="is_primary_source - newsroom",
+        test_func=test_primary_source_newsroom,
+        test_summary="is_primary_source behavior with newsroom input",
+        method_description="Testing is_primary_source with newsroom input using boolean return verification",
+        expected_outcome="Function returns True for newsroom input",
     )
-
-    return suite
+    return suite.finish_suite()
 
 
 if __name__ == "__main__":
-    # Run tests when executed directly
-    suite = _create_module_tests()
-    from test_framework import run_all_suites
-
-    run_all_suites([suite], verbose=True)
+    _create_module_tests()

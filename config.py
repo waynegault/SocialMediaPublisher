@@ -10,7 +10,6 @@ This module provides Pydantic-based configuration validation with:
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 from dotenv import load_dotenv
 from pydantic import Field, field_validator, model_validator
@@ -558,10 +557,15 @@ class SettingsModel(BaseSettings):
     @field_validator("image_size")
     @classmethod
     def validate_image_size(cls, v: str) -> str:
-        """Validate image size is 1K or 2K."""
-        if v not in {"1K", "2K"}:
-            raise ValueError(f"IMAGE_SIZE must be '1K' or '2K', got '{v}'")
-        return v
+        """Validate image size is a shorthand (1K/2K) or WIDTHxHEIGHT pixel format."""
+        if v in {"1K", "2K"}:
+            return v
+        import re
+        if re.fullmatch(r"\d{3,4}x\d{3,4}", v):
+            return v
+        raise ValueError(
+            f"IMAGE_SIZE must be '1K', '2K', or 'WIDTHxHEIGHT' (e.g. '1024x1024'), got '{v}'"
+        )
 
     @field_validator("start_pub_time", "end_pub_time")
     @classmethod
@@ -735,163 +739,257 @@ class Config(metaclass=_ConfigMeta):
         print("=============================================")
 
 
-def _create_module_tests():  # pyright: ignore[reportUnusedFunction]
-    """Create unit tests for config module."""
-    from test_framework import TestSuite
+def _test_config_defaults() -> None:
+    """Test that config defaults are reasonable."""
+    assert Config.SUMMARY_WORD_COUNT >= 50
+    assert Config.MAX_STORIES_PER_DAY >= 1
+    assert Config.MAX_STORIES_PER_SEARCH >= 1
 
-    suite = TestSuite("Config Tests")
 
-    def test_config_defaults():
-        assert Config.SUMMARY_WORD_COUNT >= 50
-        assert Config.MAX_STORIES_PER_DAY >= 1
-        assert Config.MAX_STORIES_PER_SEARCH >= 1
+def _test_config_validate() -> None:
+    """Test that config validation returns a list."""
+    errors = Config.validate()
+    assert isinstance(errors, list)
 
-    def test_config_validate():
-        errors = Config.validate()
-        assert isinstance(errors, list)
 
-    def test_config_ensure_directories():
-        Config.ensure_directories()
-        assert os.path.isdir(Config.IMAGE_DIR)
+def _test_config_ensure_directories() -> None:
+    """Test that ensure_directories creates IMAGE_DIR."""
+    Config.ensure_directories()
+    assert os.path.isdir(Config.IMAGE_DIR)
 
-    def test_config_publish_hours_valid():
-        start_hour = Config.get_pub_start_hour()
-        end_hour = Config.get_pub_end_hour()
-        assert 0 <= start_hour <= 23
-        assert 0 <= end_hour <= 23
-        assert start_hour < end_hour
 
-    suite.add_test("Config defaults", test_config_defaults)
-    suite.add_test("Config validate", test_config_validate)
-    suite.add_test("Config ensure directories", test_config_ensure_directories)
-    suite.add_test("Config publish hours valid", test_config_publish_hours_valid)
+def _test_config_publish_hours_valid() -> None:
+    """Test that publish hours are valid."""
+    start_hour = Config.get_pub_start_hour()
+    end_hour = Config.get_pub_end_hour()
+    assert 0 <= start_hour <= 23
+    assert 0 <= end_hour <= 23
+    assert start_hour < end_hour
 
-    # ========================================================================
-    # Pydantic Settings Tests
-    # ========================================================================
 
-    def test_pydantic_settings_exists():
-        """Test that Pydantic settings model is accessible."""
-        settings = Config.get_settings()
-        assert settings is not None
-        assert isinstance(settings, SettingsModel)
+def _test_pydantic_settings_exists() -> None:
+    """Test that Pydantic settings model is accessible."""
+    settings = Config.get_settings()
+    assert settings is not None
+    assert isinstance(settings, SettingsModel)
 
-    def test_pydantic_settings_type_coercion():
-        """Test that Pydantic correctly coerces types from env vars."""
-        settings = Config.get_settings()
-        # These should be properly typed (not strings)
-        assert isinstance(settings.search_lookback_days, int)
-        assert isinstance(settings.dedup_similarity_threshold, float)
-        assert isinstance(settings.prefer_local_llm, bool)
-        assert isinstance(settings.search_prompt, str)
 
-    def test_pydantic_settings_constraints():
-        """Test that Pydantic constraint validators are properly defined."""
-        # Test aspect ratio validator directly
-        from pydantic import ValidationError
+def _test_pydantic_settings_type_coercion() -> None:
+    """Test that Pydantic correctly coerces types from env vars."""
+    settings = Config.get_settings()
+    # These should be properly typed (not strings)
+    assert isinstance(settings.search_lookback_days, int)
+    assert isinstance(settings.dedup_similarity_threshold, float)
+    assert isinstance(settings.prefer_local_llm, bool)
+    assert isinstance(settings.search_prompt, str)
 
-        valid = SettingsModel.validate_aspect_ratio("16:9")
-        assert valid == "16:9", "Valid aspect ratio should pass"
 
-        try:
-            SettingsModel.validate_aspect_ratio("invalid")
-            assert False, "Should have raised ValueError"
-        except ValueError as e:
-            assert "IMAGE_ASPECT_RATIO" in str(e) or "aspect_ratio" in str(e).lower()
+def _test_pydantic_settings_constraints() -> None:
+    """Test that Pydantic constraint validators are properly defined."""
+    # Test aspect ratio validator directly
+    valid = SettingsModel.validate_aspect_ratio("16:9")
+    assert valid == "16:9", "Valid aspect ratio should pass"
 
-        # Test image size validator directly
-        valid = SettingsModel.validate_image_size("2K")
-        assert valid == "2K", "Valid image size should pass"
+    try:
+        SettingsModel.validate_aspect_ratio("invalid")
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        assert "IMAGE_ASPECT_RATIO" in str(e) or "aspect_ratio" in str(e).lower()
 
-        try:
-            SettingsModel.validate_image_size("3K")
-            assert False, "Should have raised ValueError"
-        except ValueError as e:
-            assert "IMAGE_SIZE" in str(e) or "image_size" in str(e).lower()
+    # Test image size validator directly
+    valid = SettingsModel.validate_image_size("2K")
+    assert valid == "2K", "Valid image size should pass"
 
-    def test_pydantic_settings_time_validation():
-        """Test that time format validation works."""
-        # Test time format validator directly
-        valid = SettingsModel.validate_time_format("08:00")
-        assert valid == "08:00", "Valid time should pass"
+    valid = SettingsModel.validate_image_size("1024x1024")
+    assert valid == "1024x1024", "Pixel format should pass"
 
-        try:
-            SettingsModel.validate_time_format("8am")
-            assert False, "Should have raised ValueError"
-        except ValueError as e:
-            assert "HH:MM" in str(e)
+    try:
+        SettingsModel.validate_image_size("3K")
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        assert "IMAGE_SIZE" in str(e) or "image_size" in str(e).lower()
 
-        try:
-            SettingsModel.validate_time_format("25:00")
-            assert False, "Should have raised ValueError for invalid hour"
-        except ValueError as e:
-            assert "HH:MM" in str(e)
 
-    def test_pydantic_settings_range_validation():
-        """Test that range constraints are enforced via Field definitions."""
-        from annotated_types import Ge, Le
+def _test_pydantic_settings_time_validation() -> None:
+    """Test that time format validation works."""
+    # Test time format validator directly
+    valid = SettingsModel.validate_time_format("08:00")
+    assert valid == "08:00", "Valid time should pass"
 
-        # Range constraints (ge, le) are defined in Field() and stored in metadata
-        # We verify the field definitions have proper constraints
-        field_info = SettingsModel.model_fields["search_lookback_days"]
-        ge_constraints = [m for m in field_info.metadata if isinstance(m, Ge)]
-        le_constraints = [m for m in field_info.metadata if isinstance(m, Le)]
-        assert len(ge_constraints) == 1, (
-            "search_lookback_days should have ge constraint"
-        )
-        assert ge_constraints[0].ge == 1, "search_lookback_days ge should be 1"
-        assert len(le_constraints) == 1, (
-            "search_lookback_days should have le constraint"
-        )
-        assert le_constraints[0].le == 365, "search_lookback_days le should be 365"
+    try:
+        SettingsModel.validate_time_format("8am")
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        assert "HH:MM" in str(e)
 
-        field_info = SettingsModel.model_fields["dedup_similarity_threshold"]
-        ge_constraints = [m for m in field_info.metadata if isinstance(m, Ge)]
-        le_constraints = [m for m in field_info.metadata if isinstance(m, Le)]
-        assert len(ge_constraints) == 1, "dedup_similarity_threshold should have ge"
-        assert ge_constraints[0].ge == 0.0, (
-            "dedup_similarity_threshold ge should be 0.0"
-        )
-        assert len(le_constraints) == 1, "dedup_similarity_threshold should have le"
-        assert le_constraints[0].le == 1.0, (
-            "dedup_similarity_threshold le should be 1.0"
-        )
+    try:
+        SettingsModel.validate_time_format("25:00")
+        assert False, "Should have raised ValueError for invalid hour"
+    except ValueError as e:
+        assert "HH:MM" in str(e)
 
-    def test_pydantic_time_range_validation():
-        """Test that end time must be after start time (model validator)."""
-        # This is a model validator - test that current config passes
-        settings = Config.get_settings()
-        start_hour = int(settings.start_pub_time.split(":")[0])
-        end_hour = int(settings.end_pub_time.split(":")[0])
-        assert start_hour < end_hour, "START_PUB_TIME should be before END_PUB_TIME"
 
-    def test_pydantic_linkedin_thresholds_validation():
-        """Test that LinkedIn thresholds are validated in order (model validator)."""
-        # This is a model validator - test that current config passes
-        settings = Config.get_settings()
-        assert settings.linkedin_post_min_chars < settings.linkedin_post_optimal_chars
-        assert settings.linkedin_post_optimal_chars < settings.linkedin_post_max_chars
+def _test_pydantic_settings_range_validation() -> None:
+    """Test that range constraints are enforced via Field definitions."""
+    from annotated_types import Ge, Le
 
-    def test_pydantic_huggingface_token_fallback():
-        """Test effective_huggingface_token property."""
-        settings = Config.get_settings()
-        # Just verify the property is accessible
-        token = settings.effective_huggingface_token
-        assert isinstance(token, str)
-
-    suite.add_test("Pydantic settings exists", test_pydantic_settings_exists)
-    suite.add_test("Pydantic type coercion", test_pydantic_settings_type_coercion)
-    suite.add_test("Pydantic constraints", test_pydantic_settings_constraints)
-    suite.add_test("Pydantic time validation", test_pydantic_settings_time_validation)
-    suite.add_test("Pydantic range validation", test_pydantic_settings_range_validation)
-    suite.add_test(
-        "Pydantic time range validation", test_pydantic_time_range_validation
+    # Range constraints (ge, le) are defined in Field() and stored in metadata
+    # We verify the field definitions have proper constraints
+    field_info = SettingsModel.model_fields["search_lookback_days"]
+    ge_constraints = [m for m in field_info.metadata if isinstance(m, Ge)]
+    le_constraints = [m for m in field_info.metadata if isinstance(m, Le)]
+    assert len(ge_constraints) == 1, (
+        "search_lookback_days should have ge constraint"
     )
-    suite.add_test(
-        "Pydantic LinkedIn thresholds", test_pydantic_linkedin_thresholds_validation
+    assert ge_constraints[0].ge == 1, "search_lookback_days ge should be 1"
+    assert len(le_constraints) == 1, (
+        "search_lookback_days should have le constraint"
     )
-    suite.add_test(
-        "Pydantic HuggingFace token", test_pydantic_huggingface_token_fallback
+    assert le_constraints[0].le == 365, "search_lookback_days le should be 365"
+
+    field_info = SettingsModel.model_fields["dedup_similarity_threshold"]
+    ge_constraints = [m for m in field_info.metadata if isinstance(m, Ge)]
+    le_constraints = [m for m in field_info.metadata if isinstance(m, Le)]
+    assert len(ge_constraints) == 1, "dedup_similarity_threshold should have ge"
+    assert ge_constraints[0].ge == 0.0, (
+        "dedup_similarity_threshold ge should be 0.0"
+    )
+    assert len(le_constraints) == 1, "dedup_similarity_threshold should have le"
+    assert le_constraints[0].le == 1.0, (
+        "dedup_similarity_threshold le should be 1.0"
     )
 
-    return suite
+
+def _test_pydantic_time_range_validation() -> None:
+    """Test that end time must be after start time (model validator)."""
+    # This is a model validator - test that current config passes
+    settings = Config.get_settings()
+    start_hour = int(settings.start_pub_time.split(":")[0])
+    end_hour = int(settings.end_pub_time.split(":")[0])
+    assert start_hour < end_hour, "START_PUB_TIME should be before END_PUB_TIME"
+
+
+def _test_pydantic_linkedin_thresholds_validation() -> None:
+    """Test that LinkedIn thresholds are validated in order (model validator)."""
+    # This is a model validator - test that current config passes
+    settings = Config.get_settings()
+    assert settings.linkedin_post_min_chars < settings.linkedin_post_optimal_chars
+    assert settings.linkedin_post_optimal_chars < settings.linkedin_post_max_chars
+
+
+def _test_pydantic_huggingface_token_fallback() -> None:
+    """Test effective_huggingface_token property."""
+    settings = Config.get_settings()
+    # Just verify the property is accessible
+    token = settings.effective_huggingface_token
+    assert isinstance(token, str)
+
+
+def _create_module_tests() -> bool:
+    """Comprehensive test suite for config.py"""
+    from test_framework import TestSuite, suppress_logging
+
+    suite = TestSuite("Configuration", "config.py")
+    suite.start_suite()
+
+    with suppress_logging():
+        suite.run_test(
+            test_name="Config defaults validation",
+            test_func=_test_config_defaults,
+            test_summary="Verify config defaults are reasonable",
+            functions_tested="Config.SUMMARY_WORD_COUNT, Config.MAX_STORIES_PER_DAY, Config.MAX_STORIES_PER_SEARCH",
+            method_description="Check that default config values are within expected ranges",
+            expected_outcome="All defaults are positive and within bounds",
+        )
+        suite.run_test(
+            test_name="Config validate",
+            test_func=_test_config_validate,
+            test_summary="Verify Config.validate() returns a list",
+            functions_tested="Config.validate()",
+            method_description="Call validate and check return type",
+            expected_outcome="Returns a list of validation errors (possibly empty)",
+        )
+        suite.run_test(
+            test_name="Config ensure directories",
+            test_func=_test_config_ensure_directories,
+            test_summary="Verify ensure_directories creates IMAGE_DIR",
+            functions_tested="Config.ensure_directories()",
+            method_description="Call ensure_directories and verify IMAGE_DIR exists",
+            expected_outcome="IMAGE_DIR directory exists on disk",
+        )
+        suite.run_test(
+            test_name="Config publish hours valid",
+            test_func=_test_config_publish_hours_valid,
+            test_summary="Verify publish hours are valid and ordered",
+            functions_tested="Config.get_pub_start_hour(), Config.get_pub_end_hour()",
+            method_description="Check start/end hours are 0-23 and start < end",
+            expected_outcome="Hours are valid and start hour is before end hour",
+        )
+
+        # Pydantic Settings Tests
+        suite.run_test(
+            test_name="Pydantic settings exists",
+            test_func=_test_pydantic_settings_exists,
+            test_summary="Verify Pydantic settings model is accessible",
+            functions_tested="Config.get_settings()",
+            method_description="Get settings and verify it is a SettingsModel instance",
+            expected_outcome="Settings object is not None and is a SettingsModel",
+        )
+        suite.run_test(
+            test_name="Pydantic type coercion",
+            test_func=_test_pydantic_settings_type_coercion,
+            test_summary="Verify Pydantic correctly coerces types from env vars",
+            functions_tested="Config.get_settings()",
+            method_description="Check that settings fields have correct Python types",
+            expected_outcome="Fields are int, float, bool, str as expected",
+        )
+        suite.run_test(
+            test_name="Pydantic constraints",
+            test_func=_test_pydantic_settings_constraints,
+            test_summary="Verify Pydantic constraint validators work",
+            functions_tested="SettingsModel.validate_aspect_ratio(), SettingsModel.validate_image_size()",
+            method_description="Test validators with valid and invalid inputs",
+            expected_outcome="Valid inputs pass, invalid inputs raise ValueError",
+        )
+        suite.run_test(
+            test_name="Pydantic time validation",
+            test_func=_test_pydantic_settings_time_validation,
+            test_summary="Verify time format validation works",
+            functions_tested="SettingsModel.validate_time_format()",
+            method_description="Test time validator with valid and invalid time strings",
+            expected_outcome="Valid times pass, invalid formats raise ValueError",
+        )
+        suite.run_test(
+            test_name="Pydantic range validation",
+            test_func=_test_pydantic_settings_range_validation,
+            test_summary="Verify range constraints are enforced via Field definitions",
+            functions_tested="SettingsModel.model_fields",
+            method_description="Inspect field metadata for Ge/Le constraints",
+            expected_outcome="Fields have correct ge/le constraint values",
+        )
+        suite.run_test(
+            test_name="Pydantic time range validation",
+            test_func=_test_pydantic_time_range_validation,
+            test_summary="Verify end time must be after start time",
+            functions_tested="Config.get_settings().start_pub_time, Config.get_settings().end_pub_time",
+            method_description="Parse start/end times and verify ordering",
+            expected_outcome="Start hour is before end hour",
+        )
+        suite.run_test(
+            test_name="Pydantic LinkedIn thresholds",
+            test_func=_test_pydantic_linkedin_thresholds_validation,
+            test_summary="Verify LinkedIn thresholds are validated in order",
+            functions_tested="Config.get_settings() LinkedIn char limits",
+            method_description="Check min < optimal < max for LinkedIn post chars",
+            expected_outcome="Thresholds are in ascending order",
+        )
+        suite.run_test(
+            test_name="Pydantic HuggingFace token",
+            test_func=_test_pydantic_huggingface_token_fallback,
+            test_summary="Verify effective_huggingface_token property",
+            functions_tested="SettingsModel.effective_huggingface_token",
+            method_description="Access the property and verify it returns a string",
+            expected_outcome="Token is a string (possibly empty)",
+        )
+
+    return suite.finish_suite()

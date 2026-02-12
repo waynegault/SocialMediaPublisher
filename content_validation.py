@@ -150,3 +150,134 @@ __all__ = [
     "is_spam_content",
     "remove_spam_patterns",
 ]
+
+
+# =============================================================================
+# Module Tests
+# =============================================================================
+
+
+def _create_module_tests() -> bool:
+    """Create unit tests for content_validation module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("Content Validation", "content_validation.py")
+    suite.start_suite()
+
+    def test_detect_post_spam_clean():
+        result = detect_post_spam("Exciting developments in quantum computing research.")
+        assert result == []
+
+    def test_detect_post_spam_positive():
+        result = detect_post_spam("Follow me for more amazing content! #followback")
+        assert len(result) > 0
+
+    def test_detect_comment_spam_clean():
+        result = detect_comment_spam("Great insights, thanks for sharing.")
+        assert result == []
+
+    def test_detect_comment_spam_positive():
+        result = detect_comment_spam("Check out my profile! DM for collab opportunities")
+        assert len(result) > 0
+
+    def test_is_spam_content_false():
+        assert is_spam_content("A well-written professional article.") is False
+
+    def test_is_spam_content_true():
+        assert is_spam_content("Follow me for more! Click the link in my bio!") is True
+
+    def test_remove_spam_patterns():
+        cleaned = remove_spam_patterns("Great article. Follow me for more content!")
+        assert "follow me" not in cleaned.lower()
+
+    def test_remove_spam_patterns_clean():
+        text = "A professional engineering update about BASF."
+        assert remove_spam_patterns(text) == text
+
+    def test_spam_pattern_constants_exist():
+        assert isinstance(POST_SPAM_PATTERNS, list)
+        assert isinstance(COMMENT_SPAM_PATTERNS, list)
+        assert len(POST_SPAM_PATTERNS) > 0
+        assert len(COMMENT_SPAM_PATTERNS) > 0
+
+    def test_all_spam_patterns_combined():
+        assert isinstance(ALL_SPAM_PATTERNS, list)
+        assert len(ALL_SPAM_PATTERNS) >= len(POST_SPAM_PATTERNS)
+
+    suite.run_test(
+
+        test_name="detect_post_spam - clean",
+
+        test_func=test_detect_post_spam_clean,
+
+        test_summary="detect_post_spam behavior with clean input",
+
+        method_description="Testing detect_post_spam with clean input using equality assertions and membership verification",
+
+        expected_outcome="detect_post_spam returns the expected value",
+
+    )
+    suite.run_test(
+        test_name="detect_post_spam - spam",
+        test_func=test_detect_post_spam_positive,
+        test_summary="detect_post_spam behavior with spam input",
+        method_description="Testing detect_post_spam with spam input using size validation",
+        expected_outcome="Result has the expected size; Result falls within expected bounds",
+    )
+    suite.run_test(
+        test_name="detect_comment_spam - clean",
+        test_func=test_detect_comment_spam_clean,
+        test_summary="detect_comment_spam behavior with clean input",
+        method_description="Testing detect_comment_spam with clean input using equality assertions",
+        expected_outcome="detect_comment_spam returns the expected value",
+    )
+    suite.run_test(
+        test_name="detect_comment_spam - spam",
+        test_func=test_detect_comment_spam_positive,
+        test_summary="detect_comment_spam behavior with spam input",
+        method_description="Testing detect_comment_spam with spam input using size validation",
+        expected_outcome="Result has the expected size; Result falls within expected bounds",
+    )
+    suite.run_test(
+        test_name="is_spam_content - false",
+        test_func=test_is_spam_content_false,
+        test_summary="is_spam_content behavior with false input",
+        method_description="Testing is_spam_content with false input using boolean return verification",
+        expected_outcome="Function returns False for false input",
+    )
+    suite.run_test(
+        test_name="is_spam_content - true",
+        test_func=test_is_spam_content_true,
+        test_summary="is_spam_content behavior with true input",
+        method_description="Testing is_spam_content with true input using boolean return verification and membership verification",
+        expected_outcome="Function returns True for true input",
+    )
+    suite.run_test(
+        test_name="remove_spam_patterns - spam",
+        test_func=test_remove_spam_patterns,
+        test_summary="remove_spam_patterns behavior with spam input",
+        method_description="Testing remove_spam_patterns with spam input using membership verification",
+        expected_outcome="Result contains expected elements",
+    )
+    suite.run_test(
+        test_name="remove_spam_patterns - clean",
+        test_func=test_remove_spam_patterns_clean,
+        test_summary="remove_spam_patterns behavior with clean input",
+        method_description="Testing remove_spam_patterns with clean input using equality assertions",
+        expected_outcome="remove_spam_patterns returns the expected value",
+    )
+    suite.run_test(
+        test_name="Pattern constants exist",
+        test_func=test_spam_pattern_constants_exist,
+        test_summary="Verify Pattern constants exist produces correct results",
+        method_description="Testing Pattern constants exist using type checking and size validation",
+        expected_outcome="Pattern constants exist returns the correct type; Result falls within expected bounds",
+    )
+    suite.run_test(
+        test_name="ALL_SPAM_PATTERNS combined",
+        test_func=test_all_spam_patterns_combined,
+        test_summary="Verify ALL_SPAM_PATTERNS combined produces correct results",
+        method_description="Testing ALL_SPAM_PATTERNS combined using type checking and size validation",
+        expected_outcome="ALL_SPAM_PATTERNS combined returns the correct type; Result falls within expected bounds",
+    )
+    return suite.finish_suite()

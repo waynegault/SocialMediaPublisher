@@ -21,15 +21,13 @@ from __future__ import annotations
 import hashlib
 import logging
 import sqlite3
-import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from test_framework import TestSuite
+    pass
 
 
 logger = logging.getLogger(__name__)
@@ -703,12 +701,12 @@ def run_migrations(db_path: str, dry_run: bool = False) -> MigrationResult:
 # =============================================================================
 
 
-def _create_module_tests() -> "TestSuite":
+def _create_module_tests() -> bool:
     """Create unit tests for this module."""
-    sys.path.insert(0, str(Path(__file__).parent))
     from test_framework import TestSuite
 
-    suite = TestSuite("Database Migrations")
+    suite = TestSuite("Database Migrations", "migrations.py")
+    suite.start_suite()
 
     def test_migration_record():
         record = MigrationRecord(
@@ -835,24 +833,106 @@ def _create_module_tests() -> "TestSuite":
         m2 = Migration002AddPostMetadata()
         assert m1 < m2
 
-    suite.add_test("Migration record", test_migration_record)
-    suite.add_test("Migration result", test_migration_result)
-    suite.add_test("Migration result failed", test_migration_result_failed)
-    suite.add_test("Migrator init", test_migrator_init)
-    suite.add_test("Get current version", test_migrator_get_current_version)
-    suite.add_test("Get pending migrations", test_migrator_get_pending)
-    suite.add_test("Migrate dry run", test_migrator_migrate_dry_run)
-    suite.add_test("Migrate", test_migrator_migrate)
-    suite.add_test("Migration history", test_migrator_history)
-    suite.add_test("Rollback dry run", test_migrator_rollback_dry_run)
-    suite.add_test("Validate migrations", test_migrator_validate)
-    suite.add_test("Status check", test_migrator_status)
-    suite.add_test("Migration checksum", test_migration_checksum)
-    suite.add_test("Migration sorting", test_migration_sorting)
+    suite.run_test(
+        test_name="Migration record",
+        test_func=test_migration_record,
+        test_summary="Tests Migration record functionality",
+        method_description="Calls MigrationRecord and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Migration result",
+        test_func=test_migration_result,
+        test_summary="Tests Migration result functionality",
+        method_description="Calls MigrationResult and verifies the result",
+        expected_outcome="Function returns True",
+    )
+    suite.run_test(
+        test_name="Migration result failed",
+        test_func=test_migration_result_failed,
+        test_summary="Tests Migration result failed functionality",
+        method_description="Calls MigrationResult and verifies the result",
+        expected_outcome="Function handles invalid input appropriately",
+    )
+    suite.run_test(
+        test_name="Migrator init",
+        test_func=test_migrator_init,
+        test_summary="Tests Migrator init functionality",
+        method_description="Calls Migrator and verifies the result",
+        expected_outcome="Function creates the expected object or result",
+    )
+    suite.run_test(
+        test_name="Get current version",
+        test_func=test_migrator_get_current_version,
+        test_summary="Tests Get current version functionality",
+        method_description="Calls Migrator and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Get pending migrations",
+        test_func=test_migrator_get_pending,
+        test_summary="Tests Get pending migrations functionality",
+        method_description="Calls Migrator and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Migrate dry run",
+        test_func=test_migrator_migrate_dry_run,
+        test_summary="Tests Migrate dry run functionality",
+        method_description="Calls Migrator and verifies the result",
+        expected_outcome="Function returns True",
+    )
+    suite.run_test(
+        test_name="Migrate",
+        test_func=test_migrator_migrate,
+        test_summary="Tests Migrate functionality",
+        method_description="Calls Migrator and verifies the result",
+        expected_outcome="Function returns True",
+    )
+    suite.run_test(
+        test_name="Migration history",
+        test_func=test_migrator_history,
+        test_summary="Tests Migration history functionality",
+        method_description="Calls Migrator and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Rollback dry run",
+        test_func=test_migrator_rollback_dry_run,
+        test_summary="Tests Rollback dry run functionality",
+        method_description="Calls Migrator and verifies the result",
+        expected_outcome="Function returns True",
+    )
+    suite.run_test(
+        test_name="Validate migrations",
+        test_func=test_migrator_validate,
+        test_summary="Tests Validate migrations functionality",
+        method_description="Calls Migrator and verifies the result",
+        expected_outcome="Function returns False or falsy value",
+    )
+    suite.run_test(
+        test_name="Status check",
+        test_func=test_migrator_status,
+        test_summary="Tests Status check functionality",
+        method_description="Calls Migrator and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Migration checksum",
+        test_func=test_migration_checksum,
+        test_summary="Tests Migration checksum functionality",
+        method_description="Calls Migration001AddAnalyticsColumns and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
+    suite.run_test(
+        test_name="Migration sorting",
+        test_func=test_migration_sorting,
+        test_summary="Tests Migration sorting functionality",
+        method_description="Calls Migration001AddAnalyticsColumns and verifies the result",
+        expected_outcome="Function produces the correct result without errors",
+    )
 
-    return suite
-
-
+    return suite.finish_suite()
 if __name__ == "__main__":
     # Demo usage
     print("Database Migration System Demo")

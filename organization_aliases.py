@@ -196,3 +196,118 @@ __all__ = [
     "get_aliases",
     "is_known_organization",
 ]
+
+
+# =============================================================================
+# Module Tests
+# =============================================================================
+
+
+def _create_module_tests() -> bool:
+    """Create unit tests for organization_aliases module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("Organization Aliases", "organization_aliases.py")
+    suite.start_suite()
+
+    def test_get_canonical_name_alias():
+        result = get_canonical_name("IBM")
+        assert result is not None
+        assert "ibm" in result.lower() or "international business" in result.lower()
+
+    def test_get_canonical_name_unknown():
+        result = get_canonical_name("xyznonexistentcorp")
+        # Function returns the lowercased input for unknowns
+        assert result == "xyznonexistentcorp"
+
+    def test_get_aliases_known():
+        # Find a canonical name that has aliases
+        canonical = get_canonical_name("IBM")
+        if canonical:
+            aliases = get_aliases(canonical)
+            assert isinstance(aliases, list)
+
+    def test_is_known_organization_true():
+        assert is_known_organization("IBM") is True
+
+    def test_is_known_organization_false():
+        assert is_known_organization("xyznonexistentcorp") is False
+
+    def test_org_aliases_dict_exists():
+        assert isinstance(ORG_ALIASES, dict)
+        assert len(ORG_ALIASES) > 0
+
+    def test_get_canonical_name_case_insensitive():
+        r1 = get_canonical_name("ibm")
+        r2 = get_canonical_name("IBM")
+        assert r1 == r2
+
+    def test_is_known_org_canonical_name():
+        # Canonical names (keys in ORG_ALIASES) should be recognized
+        canonical = get_canonical_name("IBM")
+        assert canonical is not None
+        assert is_known_organization(canonical) is True
+
+    suite.run_test(
+
+        test_name="get_canonical_name - alias",
+
+        test_func=test_get_canonical_name_alias,
+
+        test_summary="get_canonical_name behavior with alias input",
+
+        method_description="Testing get_canonical_name with alias input using null safety checks and membership verification",
+
+        expected_outcome="get_canonical_name returns a valid result",
+
+    )
+    suite.run_test(
+        test_name="get_canonical_name - unknown",
+        test_func=test_get_canonical_name_unknown,
+        test_summary="get_canonical_name behavior with unknown input",
+        method_description="Testing get_canonical_name with unknown input using equality assertions",
+        expected_outcome="get_canonical_name returns the expected value",
+    )
+    suite.run_test(
+        test_name="get_aliases - known",
+        test_func=test_get_aliases_known,
+        test_summary="get_aliases behavior with known input",
+        method_description="Testing get_aliases with known input using type checking",
+        expected_outcome="get_aliases returns the correct type",
+    )
+    suite.run_test(
+        test_name="is_known_organization - true",
+        test_func=test_is_known_organization_true,
+        test_summary="is_known_organization behavior with true input",
+        method_description="Testing is_known_organization with true input using boolean return verification",
+        expected_outcome="Function returns True for true input",
+    )
+    suite.run_test(
+        test_name="is_known_organization - false",
+        test_func=test_is_known_organization_false,
+        test_summary="is_known_organization behavior with false input",
+        method_description="Testing is_known_organization with false input using boolean return verification",
+        expected_outcome="Function returns False for false input",
+    )
+    suite.run_test(
+        test_name="ORG_ALIASES dict exists",
+        test_func=test_org_aliases_dict_exists,
+        test_summary="Verify ORG_ALIASES dict exists produces correct results",
+        method_description="Testing ORG_ALIASES dict exists using type checking and size validation",
+        expected_outcome="ORG_ALIASES dict exists returns the correct type; Result falls within expected bounds",
+    )
+    suite.run_test(
+        test_name="get_canonical_name - case insensitive",
+        test_func=test_get_canonical_name_case_insensitive,
+        test_summary="get_canonical_name behavior with case insensitive input",
+        method_description="Testing get_canonical_name with case insensitive input using equality assertions",
+        expected_outcome="get_canonical_name returns the expected value",
+    )
+    suite.run_test(
+        test_name="is_known_org - canonical name",
+        test_func=test_is_known_org_canonical_name,
+        test_summary="is_known_org behavior with canonical name input",
+        method_description="Testing is_known_org with canonical name input using boolean return verification and null safety checks",
+        expected_outcome="Function returns True for canonical name input; is_known_org returns a valid result",
+    )
+    return suite.finish_suite()
