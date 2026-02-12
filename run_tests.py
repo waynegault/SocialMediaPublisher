@@ -115,6 +115,12 @@ TEST_MODULES: list[tuple[str, str]] = [
     ("profile_matcher", "Profile Matcher"),
     ("models", "Models"),
     ("browser_backends", "Browser Backends"),
+    ("web_server", "Web Server"),
+    ("browser", "Browser"),
+    ("publish_daemon", "Publish Daemon"),
+    ("linkedin_rapidapi_client", "LinkedIn RapidAPI Client"),
+    ("linkedin_voyager_client", "LinkedIn Voyager Client"),
+    ("generate_image", "Generate Image"),
 ]
 
 
@@ -161,7 +167,10 @@ def _run_linter() -> bool:
 
 
 def _run_module_tests(module_name: str, display_name: str) -> tuple[bool, float]:
-    """Import a module and run its _create_module_tests() function.
+    """Import a module and run its test function.
+
+    Prefers ``run_comprehensive_tests`` (ancestry pattern) and falls back to
+    ``_create_module_tests`` for backwards-compatibility.
 
     Returns:
         Tuple of (success, duration_seconds)
@@ -169,11 +178,14 @@ def _run_module_tests(module_name: str, display_name: str) -> tuple[bool, float]
     start = time.time()
     try:
         module = importlib.import_module(module_name)
-        if hasattr(module, "_create_module_tests"):
+        if hasattr(module, "run_comprehensive_tests"):
+            success = module.run_comprehensive_tests()
+            return success, time.time() - start
+        elif hasattr(module, "_create_module_tests"):
             success = module._create_module_tests()
             return success, time.time() - start
         else:
-            print(f"{Colors.YELLOW}⚠️ {display_name}: no _create_module_tests() found{Colors.RESET}")
+            print(f"{Colors.YELLOW}⚠️ {display_name}: no test function found{Colors.RESET}")
             return True, time.time() - start
     except Exception as e:
         duration = time.time() - start

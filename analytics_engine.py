@@ -786,13 +786,12 @@ def _create_module_tests() -> bool:
 
         tmpdir = tempfile.mkdtemp()
         db_path = os.path.join(tmpdir, "test_init.db")
+        engine = AnalyticsEngine(db_path=db_path, access_token="test-token")
         try:
-            engine = AnalyticsEngine(db_path=db_path, access_token="test-token")
             assert engine.db_path == db_path
             assert engine.access_token == "test-token"
+        finally:
             engine.close()
-        except Exception:
-            pass  # Allow test to pass even with Windows file issues
 
     def test_analytics_engine_close():
         """Test AnalyticsEngine close method."""
@@ -801,12 +800,9 @@ def _create_module_tests() -> bool:
 
         tmpdir = tempfile.mkdtemp()
         db_path = os.path.join(tmpdir, "test_close.db")
-        try:
-            engine = AnalyticsEngine(db_path=db_path)
-            engine.close()
-            assert engine._http_client is None
-        except Exception:
-            pass  # Allow test to pass even with Windows file issues
+        engine = AnalyticsEngine(db_path=db_path)
+        engine.close()
+        assert engine._http_client is None
 
     def test_get_analytics_engine_singleton():
         """Test get_analytics_engine returns singleton."""
@@ -903,3 +899,8 @@ def _create_module_tests() -> bool:
     )
 
     return suite.finish_suite()
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

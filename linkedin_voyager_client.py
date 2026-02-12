@@ -1214,3 +1214,162 @@ def extract_linkedin_cookies_from_browser() -> tuple[str, str]:
         else:
             logger.warning(f"Failed to extract browser cookies: {e}")
         return ("", "")
+
+
+# ============================================================================
+# Module Tests
+# ============================================================================
+
+
+def _create_module_tests():
+    """Create and run tests for linkedin_voyager_client module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("LinkedIn Voyager Client", "linkedin_voyager_client.py")
+
+    def test_client_init_no_auth():
+        """Test LinkedInVoyagerClient without authentication."""
+        client = LinkedInVoyagerClient(li_at=None, jsessionid=None)
+        assert client.is_authenticated() is False
+
+    def test_client_init_with_auth():
+        """Test LinkedInVoyagerClient stores auth tokens."""
+        client = LinkedInVoyagerClient(li_at="test-token", jsessionid="test-session")
+        assert client.li_at == "test-token"
+        assert client.jsessionid == "test-session"
+
+    def test_client_close():
+        """Test LinkedInVoyagerClient close method."""
+        client = LinkedInVoyagerClient(li_at=None)
+        client.close()
+        assert client._session is None
+
+    def test_client_context_manager():
+        """Test LinkedInVoyagerClient as context manager."""
+        with LinkedInVoyagerClient(li_at=None) as client:
+            assert client is not None
+        assert client._session is None
+
+    def test_parse_people_results_empty():
+        """Test _parse_people_results with empty data."""
+        client = LinkedInVoyagerClient(li_at=None)
+        result = client._parse_people_results({})
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_parse_people_results_no_included():
+        """Test _parse_people_results with missing included key."""
+        client = LinkedInVoyagerClient(li_at=None)
+        result = client._parse_people_results({"data": "something"})
+        assert len(result) == 0
+
+    def test_parse_people_results_with_person():
+        """Test _parse_people_results with valid person data."""
+        client = LinkedInVoyagerClient(li_at=None)
+        data = {
+            "included": [
+                {
+                    "$type": "com.linkedin.voyager.dash.search.SearchNormalizedPerson",
+                    "entityUrn": "urn:li:fsd_profile:johndoe",
+                    "objectUrn": "urn:li:member:12345",
+                    "person": {
+                        "firstName": "John",
+                        "lastName": "Doe",
+                    },
+                    "primarySubtitle": {"text": "CTO at Acme Corp"},
+                    "secondarySubtitle": {"text": "San Francisco, CA"},
+                }
+            ]
+        }
+        result = client._parse_people_results(data)
+        assert len(result) == 1
+        assert result[0].full_name == "John Doe"
+        assert result[0].public_id == "johndoe"
+        assert result[0].headline == "CTO at Acme Corp"
+        assert result[0].location == "San Francisco, CA"
+
+    def test_parse_company_results_empty():
+        """Test _parse_company_results with empty data."""
+        client = LinkedInVoyagerClient(li_at=None)
+        result = client._parse_company_results({})
+        assert isinstance(result, list)
+        assert len(result) == 0
+
+    def test_hybrid_lookup_init():
+        """Test HybridLinkedInLookup initialization."""
+        lookup = HybridLinkedInLookup()
+        assert lookup is not None
+
+    suite.run_test(
+        test_name="Client init no auth",
+        test_func=test_client_init_no_auth,
+        test_summary="Tests client without authentication",
+        method_description="Creates client with no tokens",
+        expected_outcome="is_authenticated returns False",
+    )
+    suite.run_test(
+        test_name="Client init with auth",
+        test_func=test_client_init_with_auth,
+        test_summary="Tests client stores auth tokens",
+        method_description="Creates client with test tokens",
+        expected_outcome="Tokens stored correctly",
+    )
+    suite.run_test(
+        test_name="Client close",
+        test_func=test_client_close,
+        test_summary="Tests close method",
+        method_description="Closes a client session",
+        expected_outcome="HTTP client set to None",
+    )
+    suite.run_test(
+        test_name="Client context manager",
+        test_func=test_client_context_manager,
+        test_summary="Tests with statement usage",
+        method_description="Uses client as context manager",
+        expected_outcome="Client cleaned up on exit",
+    )
+    suite.run_test(
+        test_name="Parse people results - empty",
+        test_func=test_parse_people_results_empty,
+        test_summary="Tests parsing empty response",
+        method_description="Parses empty dict",
+        expected_outcome="Returns empty list",
+    )
+    suite.run_test(
+        test_name="Parse people results - no included",
+        test_func=test_parse_people_results_no_included,
+        test_summary="Tests parsing response without included key",
+        method_description="Parses dict without included key",
+        expected_outcome="Returns empty list",
+    )
+    suite.run_test(
+        test_name="Parse people results - with person",
+        test_func=test_parse_people_results_with_person,
+        test_summary="Tests parsing valid person data",
+        method_description="Parses realistic Voyager response",
+        expected_outcome="Returns profile with correct fields",
+    )
+    suite.run_test(
+        test_name="Parse company results - empty",
+        test_func=test_parse_company_results_empty,
+        test_summary="Tests parsing empty company response",
+        method_description="Parses empty dict for companies",
+        expected_outcome="Returns empty list",
+    )
+    suite.run_test(
+        test_name="HybridLinkedInLookup init",
+        test_func=test_hybrid_lookup_init,
+        test_summary="Tests HybridLinkedInLookup creation",
+        method_description="Creates HybridLinkedInLookup instance",
+        expected_outcome="Instance created successfully",
+    )
+
+    return suite.finish_suite()
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)
+
+if __name__ == "__main__":
+    run_comprehensive_tests()

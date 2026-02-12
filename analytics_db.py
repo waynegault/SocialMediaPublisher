@@ -1039,3 +1039,8 @@ if __name__ == "__main__":
         end_date=now,
     )
     print(f"\nReport Summary: {report.summary}")
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

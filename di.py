@@ -897,3 +897,8 @@ if __name__ == "__main__":
     print("\nRegistered services:")
     for name, info in container.get_registration_info().items():
         print(f"  - {name}: singleton={info['singleton']}")
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

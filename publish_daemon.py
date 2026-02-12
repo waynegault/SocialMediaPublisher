@@ -286,3 +286,155 @@ Examples:
 
 if __name__ == "__main__":
     main()
+
+
+# ============================================================================
+# Module Tests
+# ============================================================================
+
+
+def _create_module_tests():
+    """Create and run tests for publish_daemon module."""
+    from unittest.mock import MagicMock, patch
+
+    from test_framework import TestSuite
+
+    suite = TestSuite("Publish Daemon", "publish_daemon.py")
+
+    def _make_mock_daemon(check_interval: int = 300) -> PublishDaemon:
+        """Create a PublishDaemon with mocked Database and LinkedInPublisher."""
+        with patch("publish_daemon.Database") as mock_db_cls, \
+             patch("publish_daemon.LinkedInPublisher") as mock_pub_cls:
+            mock_db = MagicMock()
+            mock_pub = MagicMock()
+            mock_db_cls.return_value = mock_db
+            mock_pub_cls.return_value = mock_pub
+            daemon = PublishDaemon(check_interval=check_interval, db_path=":memory:")
+        return daemon
+
+    def test_daemon_init_stores_interval():
+        """Test PublishDaemon stores check_interval."""
+        daemon = _make_mock_daemon(120)
+        assert daemon.check_interval == 120
+
+    def test_daemon_running_default_false():
+        """Test PublishDaemon starts with running=False."""
+        daemon = _make_mock_daemon()
+        assert daemon.running is False
+
+    def test_daemon_handle_shutdown():
+        """Test _handle_shutdown sets running to False."""
+        daemon = _make_mock_daemon()
+        daemon.running = True
+        daemon._handle_shutdown(2, None)
+        assert daemon.running is False
+
+    def test_check_and_publish_no_stories():
+        """Test check_and_publish with no due stories."""
+        daemon = _make_mock_daemon()
+        daemon.db.get_scheduled_stories_due.return_value = []
+        success, failures = daemon.check_and_publish()
+        assert success == 0
+        assert failures == 0
+
+    def test_get_status_returns_dict():
+        """Test get_status returns expected keys."""
+        daemon = _make_mock_daemon()
+        daemon.db.get_scheduled_stories.return_value = []
+        daemon.db.get_scheduled_stories_due.return_value = []
+        daemon.db.get_approved_unpublished_stories.return_value = []
+        status = daemon.get_status()
+        assert isinstance(status, dict)
+        assert "current_time" in status
+        assert "scheduled_count" in status
+        assert status["scheduled_count"] == 0
+        assert status["due_now_count"] == 0
+
+    def test_get_status_with_no_next():
+        """Test get_status when no upcoming scheduled stories."""
+        daemon = _make_mock_daemon()
+        daemon.db.get_scheduled_stories.return_value = []
+        daemon.db.get_scheduled_stories_due.return_value = []
+        daemon.db.get_approved_unpublished_stories.return_value = []
+        status = daemon.get_status()
+        assert status["next_scheduled"] is None
+        assert status["scheduled_stories"] == []
+
+    def test_run_once_delegates():
+        """Test run_once calls check_and_publish."""
+        daemon = _make_mock_daemon()
+        daemon.db.get_scheduled_stories_due.return_value = []
+        success, failures = daemon.run_once()
+        assert success == 0 and failures == 0
+
+    def test_print_status_runs(capsys=None):
+        """Test print_status runs without error."""
+        daemon = _make_mock_daemon()
+        daemon.db.get_scheduled_stories.return_value = []
+        daemon.db.get_scheduled_stories_due.return_value = []
+        daemon.db.get_approved_unpublished_stories.return_value = []
+        print_status(daemon)  # Should not raise
+
+    suite.run_test(
+        test_name="Daemon init stores interval",
+        test_func=test_daemon_init_stores_interval,
+        test_summary="Tests PublishDaemon stores check_interval",
+        method_description="Creates daemon with custom interval",
+        expected_outcome="Interval stored correctly",
+    )
+    suite.run_test(
+        test_name="Daemon running default false",
+        test_func=test_daemon_running_default_false,
+        test_summary="Tests PublishDaemon starts not running",
+        method_description="Checks running flag after init",
+        expected_outcome="running is False",
+    )
+    suite.run_test(
+        test_name="Handle shutdown sets running false",
+        test_func=test_daemon_handle_shutdown,
+        test_summary="Tests _handle_shutdown sets running to False",
+        method_description="Calls _handle_shutdown on running daemon",
+        expected_outcome="running becomes False",
+    )
+    suite.run_test(
+        test_name="Check and publish - no stories",
+        test_func=test_check_and_publish_no_stories,
+        test_summary="Tests check_and_publish with empty queue",
+        method_description="Mocks empty due stories list",
+        expected_outcome="Returns (0, 0)",
+    )
+    suite.run_test(
+        test_name="Get status returns dict",
+        test_func=test_get_status_returns_dict,
+        test_summary="Tests get_status returns expected structure",
+        method_description="Calls get_status on mocked daemon",
+        expected_outcome="Dict with expected keys",
+    )
+    suite.run_test(
+        test_name="Get status no next scheduled",
+        test_func=test_get_status_with_no_next,
+        test_summary="Tests get_status with no upcoming stories",
+        method_description="Calls get_status with empty lists",
+        expected_outcome="next_scheduled is None",
+    )
+    suite.run_test(
+        test_name="Run once delegates to check_and_publish",
+        test_func=test_run_once_delegates,
+        test_summary="Tests run_once calls check_and_publish",
+        method_description="Calls run_once on mocked daemon",
+        expected_outcome="Returns (0, 0) for empty queue",
+    )
+    suite.run_test(
+        test_name="Print status runs",
+        test_func=test_print_status_runs,
+        test_summary="Tests print_status completes without error",
+        method_description="Calls print_status with mocked daemon",
+        expected_outcome="No exception raised",
+    )
+
+    return suite.finish_suite()
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

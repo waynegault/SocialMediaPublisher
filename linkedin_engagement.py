@@ -786,41 +786,32 @@ def _create_module_tests() -> bool:
         """Test LinkedInEngagement class creation."""
         tmpdir = tempfile.mkdtemp()
         db_path = os.path.join(tmpdir, "test_create.db")
-        try:
-            engagement = LinkedInEngagement(db_path=db_path)
-            assert engagement.db_path == db_path
-            assert len(engagement.target_keywords) > 0
-            assert len(engagement.target_companies) > 0
-        except Exception:
-            pass  # Allow test to pass with Windows file issues
+        engagement = LinkedInEngagement(db_path=db_path)
+        assert engagement.db_path == db_path
+        assert len(engagement.target_keywords) > 0
+        assert len(engagement.target_companies) > 0
 
     def test_engagement_default_keywords():
         """Test default target keywords."""
         tmpdir = tempfile.mkdtemp()
         db_path = os.path.join(tmpdir, "test_defaults.db")
-        try:
-            engagement = LinkedInEngagement(db_path=db_path)
-            # Discipline-based keyword should be present
-            discipline_field = Config.DISCIPLINE.replace(
-                " engineer", " engineering"
-            ).replace(" Engineer", " Engineering")
-            assert discipline_field in engagement.target_keywords
-            assert "hydrogen" in engagement.target_keywords
-        except Exception:
-            pass  # Allow test to pass with Windows file issues
+        engagement = LinkedInEngagement(db_path=db_path)
+        # Discipline-based keyword should be present
+        discipline_field = Config.DISCIPLINE.replace(
+            " engineer", " engineering"
+        ).replace(" Engineer", " Engineering")
+        assert discipline_field in engagement.target_keywords
+        assert "hydrogen" in engagement.target_keywords
 
     def test_engagement_custom_keywords():
         """Test custom target keywords."""
         tmpdir = tempfile.mkdtemp()
         db_path = os.path.join(tmpdir, "test_custom.db")
-        try:
-            engagement = LinkedInEngagement(
-                db_path=db_path, target_keywords=["custom1", "custom2"]
-            )
-            assert "custom1" in engagement.target_keywords
-            assert "custom2" in engagement.target_keywords
-        except Exception:
-            pass  # Allow test to pass with Windows file issues
+        engagement = LinkedInEngagement(
+            db_path=db_path, target_keywords=["custom1", "custom2"]
+        )
+        assert "custom1" in engagement.target_keywords
+        assert "custom2" in engagement.target_keywords
 
     def test_get_linkedin_engagement_singleton():
         """Test get_linkedin_engagement returns singleton."""
@@ -938,3 +929,8 @@ def _create_module_tests() -> bool:
     )
 
     return suite.finish_suite()
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

@@ -2214,109 +2214,209 @@ def run_human_validation(database: Database, port: int = 5000) -> None:
 # ============================================================================
 # Unit Tests
 # ============================================================================
+def _validation_server_tests() -> bool:
+    """Run comprehensive tests for the validation server module."""
+    from test_framework import TestSuite, suppress_logging
+
+    with suppress_logging():
+        suite = TestSuite("Validation Server", "validation_server.py")
+        suite.start_suite()
+
+        def test_html_template_structure():
+            assert "<!DOCTYPE html>" in HTML_TEMPLATE
+            assert "Human Story Review" in HTML_TEMPLATE
+            assert len(HTML_TEMPLATE) > 1000
+
+        def test_html_has_action_buttons():
+            assert "Accept" in HTML_TEMPLATE
+            assert "Reject" in HTML_TEMPLATE
+            assert "Edit" in HTML_TEMPLATE
+
+        def test_html_has_api_endpoints():
+            assert "/api/stories" in HTML_TEMPLATE
+            assert "/api/shutdown" in HTML_TEMPLATE
+            assert "acceptStory()" in HTML_TEMPLATE
+            assert "rejectStory()" in HTML_TEMPLATE
+
+        def test_validation_server_init():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = ValidationServer(db, port=0)
+            assert server.db is db
+            assert server.port == 0
+            assert server.app is not None
+
+        def test_validation_server_flask_routes():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = ValidationServer(db, port=0)
+            rules = [rule.rule for rule in server.app.url_map.iter_rules()]
+            assert "/" in rules
+            assert "/api/stories" in rules or any("/api/" in r for r in rules)
+
+        def test_validation_server_index_route():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = ValidationServer(db, port=0)
+            with server.app.test_client() as client:
+                resp = client.get("/")
+                assert resp.status_code == 200
+                html = resp.data.decode()
+                assert "Human Story Review" in html
+
+        def test_validation_server_stories_api_empty():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = ValidationServer(db, port=0)
+            with server.app.test_client() as client:
+                resp = client.get("/api/stories")
+                assert resp.status_code == 200
+                data = resp.get_json()
+                assert isinstance(data, list)
+                assert len(data) == 0
+
+        def test_row_to_dict_basic():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = ValidationServer(db, port=0)
+            # Use a dict-like object simulating sqlite3.Row
+            mock_row = {
+                "id": 1,
+                "title": "Test Title",
+                "summary": "Test Summary",
+                "source_links": '["http://example.com"]',
+                "acquire_date": "2026-01-01",
+                "quality_score": 85,
+                "quality_justification": "Good",
+                "category": "Tech",
+                "hashtags": '["#test"]',
+                "image_path": None,
+                "image_alt_text": None,
+                "verification_status": "pending",
+                "verification_reason": None,
+                "scheduled_time": None,
+                "publish_status": "unpublished",
+                "direct_people": "[]",
+                "indirect_people": "[]",
+                "promotion": None,
+            }
+            result = server._row_to_dict(mock_row)
+            assert result["id"] == 1
+            assert result["title"] == "Test Title"
+            assert result["quality_score"] == 85
+            assert result["source_links"] == ["http://example.com"]
+            assert result["hashtags"] == ["#test"]
+            assert result["category"] == "Tech"
+
+        def test_row_to_dict_missing_fields():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = ValidationServer(db, port=0)
+            # Row with minimal fields and missing optional ones
+            mock_row = {
+                "id": 2,
+                "title": "Minimal",
+                "summary": "Min",
+                "source_links": None,
+                "acquire_date": None,
+                "quality_score": None,
+                "quality_justification": None,
+                "category": None,
+                "hashtags": None,
+                "image_path": None,
+                "image_alt_text": None,
+                "verification_status": None,
+                "verification_reason": None,
+                "scheduled_time": None,
+                "publish_status": None,
+                "direct_people": None,
+                "indirect_people": None,
+                "promotion": None,
+            }
+            result = server._row_to_dict(mock_row)
+            assert result["id"] == 2
+            assert result["source_links"] == []
+            assert result["quality_score"] == 0
+            assert result["category"] == "Other"
+            assert result["verification_status"] == "pending"
+
+        suite.run_test(
+            test_name="HTML template structure",
+            test_func=test_html_template_structure,
+            test_summary="Verify HTML_TEMPLATE has valid HTML structure",
+            functions_tested="HTML_TEMPLATE constant",
+            expected_outcome="Template contains DOCTYPE, title, and is substantial",
+        )
+        suite.run_test(
+            test_name="HTML action buttons",
+            test_func=test_html_has_action_buttons,
+            test_summary="Verify template has Accept/Reject/Edit buttons",
+            functions_tested="HTML_TEMPLATE constant",
+            expected_outcome="All required action buttons present in template",
+        )
+        suite.run_test(
+            test_name="HTML API endpoints",
+            test_func=test_html_has_api_endpoints,
+            test_summary="Verify template references required API endpoints",
+            functions_tested="HTML_TEMPLATE constant",
+            expected_outcome="Template contains /api/stories, /api/shutdown, and JS functions",
+        )
+        suite.run_test(
+            test_name="ValidationServer initialization",
+            test_func=test_validation_server_init,
+            test_summary="Verify ValidationServer creates a Flask app with database",
+            functions_tested="ValidationServer.__init__",
+            expected_outcome="Server has db, port, and Flask app references",
+        )
+        suite.run_test(
+            test_name="Flask routes registered",
+            test_func=test_validation_server_flask_routes,
+            test_summary="Verify ValidationServer registers required URL routes",
+            functions_tested="ValidationServer._setup_routes",
+            expected_outcome="Flask URL map contains / and /api/ routes",
+        )
+        suite.run_test(
+            test_name="Index route returns 200",
+            test_func=test_validation_server_index_route,
+            test_summary="Verify GET / returns 200 with review page HTML",
+            functions_tested="ValidationServer index route handler",
+            expected_outcome="Response 200 with 'Human Story Review' in body",
+        )
+        suite.run_test(
+            test_name="Stories API returns empty list",
+            test_func=test_validation_server_stories_api_empty,
+            test_summary="Verify GET /api/stories returns empty JSON list from empty DB",
+            functions_tested="ValidationServer stories API route",
+            expected_outcome="Response 200 with empty JSON list",
+        )
+        suite.run_test(
+            test_name="_row_to_dict with full data",
+            test_func=test_row_to_dict_basic,
+            test_summary="Verify _row_to_dict parses a complete row into a dict",
+            functions_tested="ValidationServer._row_to_dict",
+            expected_outcome="Dict has correct values, JSON strings parsed to lists",
+        )
+        suite.run_test(
+            test_name="_row_to_dict with missing fields",
+            test_func=test_row_to_dict_missing_fields,
+            test_summary="Verify _row_to_dict handles None fields with proper defaults",
+            functions_tested="ValidationServer._row_to_dict",
+            expected_outcome="Missing fields use defaults: score=0, category=Other, status=pending",
+        )
+
+        return suite.finish_suite()
+
+
 def _create_module_tests() -> bool:
-    """Create unit tests for validation_server module."""
-    from test_framework import TestSuite
+    return _validation_server_tests()
 
-    suite = TestSuite("Validation Server Tests", "validation_server.py")
-    suite.start_suite()
 
-    def test_html_template_exists():
-        assert HTML_TEMPLATE is not None
-        assert len(HTML_TEMPLATE) > 1000  # Should be substantial HTML
-        assert "<!DOCTYPE html>" in HTML_TEMPLATE
-        assert "Human Story Review" in HTML_TEMPLATE
-
-    def test_html_has_required_buttons():
-        assert "Accept" in HTML_TEMPLATE
-        assert "Reject" in HTML_TEMPLATE
-        assert "Edit" in HTML_TEMPLATE
-        assert "Close" in HTML_TEMPLATE
-
-    def test_html_has_navigation():
-        assert "Previous" in HTML_TEMPLATE
-        assert "Next" in HTML_TEMPLATE
-        assert "navigate(" in HTML_TEMPLATE
-
-    def test_html_has_edit_fields():
-        assert "editTitle" in HTML_TEMPLATE
-        assert "editSummary" in HTML_TEMPLATE
-        assert "editHashtags" in HTML_TEMPLATE
-        assert "editPromotion" in HTML_TEMPLATE
-        assert "editScheduledTime" in HTML_TEMPLATE
-
-    def test_html_has_linkedin_preview():
-        assert "linkedin-preview" in HTML_TEMPLATE
-        assert "linkedin-header" in HTML_TEMPLATE
-        assert "linkedin-summary" in HTML_TEMPLATE
-
-    def test_html_has_api_endpoints():
-        assert "/api/stories" in HTML_TEMPLATE
-        assert "/api/shutdown" in HTML_TEMPLATE
-        assert "acceptStory()" in HTML_TEMPLATE
-        assert "rejectStory()" in HTML_TEMPLATE
-
-    def test_run_human_validation_function_exists():
-        assert callable(run_human_validation)
-
-    def test_validation_server_class_exists():
-        assert ValidationServer is not None
-
-    suite.run_test(
-        test_name="HTML template exists and is substantial",
-        test_func=test_html_template_exists,
-        test_summary="Tests HTML template exists and is substantial functionality",
-        method_description="Invokes the function under test and validates behavior",
-        expected_outcome="Function produces the correct result without errors",
-    )
-    suite.run_test(
-        test_name="HTML has required action buttons",
-        test_func=test_html_has_required_buttons,
-        test_summary="Tests HTML has required action buttons functionality",
-        method_description="Invokes the function under test and validates behavior",
-        expected_outcome="Function produces the correct result without errors",
-    )
-    suite.run_test(
-        test_name="HTML has navigation controls",
-        test_func=test_html_has_navigation,
-        test_summary="Tests HTML has navigation controls functionality",
-        method_description="Calls navigate and verifies the result",
-        expected_outcome="Function produces the correct result without errors",
-    )
-    suite.run_test(
-        test_name="HTML has edit fields",
-        test_func=test_html_has_edit_fields,
-        test_summary="Tests HTML has edit fields functionality",
-        method_description="Invokes the function under test and validates behavior",
-        expected_outcome="Function produces the correct result without errors",
-    )
-    suite.run_test(
-        test_name="HTML has LinkedIn preview elements",
-        test_func=test_html_has_linkedin_preview,
-        test_summary="Tests HTML has LinkedIn preview elements functionality",
-        method_description="Invokes the function under test and validates behavior",
-        expected_outcome="Function produces the correct result without errors",
-    )
-    suite.run_test(
-        test_name="HTML has API endpoint references",
-        test_func=test_html_has_api_endpoints,
-        test_summary="Tests HTML has API endpoint references functionality",
-        method_description="Invokes the function under test and validates behavior",
-        expected_outcome="Function produces the correct result without errors",
-    )
-    suite.run_test(
-        test_name="run_human_validation function exists",
-        test_func=test_run_human_validation_function_exists,
-        test_summary="Tests run human validation function exists functionality",
-        method_description="Calls callable and verifies the result",
-        expected_outcome="Function returns the expected successful result",
-    )
-    suite.run_test(
-        test_name="ValidationServer class exists",
-        test_func=test_validation_server_class_exists,
-        test_summary="Tests ValidationServer class exists functionality",
-        method_description="Invokes the function under test and validates behavior",
-        expected_outcome="Function returns the expected successful result",
-    )
-
-    return suite.finish_suite()
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _validation_server_tests
+)

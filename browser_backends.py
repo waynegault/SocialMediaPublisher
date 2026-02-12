@@ -701,10 +701,16 @@ def _create_module_tests() -> bool:
             pass
 
     def test_uc_backend_class_exists():
-        assert callable(UCBrowserBackend)
+        assert issubclass(UCBrowserBackend, BrowserBackend)
+        assert hasattr(UCBrowserBackend, "search")
+        assert hasattr(UCBrowserBackend, "navigate")
+        assert hasattr(UCBrowserBackend, "close")
 
     def test_nodriver_backend_class_exists():
-        assert callable(NodriverBackend)
+        assert issubclass(NodriverBackend, BrowserBackend)
+        assert hasattr(NodriverBackend, "search")
+        assert hasattr(NodriverBackend, "navigate")
+        assert hasattr(NodriverBackend, "close")
 
     suite.run_test(
 
@@ -783,3 +789,8 @@ def _create_module_tests() -> bool:
         expected_outcome="All assertions pass confirming NodriverBackend class works correctly",
     )
     return suite.finish_suite()
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

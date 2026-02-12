@@ -939,3 +939,8 @@ def _create_module_tests() -> bool:
 if __name__ == "__main__":
     cli = create_default_cli()
     sys.exit(cli.run())
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

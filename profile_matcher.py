@@ -1518,15 +1518,20 @@ def _create_module_tests() -> bool:
         assert result == 1
 
     def test_role_type_enum():
-        assert RoleType.ACADEMIC is not None
-        assert RoleType.EXECUTIVE is not None
-        assert RoleType.OTHER is not None
+        assert RoleType.ACADEMIC.value == "academic"
+        assert RoleType.EXECUTIVE.value == "executive"
+        assert RoleType.OTHER.value == "other"
+        # Ensure all expected members exist
+        members = {m.value for m in RoleType}
+        assert "engineer" in members
+        assert "researcher" in members
 
     def test_match_confidence_enum():
-        assert MatchConfidence.HIGH is not None
-        assert MatchConfidence.MEDIUM is not None
-        assert MatchConfidence.LOW is not None
-        assert MatchConfidence.VERIFIED is not None
+        assert MatchConfidence.HIGH.value == "high"
+        assert MatchConfidence.MEDIUM.value == "medium"
+        assert MatchConfidence.LOW.value == "low"
+        assert MatchConfidence.VERIFIED.value == "verified"
+        assert MatchConfidence.REJECTED.value == "rejected"
 
     def test_match_signal_dataclass():
         sig = MatchSignal(name="org_match", weight=2.0, description="Organization matched")
@@ -1586,7 +1591,11 @@ def _create_module_tests() -> bool:
 
     def test_profile_matcher_class():
         pm = ProfileMatcher()
-        assert pm is not None
+        assert pm.HIGH_CONFIDENCE_THRESHOLD == 4.0
+        assert pm.MEDIUM_CONFIDENCE_THRESHOLD == 2.0
+        assert hasattr(pm, "score_candidate")
+        assert hasattr(pm, "WEIGHT_NAME_MATCH")
+        assert pm.WEIGHT_NAME_MATCH > 0
 
     suite.run_test(
 
@@ -1693,3 +1702,8 @@ def _create_module_tests() -> bool:
         expected_outcome="ProfileMatcher class returns a valid result",
     )
     return suite.finish_suite()
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

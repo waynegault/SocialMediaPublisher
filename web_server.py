@@ -24,10 +24,10 @@ import socket
 import subprocess
 import threading
 import webbrowser
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from flask import (
     Blueprint,
@@ -44,59 +44,10 @@ except ImportError:
     CORS = None  # type: ignore
 
 from config import Config
+from dashboard import DashboardMetrics, PipelineStatus
 from database import Database
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Shared Data Classes
-# =============================================================================
-
-
-@dataclass
-class PipelineStatus:
-    """Current status of the content pipeline."""
-
-    status: str = "idle"  # idle, running, paused, error
-    current_stage: str = ""
-    stories_pending: int = 0
-    stories_approved: int = 0
-    stories_rejected: int = 0
-    stories_published: int = 0
-    stories_scheduled: int = 0
-    last_run: Optional[str] = None
-    next_run: Optional[str] = None
-    errors: list[str] = None  # type: ignore
-
-    def __post_init__(self) -> None:
-        if self.errors is None:
-            self.errors = []
-
-
-@dataclass
-class DashboardMetrics:
-    """Dashboard metrics for visualization."""
-
-    total_stories: int = 0
-    stories_today: int = 0
-    avg_quality_score: float = 0.0
-    publish_rate: float = 0.0
-    approval_rate: float = 0.0
-    stories_by_category: dict[str, int] = None  # type: ignore
-    stories_by_status: dict[str, int] = None  # type: ignore
-    daily_activity: list[dict[str, Any]] = None  # type: ignore
-    enrichment_stats: dict[str, Any] = None  # type: ignore
-
-    def __post_init__(self) -> None:
-        if self.stories_by_category is None:
-            self.stories_by_category = {}
-        if self.stories_by_status is None:
-            self.stories_by_status = {}
-        if self.daily_activity is None:
-            self.daily_activity = []
-        if self.enrichment_stats is None:
-            self.enrichment_stats = {}
 
 
 # =============================================================================
@@ -958,58 +909,179 @@ def run_dashboard(database: Database, port: int = 5000) -> None:
 # =============================================================================
 
 
+def _web_server_tests() -> bool:
+    """Run comprehensive tests for the web server module."""
+    from test_framework import TestSuite, suppress_logging
+
+    with suppress_logging():
+        suite = TestSuite("Unified Web Server", "web_server.py")
+        suite.start_suite()
+
+        def test_shared_css_contains_theme_variables():
+            assert ":root" in SHARED_CSS
+            assert "--bg-primary" in SHARED_CSS
+            assert "--bg-secondary" in SHARED_CSS
+
+        def test_landing_template_has_navigation_links():
+            assert "/review" in LANDING_TEMPLATE
+            assert "/dashboard" in LANDING_TEMPLATE
+            assert "Social Media Publisher" in LANDING_TEMPLATE
+
+        def test_unified_web_server_init():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = UnifiedWebServer(db, port=0)
+            assert server.db is db
+            assert server.port == 0
+            assert server.app is not None
+
+        def test_flask_app_has_blueprints():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = UnifiedWebServer(db, port=0)
+            blueprint_names = list(server.app.blueprints.keys())
+            assert "review" in blueprint_names
+            assert "dashboard" in blueprint_names
+            assert "stories_api" in blueprint_names
+
+        def test_landing_page_route():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = UnifiedWebServer(db, port=0)
+            with server.app.test_client() as client:
+                resp = client.get("/")
+                assert resp.status_code == 200
+                html = resp.data.decode()
+                assert "Social Media Publisher" in html
+
+        def test_review_route():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = UnifiedWebServer(db, port=0)
+            with server.app.test_client() as client:
+                resp = client.get("/review/")
+                assert resp.status_code == 200
+
+        def test_dashboard_route():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = UnifiedWebServer(db, port=0)
+            with server.app.test_client() as client:
+                resp = client.get("/dashboard/")
+                assert resp.status_code == 200
+
+        def test_stories_api_list_empty():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = UnifiedWebServer(db, port=0)
+            with server.app.test_client() as client:
+                resp = client.get("/api/stories/")
+                assert resp.status_code == 200
+                data = resp.get_json()
+                assert isinstance(data, list)
+
+        def test_update_pipeline_status():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = UnifiedWebServer(db, port=0)
+            server.update_pipeline_status(status="running", current_stage="search")
+            assert server._pipeline_status.status == "running"
+            assert server._pipeline_status.current_stage == "search"
+
+        def test_generated_images_route():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = UnifiedWebServer(db, port=0)
+            with server.app.test_client() as client:
+                resp = client.get("/generated_images/nonexistent.png")
+                assert resp.status_code == 404
+
+        suite.run_test(
+            test_name="Shared CSS theme variables",
+            test_func=test_shared_css_contains_theme_variables,
+            test_summary="Verify SHARED_CSS contains CSS custom properties for theming",
+            functions_tested="SHARED_CSS constant",
+            expected_outcome="CSS contains :root with --bg-primary and --bg-secondary",
+        )
+        suite.run_test(
+            test_name="Landing template navigation",
+            test_func=test_landing_template_has_navigation_links,
+            test_summary="Verify landing page template has links to review and dashboard",
+            functions_tested="LANDING_TEMPLATE constant",
+            expected_outcome="Template contains /review and /dashboard links",
+        )
+        suite.run_test(
+            test_name="UnifiedWebServer initialization",
+            test_func=test_unified_web_server_init,
+            test_summary="Verify server initializes with database and Flask app",
+            functions_tested="UnifiedWebServer.__init__",
+            expected_outcome="Server has db reference, port, and Flask app",
+        )
+        suite.run_test(
+            test_name="Flask blueprints registered",
+            test_func=test_flask_app_has_blueprints,
+            test_summary="Verify all required Flask blueprints are registered",
+            functions_tested="UnifiedWebServer.__init__",
+            expected_outcome="review, dashboard, and stories_api blueprints exist",
+        )
+        suite.run_test(
+            test_name="Landing page returns 200",
+            test_func=test_landing_page_route,
+            test_summary="Verify GET / returns 200 with landing page HTML",
+            functions_tested="Flask landing route",
+            expected_outcome="Response status 200 with 'Social Media Publisher' in body",
+        )
+        suite.run_test(
+            test_name="Review route returns 200",
+            test_func=test_review_route,
+            test_summary="Verify GET /review/ returns 200",
+            functions_tested="create_review_blueprint / route",
+            expected_outcome="Response status 200",
+        )
+        suite.run_test(
+            test_name="Dashboard route returns 200",
+            test_func=test_dashboard_route,
+            test_summary="Verify GET /dashboard/ returns 200",
+            functions_tested="create_dashboard_blueprint / route",
+            expected_outcome="Response status 200",
+        )
+        suite.run_test(
+            test_name="Stories API returns empty list",
+            test_func=test_stories_api_list_empty,
+            test_summary="Verify GET /api/stories/ returns JSON list from empty DB",
+            functions_tested="create_stories_api_blueprint / list route",
+            expected_outcome="Response is 200 with empty JSON list",
+        )
+        suite.run_test(
+            test_name="Update pipeline status",
+            test_func=test_update_pipeline_status,
+            test_summary="Verify update_pipeline_status changes internal state",
+            functions_tested="UnifiedWebServer.update_pipeline_status",
+            expected_outcome="Pipeline status and stage are updated",
+        )
+        suite.run_test(
+            test_name="Missing image returns 404",
+            test_func=test_generated_images_route,
+            test_summary="Verify request for non-existent image returns 404",
+            functions_tested="generated_images static file route",
+            expected_outcome="Response status 404",
+        )
+
+        return suite.finish_suite()
+
+
 def _create_module_tests() -> bool:
-    """Create unit tests for web_server module."""
-    from test_framework import TestSuite
+    return _web_server_tests()
 
-    suite = TestSuite("Unified Web Server Tests", "web_server.py")
-    suite.start_suite()
 
-    def test_pipeline_status_dataclass():
-        status = PipelineStatus()
-        assert status.status == "idle"
-        assert status.errors == []
-
-    def test_dashboard_metrics_dataclass():
-        metrics = DashboardMetrics()
-        assert metrics.total_stories == 0
-        assert metrics.stories_by_category == {}
-
-    def test_shared_css_exists():
-        assert SHARED_CSS is not None
-        assert len(SHARED_CSS) > 100
-
-    def test_landing_template_exists():
-        assert LANDING_TEMPLATE is not None
-        assert "Social Media Publisher" in LANDING_TEMPLATE
-
-    suite.run_test(
-        test_name="PipelineStatus dataclass",
-        test_func=test_pipeline_status_dataclass,
-        test_summary="Tests PipelineStatus dataclass functionality",
-        method_description="Calls PipelineStatus and verifies the result",
-        expected_outcome="Function returns an empty collection",
-    )
-    suite.run_test(
-        test_name="DashboardMetrics dataclass",
-        test_func=test_dashboard_metrics_dataclass,
-        test_summary="Tests DashboardMetrics dataclass functionality",
-        method_description="Calls DashboardMetrics and verifies the result",
-        expected_outcome="Function returns an empty collection",
-    )
-    suite.run_test(
-        test_name="Shared CSS exists",
-        test_func=test_shared_css_exists,
-        test_summary="Tests Shared CSS exists functionality",
-        method_description="Invokes the function under test and validates behavior",
-        expected_outcome="Function produces the correct result without errors",
-    )
-    suite.run_test(
-        test_name="Landing template exists",
-        test_func=test_landing_template_exists,
-        test_summary="Tests Landing template exists functionality",
-        method_description="Invokes the function under test and validates behavior",
-        expected_outcome="Function produces the correct result without errors",
-    )
-
-    return suite.finish_suite()
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _web_server_tests
+)

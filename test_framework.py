@@ -46,6 +46,7 @@ __all__ = [
     "MagicMock",
     "MockLogger",
     "TestSuite",
+    "create_standard_test_runner",
     "patch",
     "suppress_logging",
 ]
@@ -350,3 +351,37 @@ class MockLogger:
                 text in m["message"] for m in self.messages if m["level"] == level
             )
         return any(text in m["message"] for m in self.messages)
+
+
+def create_standard_test_runner(
+    module_test_function: Callable[[], bool],
+) -> Callable[[], bool]:
+    """Create a standardized test runner that wraps a module's test function.
+
+    Consolidates the ``_create_module_tests`` / ``run_comprehensive_tests``
+    pattern so every module can expose a discoverable entry-point with a
+    single line::
+
+        run_comprehensive_tests = create_standard_test_runner(my_tests)
+
+    The wrapper prints a minimal pass/fail summary that ``run_tests.py`` can
+    parse, and returns the boolean result of *module_test_function*.
+    """
+
+    def run_comprehensive_tests() -> bool:
+        try:
+            result = module_test_function()
+            if result:
+                print("\u2705 Passed: 1")
+                print("\u274c Failed: 0")
+            else:
+                print("\u2705 Passed: 0")
+                print("\u274c Failed: 1")
+            return result
+        except Exception as e:
+            print(f"\u274c Test execution failed: {e}")
+            print("\u2705 Passed: 0")
+            print("\u274c Failed: 1")
+            return False
+
+    return run_comprehensive_tests

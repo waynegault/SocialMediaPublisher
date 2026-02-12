@@ -463,3 +463,8 @@ def _create_module_tests() -> bool:
         expected_outcome="Profile defaults returns the expected value",
     )
     return suite.finish_suite()
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

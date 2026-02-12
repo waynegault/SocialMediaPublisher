@@ -1011,9 +1011,11 @@ def _create_module_tests() -> bool:
         """Test NEREngine basic extraction."""
         engine = NEREngine()
         result = engine.extract_entities("BASF announced a new partnership with MIT.")
-        # Should find entities (depends on spaCy being installed)
         assert result is not None
         assert result.text == "BASF announced a new partnership with MIT."
+        # Should find at least one entity (BASF or MIT)
+        entity_texts = [e.text for e in result.all_entities]
+        assert len(entity_texts) > 0 or len(result.organizations) > 0
 
     def test_get_ner_engine_singleton():
         """Test get_ner_engine returns singleton."""
@@ -1138,3 +1140,8 @@ def _create_module_tests() -> bool:
     )
 
     return suite.finish_suite()
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

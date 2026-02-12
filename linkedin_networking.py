@@ -681,54 +681,42 @@ def _create_module_tests() -> bool:
         """Test LinkedInNetworking class creation."""
         tmpdir = tempfile.mkdtemp()
         db_path = os.path.join(tmpdir, "test_net1.db")
-        try:
-            networking = LinkedInNetworking(db_path=db_path)
-            assert networking.db_path == db_path
-            # my_role is derived from Config.DISCIPLINE
-            assert "Professional" in networking.my_role
-        except Exception:
-            pass  # Allow test to pass with Windows file issues
+        networking = LinkedInNetworking(db_path=db_path)
+        assert networking.db_path == db_path
+        # my_role is derived from Config.DISCIPLINE
+        assert "Professional" in networking.my_role
 
     def test_networking_custom_role():
         """Test LinkedInNetworking with custom role."""
         tmpdir = tempfile.mkdtemp()
         db_path = os.path.join(tmpdir, "test_net2.db")
-        try:
-            networking = LinkedInNetworking(db_path=db_path, my_role="Senior Engineer")
-            assert networking.my_role == "Senior Engineer"
-        except Exception:
-            pass  # Allow test to pass with Windows file issues
+        networking = LinkedInNetworking(db_path=db_path, my_role="Senior Engineer")
+        assert networking.my_role == "Senior Engineer"
 
     def test_create_connection_request():
         """Test create_connection_request method."""
         tmpdir = tempfile.mkdtemp()
         db_path = os.path.join(tmpdir, "test_net3.db")
-        try:
-            networking = LinkedInNetworking(db_path=db_path)
-            request = networking.create_connection_request(
-                target_name="Test Person",
-                target_profile_url="https://linkedin.com/in/testperson",
-                target_company="TestCorp",
-            )
-            assert request.target_name == "Test Person"
-            assert len(request.message) > 0
-        except Exception:
-            pass  # Allow test to pass with Windows file issues
+        networking = LinkedInNetworking(db_path=db_path)
+        request = networking.create_connection_request(
+            target_name="Test Person",
+            target_profile_url="https://linkedin.com/in/testperson",
+            target_company="TestCorp",
+        )
+        assert request.target_name == "Test Person"
+        assert len(request.message) > 0
 
     def test_create_connection_request_custom_message():
         """Test create_connection_request with custom message."""
         tmpdir = tempfile.mkdtemp()
         db_path = os.path.join(tmpdir, "test_net4.db")
-        try:
-            networking = LinkedInNetworking(db_path=db_path)
-            request = networking.create_connection_request(
-                target_name="Test Person",
-                custom_message="Custom connection message!",
-            )
-            assert request.message == "Custom connection message!"
-            assert request.template_used == "custom"
-        except Exception:
-            pass  # Allow test to pass with Windows file issues
+        networking = LinkedInNetworking(db_path=db_path)
+        request = networking.create_connection_request(
+            target_name="Test Person",
+            custom_message="Custom connection message!",
+        )
+        assert request.message == "Custom connection message!"
+        assert request.template_used == "custom"
 
     def test_get_linkedin_networking_singleton():
         """Test get_linkedin_networking returns singleton."""
@@ -832,3 +820,8 @@ def _create_module_tests() -> bool:
     )
 
     return suite.finish_suite()
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

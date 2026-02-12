@@ -551,42 +551,181 @@ class FreshLinkedInAPIClient:
             return False
 
 
-# NOTE: HybridLinkedInLookup has been consolidated into linkedin_voyager_client.py
-# The class there orchestrates RapidAPI, Voyager API, and browser fallback in priority order.
-# Import from linkedin_voyager_client instead:
-#   from linkedin_voyager_client import HybridLinkedInLookup
+# ============================================================================
+# Module Tests
+# ============================================================================
 
 
-def extract_public_id(linkedin_url: str) -> Optional[str]:
-    """
-    Extract the public ID from a LinkedIn URL.
+def _create_module_tests():
+    """Create and run tests for linkedin_rapidapi_client module."""
+    from test_framework import TestSuite
 
-    Examples:
-        https://www.linkedin.com/in/john-smith-123 -> john-smith-123
-        https://linkedin.com/in/jane-doe -> jane-doe
-    """
-    if not linkedin_url:
-        return None
+    suite = TestSuite("LinkedIn RapidAPI Client", "linkedin_rapidapi_client.py")
 
-    import re
+    def _make_client():
+        """Create a FreshLinkedInAPIClient with no API key."""
+        return FreshLinkedInAPIClient(api_key="test-key-not-real")
 
-    match = re.search(r"linkedin\.com/in/([^/?]+)", linkedin_url)
-    if match:
-        return match.group(1)
+    def test_client_init():
+        """Test client initialization with explicit key."""
+        client = FreshLinkedInAPIClient(api_key="my-test-key")
+        assert client.api_key == "my-test-key"
+        assert client._request_count == 0
+        assert client._cache_hits == 0
+        assert client._api_calls == 0
 
-    return None
+    def test_client_base_url():
+        """Test client has correct API endpoint."""
+        assert "rapidapi.com" in FreshLinkedInAPIClient.BASE_URL
+        assert "rapidapi.com" in FreshLinkedInAPIClient.API_HOST
+
+    def test_get_cache_key_deterministic():
+        """Test _get_cache_key produces consistent keys."""
+        client = _make_client()
+        key1 = client._get_cache_key("John Smith", "Google")
+        key2 = client._get_cache_key("John Smith", "Google")
+        assert key1 == key2
+        assert key1.startswith("linkedin_profile:")
+
+    def test_get_cache_key_case_insensitive():
+        """Test _get_cache_key normalizes case."""
+        client = _make_client()
+        key1 = client._get_cache_key("John Smith", "Google")
+        key2 = client._get_cache_key("JOHN SMITH", "GOOGLE")
+        assert key1 == key2
+
+    def test_get_cache_key_trims_whitespace():
+        """Test _get_cache_key trims whitespace."""
+        client = _make_client()
+        key1 = client._get_cache_key("John Smith", "Google")
+        key2 = client._get_cache_key("  John Smith  ", "  Google  ")
+        assert key1 == key2
+
+    def test_get_cache_key_different_inputs():
+        """Test _get_cache_key produces different keys for different inputs."""
+        client = _make_client()
+        key1 = client._get_cache_key("Alice", "Acme")
+        key2 = client._get_cache_key("Bob", "Acme")
+        assert key1 != key2
+
+    def test_extract_company_from_headline_target():
+        """Test _extract_company_from_headline finds target company."""
+        client = _make_client()
+        result = client._extract_company_from_headline("CTO at Google", "Google")
+        assert result == "Google"
+
+    def test_extract_company_from_headline_at_pattern():
+        """Test _extract_company_from_headline extracts after 'at'."""
+        client = _make_client()
+        result = client._extract_company_from_headline("Engineer at Microsoft Corp", "Acme")
+        assert "Microsoft" in result
+
+    def test_extract_company_from_headline_empty():
+        """Test _extract_company_from_headline handles empty input."""
+        client = _make_client()
+        result = client._extract_company_from_headline("", "Google")
+        assert result == ""
+
+    def test_get_stats_initial():
+        """Test get_stats returns zeroed initial stats."""
+        client = _make_client()
+        stats = client.get_stats()
+        assert stats["total_requests"] == 0
+        assert stats["api_calls"] == 0
+        assert stats["cache_hits"] == 0
+        assert stats["cache_hit_rate"] == 0.0
+
+    def test_check_from_cache_no_cache():
+        """Test _check_from_cache returns None when no cache."""
+        client = FreshLinkedInAPIClient(api_key="test-key-not-real")
+        client.cache = None
+        result = client._check_from_cache("John", "Google")
+        assert result is None
+
+    suite.run_test(
+        test_name="Client initialization",
+        test_func=test_client_init,
+        test_summary="Tests client stores key and zeroes counters",
+        method_description="Creates client with explicit API key",
+        expected_outcome="Key stored, counters at zero",
+    )
+    suite.run_test(
+        test_name="Client base URL",
+        test_func=test_client_base_url,
+        test_summary="Tests API endpoint constants",
+        method_description="Checks BASE_URL and API_HOST",
+        expected_outcome="URLs reference rapidapi.com",
+    )
+    suite.run_test(
+        test_name="Cache key deterministic",
+        test_func=test_get_cache_key_deterministic,
+        test_summary="Tests _get_cache_key consistency",
+        method_description="Generates same key twice for same input",
+        expected_outcome="Keys match and have correct prefix",
+    )
+    suite.run_test(
+        test_name="Cache key case insensitive",
+        test_func=test_get_cache_key_case_insensitive,
+        test_summary="Tests _get_cache_key case normalization",
+        method_description="Compares keys for differently-cased inputs",
+        expected_outcome="Keys match regardless of case",
+    )
+    suite.run_test(
+        test_name="Cache key trims whitespace",
+        test_func=test_get_cache_key_trims_whitespace,
+        test_summary="Tests _get_cache_key whitespace handling",
+        method_description="Compares keys for inputs with extra spaces",
+        expected_outcome="Keys match regardless of whitespace",
+    )
+    suite.run_test(
+        test_name="Cache key different inputs",
+        test_func=test_get_cache_key_different_inputs,
+        test_summary="Tests _get_cache_key uniqueness",
+        method_description="Generates keys for different people",
+        expected_outcome="Keys differ for different inputs",
+    )
+    suite.run_test(
+        test_name="Extract company - target match",
+        test_func=test_extract_company_from_headline_target,
+        test_summary="Tests headline extraction when target present",
+        method_description="Passes headline containing target company",
+        expected_outcome="Returns target company name",
+    )
+    suite.run_test(
+        test_name="Extract company - at pattern",
+        test_func=test_extract_company_from_headline_at_pattern,
+        test_summary="Tests headline extraction with 'at' pattern",
+        method_description="Passes headline with 'at Company' pattern",
+        expected_outcome="Extracts company after 'at'",
+    )
+    suite.run_test(
+        test_name="Extract company - empty",
+        test_func=test_extract_company_from_headline_empty,
+        test_summary="Tests headline extraction with empty input",
+        method_description="Passes empty headline string",
+        expected_outcome="Returns empty string",
+    )
+    suite.run_test(
+        test_name="Get stats initial",
+        test_func=test_get_stats_initial,
+        test_summary="Tests get_stats returns zeroed stats",
+        method_description="Gets stats from fresh client",
+        expected_outcome="All counters at zero",
+    )
+    suite.run_test(
+        test_name="Check from cache - no cache",
+        test_func=test_check_from_cache_no_cache,
+        test_summary="Tests cache check when no cache configured",
+        method_description="Calls _check_from_cache with no cache",
+        expected_outcome="Returns None",
+    )
+
+    return suite.finish_suite()
 
 
-def format_linkedin_mention(profile: Dict[str, Any]) -> str:
-    """
-    Format a LinkedIn profile for @mention in content.
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)
 
-    Returns a Markdown-style mention like:
-    [John Smith](https://linkedin.com/in/john-smith)
-    """
-    name = profile.get("name", profile.get("full_name", "Unknown"))
-    url = profile.get("linkedin_url", "")
-
-    if url:
-        return f"[{name}]({url})"
-    return name
+if __name__ == "__main__":
+    run_comprehensive_tests()

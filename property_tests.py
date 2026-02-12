@@ -801,3 +801,8 @@ if __name__ == "__main__":
     # Exit with appropriate code
     all_passed = all(r.passed for r in results)
     sys.exit(0 if all_passed else 1)
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

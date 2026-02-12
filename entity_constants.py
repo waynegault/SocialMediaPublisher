@@ -333,14 +333,21 @@ def _create_module_tests() -> bool:
     def test_invalid_org_names_set_exists():
         assert isinstance(INVALID_ORG_NAMES, (set, frozenset))
         assert len(INVALID_ORG_NAMES) > 0
+        assert "agency" in INVALID_ORG_NAMES
+        assert "department" in INVALID_ORG_NAMES
+        assert "BASF" not in INVALID_ORG_NAMES
 
     def test_invalid_person_names_set_exists():
         assert isinstance(INVALID_PERSON_NAMES, (set, frozenset))
         assert len(INVALID_PERSON_NAMES) > 0
+        assert "anonymous" in INVALID_PERSON_NAMES or "Anonymous" in INVALID_PERSON_NAMES
+        assert "John Smith" not in INVALID_PERSON_NAMES
 
     def test_valid_single_word_orgs_set_exists():
         assert isinstance(VALID_SINGLE_WORD_ORGS, (set, frozenset))
         assert len(VALID_SINGLE_WORD_ORGS) > 0
+        assert "nasa" in VALID_SINGLE_WORD_ORGS or "ibm" in VALID_SINGLE_WORD_ORGS
+        assert "randomword" not in VALID_SINGLE_WORD_ORGS
 
     suite.run_test(
 
@@ -419,3 +426,8 @@ def _create_module_tests() -> bool:
         expected_outcome="VALID_SINGLE_WORD_ORGS exists returns the correct type; Result falls within expected bounds",
     )
     return suite.finish_suite()
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

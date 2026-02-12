@@ -952,38 +952,195 @@ def get_dashboard_server(database: Optional[Database] = None) -> DashboardServer
 # =============================================================================
 
 
+def _dashboard_tests() -> bool:
+    """Run comprehensive tests for the dashboard module."""
+    from test_framework import TestSuite, suppress_logging
+
+    with suppress_logging():
+        suite = TestSuite("Web Dashboard", "dashboard.py")
+        suite.start_suite()
+
+        def test_pipeline_status_defaults():
+            status = PipelineStatus()
+            assert status.status == "idle"
+            assert status.current_stage == ""
+            assert status.stories_pending == 0
+            assert status.stories_published == 0
+            assert status.errors == []
+            assert status.last_run is None
+
+        def test_pipeline_status_custom_values():
+            status = PipelineStatus(
+                status="running",
+                current_stage="enrichment",
+                stories_pending=5,
+                stories_approved=3,
+                stories_published=2,
+            )
+            assert status.status == "running"
+            assert status.current_stage == "enrichment"
+            assert status.stories_pending == 5
+            assert status.stories_approved == 3
+            assert status.stories_published == 2
+
+        def test_dashboard_metrics_defaults():
+            metrics = DashboardMetrics()
+            assert metrics.total_stories == 0
+            assert metrics.avg_quality_score == 0.0
+            assert metrics.publish_rate == 0.0
+            assert metrics.stories_by_category == {}
+            assert metrics.stories_by_status == {}
+            assert metrics.daily_activity == []
+            assert metrics.enrichment_stats == {}
+
+        def test_dashboard_metrics_rates():
+            metrics = DashboardMetrics(
+                total_stories=100,
+                publish_rate=0.75,
+                approval_rate=0.9,
+            )
+            assert metrics.total_stories == 100
+            assert metrics.publish_rate == 0.75
+            assert metrics.approval_rate == 0.9
+
+        def test_dashboard_template_has_required_structure():
+            assert "<!DOCTYPE html>" in DASHBOARD_TEMPLATE
+            assert "<title>" in DASHBOARD_TEMPLATE
+            assert "Dashboard" in DASHBOARD_TEMPLATE
+            assert "fetch(" in DASHBOARD_TEMPLATE  # Has API calls
+            assert "/api/" in DASHBOARD_TEMPLATE  # References API endpoints
+
+        def test_dashboard_server_init():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = DashboardServer(db, port=0)
+            assert server.db is db
+            assert server.port == 0
+            assert server._pipeline_status.status == "idle"
+
+        def test_update_pipeline_status():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = DashboardServer(db, port=0)
+            server.update_pipeline_status(status="running", current_stage="search")
+            assert server._pipeline_status.status == "running"
+            assert server._pipeline_status.current_stage == "search"
+
+        def test_update_pipeline_status_all_fields():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = DashboardServer(db, port=0)
+            server.update_pipeline_status(
+                status="running",
+                current_stage="publish",
+                last_run="2024-01-01T00:00:00",
+                next_run="2024-01-02T00:00:00",
+            )
+            assert server._pipeline_status.status == "running"
+            assert server._pipeline_status.current_stage == "publish"
+            assert server._pipeline_status.last_run == "2024-01-01T00:00:00"
+            assert server._pipeline_status.next_run == "2024-01-02T00:00:00"
+
+        def test_calculate_metrics_empty_db():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = DashboardServer(db, port=0)
+            metrics = server._calculate_metrics()
+            assert metrics.total_stories == 0
+            assert metrics.avg_quality_score == 0.0
+            assert metrics.publish_rate == 0.0
+
+        def test_get_story_queue_empty_db():
+            import tempfile
+            tmp = tempfile.mkdtemp()
+            db = Database(f"{tmp}/test.db")
+            server = DashboardServer(db, port=0)
+            queue = server._get_story_queue()
+            assert isinstance(queue, list)
+            assert len(queue) == 0
+
+        suite.run_test(
+            test_name="PipelineStatus defaults",
+            test_func=test_pipeline_status_defaults,
+            test_summary="Verify PipelineStatus dataclass has correct default values",
+            functions_tested="PipelineStatus.__init__, PipelineStatus.__post_init__",
+            expected_outcome="All fields have correct defaults including errors as empty list",
+        )
+        suite.run_test(
+            test_name="PipelineStatus custom values",
+            test_func=test_pipeline_status_custom_values,
+            test_summary="Verify PipelineStatus accepts and stores custom field values",
+            functions_tested="PipelineStatus.__init__",
+            expected_outcome="Fields match the provided values",
+        )
+        suite.run_test(
+            test_name="DashboardMetrics defaults",
+            test_func=test_dashboard_metrics_defaults,
+            test_summary="Verify DashboardMetrics dataclass initializes all mutable defaults",
+            functions_tested="DashboardMetrics.__init__, DashboardMetrics.__post_init__",
+            expected_outcome="All mutable fields are initialized to empty collections",
+        )
+        suite.run_test(
+            test_name="DashboardMetrics rate fields",
+            test_func=test_dashboard_metrics_rates,
+            test_summary="Verify DashboardMetrics stores rate calculations correctly",
+            functions_tested="DashboardMetrics.__init__",
+            expected_outcome="publish_rate and approval_rate match provided values",
+        )
+        suite.run_test(
+            test_name="Dashboard template structure",
+            test_func=test_dashboard_template_has_required_structure,
+            test_summary="Verify DASHBOARD_TEMPLATE contains essential HTML and API references",
+            functions_tested="DASHBOARD_TEMPLATE constant",
+            expected_outcome="Template contains DOCTYPE, title, fetch calls, and API endpoints",
+        )
+        suite.run_test(
+            test_name="DashboardServer initialization",
+            test_func=test_dashboard_server_init,
+            test_summary="Verify DashboardServer initializes with correct database and defaults",
+            functions_tested="DashboardServer.__init__",
+            expected_outcome="Server has db reference and idle pipeline status",
+        )
+        suite.run_test(
+            test_name="Update pipeline status",
+            test_func=test_update_pipeline_status,
+            test_summary="Verify update_pipeline_status changes status and stage fields",
+            functions_tested="DashboardServer.update_pipeline_status",
+            expected_outcome="Pipeline status fields are updated to new values",
+        )
+        suite.run_test(
+            test_name="Update pipeline all fields",
+            test_func=test_update_pipeline_status_all_fields,
+            test_summary="Verify update_pipeline_status sets all four supported fields",
+            functions_tested="DashboardServer.update_pipeline_status",
+            expected_outcome="All pipeline status fields are updated to new values",
+        )
+        suite.run_test(
+            test_name="Calculate metrics on empty DB",
+            test_func=test_calculate_metrics_empty_db,
+            test_summary="Verify _calculate_metrics returns zero values for empty database",
+            functions_tested="DashboardServer._calculate_metrics",
+            expected_outcome="All counts and rates are zero",
+        )
+        suite.run_test(
+            test_name="Story queue on empty DB",
+            test_func=test_get_story_queue_empty_db,
+            test_summary="Verify _get_story_queue returns empty list for empty database",
+            functions_tested="DashboardServer._get_story_queue",
+            expected_outcome="Returns empty list",
+        )
+
+        return suite.finish_suite()
+
+
 def _create_module_tests() -> bool:
-    """Create unit tests for dashboard module."""
-    from test_framework import TestSuite
+    return _dashboard_tests()
 
-    suite = TestSuite("Web Dashboard Tests", "dashboard.py")
-    suite.start_suite()
 
-    def test_pipeline_status_dataclass():
-        """Test PipelineStatus defaults."""
-        status = PipelineStatus()
-        assert status.status == "idle"
-        assert status.errors == []
-
-    def test_dashboard_metrics_dataclass():
-        """Test DashboardMetrics defaults."""
-        metrics = DashboardMetrics()
-        assert metrics.total_stories == 0
-        assert metrics.stories_by_category == {}
-
-    suite.run_test(
-        test_name="PipelineStatus dataclass",
-        test_func=test_pipeline_status_dataclass,
-        test_summary="Tests PipelineStatus dataclass functionality",
-        method_description="Calls PipelineStatus and verifies the result",
-        expected_outcome="Function returns an empty collection",
-    )
-    suite.run_test(
-        test_name="DashboardMetrics dataclass",
-        test_func=test_dashboard_metrics_dataclass,
-        test_summary="Tests DashboardMetrics dataclass functionality",
-        method_description="Calls DashboardMetrics and verifies the result",
-        expected_outcome="Function returns an empty collection",
-    )
-
-    return suite.finish_suite()
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _dashboard_tests
+)

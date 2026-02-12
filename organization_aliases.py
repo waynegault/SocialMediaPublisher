@@ -311,3 +311,8 @@ def _create_module_tests() -> bool:
         expected_outcome="Function returns True for canonical name input; is_known_org returns a valid result",
     )
     return suite.finish_suite()
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

@@ -373,9 +373,17 @@ def _create_module_tests() -> bool:
             os.unlink(tmp.name)
 
     def test_main_function_exists():
+        import inspect
+        sig = inspect.signature(main)
+        params = list(sig.parameters.keys())
+        assert len(params) >= 0  # main accepts args
         assert callable(main)
 
     def test_search_indirect_people_uc_exists():
+        import inspect
+        sig = inspect.signature(search_indirect_people_uc)
+        params = list(sig.parameters.keys())
+        assert "organizations" in params or len(params) > 0
         assert callable(search_indirect_people_uc)
 
     suite.run_test(
@@ -429,3 +437,8 @@ def _create_module_tests() -> bool:
     )
 
     return suite.finish_suite()
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

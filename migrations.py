@@ -955,3 +955,8 @@ if __name__ == "__main__":
     result = migrator.migrate(dry_run=True)
     for applied in result.applied:
         print(f"  {applied}")
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

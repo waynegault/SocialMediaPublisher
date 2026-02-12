@@ -243,3 +243,143 @@ class BrowserSession:
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.close()
+
+
+# ============================================================================
+# Module Tests
+# ============================================================================
+
+
+def _create_module_tests():
+    """Create and run tests for browser module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("Browser", "browser.py")
+
+    def test_uc_available_is_bool():
+        """Test UC_AVAILABLE is a boolean."""
+        assert isinstance(UC_AVAILABLE, bool)
+
+    def test_quit_driver_safely_none():
+        """Test quit_driver_safely handles None gracefully."""
+        quit_driver_safely(None)  # Should not raise
+
+    def test_quit_driver_safely_mock():
+        """Test quit_driver_safely calls quit on driver."""
+        class MockDriver:
+            def __init__(self):
+                self.quit_called = False
+
+            def quit(self):
+                self.quit_called = True
+
+        driver = MockDriver()
+        quit_driver_safely(driver)
+        assert driver.quit_called
+
+    def test_quit_driver_safely_error():
+        """Test quit_driver_safely suppresses exceptions."""
+        class BadDriver:
+            def quit(self):
+                raise RuntimeError("Browser crashed")
+
+        quit_driver_safely(BadDriver())  # Should not raise
+
+    def test_browser_session_init():
+        """Test BrowserSession stores parameters."""
+        session = BrowserSession(headless=False, timeout=60, extra_options=["--incognito"])
+        assert session.headless is False
+        assert session.timeout == 60
+        assert session.extra_options == ["--incognito"]
+        assert session._driver is None
+
+    def test_browser_session_close_without_driver():
+        """Test BrowserSession close when no driver has been created."""
+        session = BrowserSession()
+        session.close()  # Should not raise
+        assert session._driver is None
+
+    def test_browser_session_context_manager():
+        """Test BrowserSession context manager protocol."""
+        session = BrowserSession()
+        assert hasattr(session, "__enter__")
+        assert hasattr(session, "__exit__")
+        # Enter returns self
+        result = session.__enter__()
+        assert result is session
+
+    def test_create_chrome_driver_no_uc():
+        """Test create_chrome_driver raises ImportError when UC not available."""
+        if not UC_AVAILABLE:
+            try:
+                create_chrome_driver()
+                assert False, "Should have raised ImportError"
+            except ImportError as e:
+                assert "undetected-chromedriver" in str(e)
+
+    suite.run_test(
+        test_name="UC_AVAILABLE is boolean",
+        test_func=test_uc_available_is_bool,
+        test_summary="Tests UC_AVAILABLE constant type",
+        method_description="Checks that UC_AVAILABLE is a boolean",
+        expected_outcome="UC_AVAILABLE is a bool",
+    )
+    suite.run_test(
+        test_name="quit_driver_safely handles None",
+        test_func=test_quit_driver_safely_none,
+        test_summary="Tests quit_driver_safely with None input",
+        method_description="Passes None to quit_driver_safely",
+        expected_outcome="No exception raised",
+    )
+    suite.run_test(
+        test_name="quit_driver_safely calls quit",
+        test_func=test_quit_driver_safely_mock,
+        test_summary="Tests quit_driver_safely calls quit on driver",
+        method_description="Passes a mock driver to quit_driver_safely",
+        expected_outcome="Driver.quit() is called",
+    )
+    suite.run_test(
+        test_name="quit_driver_safely suppresses errors",
+        test_func=test_quit_driver_safely_error,
+        test_summary="Tests quit_driver_safely suppresses exceptions",
+        method_description="Passes a driver that raises on quit",
+        expected_outcome="No exception propagated",
+    )
+    suite.run_test(
+        test_name="BrowserSession initialization",
+        test_func=test_browser_session_init,
+        test_summary="Tests BrowserSession stores parameters",
+        method_description="Creates BrowserSession with custom params",
+        expected_outcome="Parameters stored correctly",
+    )
+    suite.run_test(
+        test_name="BrowserSession close without driver",
+        test_func=test_browser_session_close_without_driver,
+        test_summary="Tests BrowserSession close without active driver",
+        method_description="Calls close on a fresh session",
+        expected_outcome="No exception raised",
+    )
+    suite.run_test(
+        test_name="BrowserSession context manager",
+        test_func=test_browser_session_context_manager,
+        test_summary="Tests BrowserSession context manager protocol",
+        method_description="Verifies __enter__ and __exit__",
+        expected_outcome="Enter returns self",
+    )
+    suite.run_test(
+        test_name="create_chrome_driver without UC",
+        test_func=test_create_chrome_driver_no_uc,
+        test_summary="Tests ImportError when UC unavailable",
+        method_description="Calls create_chrome_driver without UC",
+        expected_outcome="ImportError raised with helpful message",
+    )
+
+    return suite.finish_suite()
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)
+
+if __name__ == "__main__":
+    run_comprehensive_tests()

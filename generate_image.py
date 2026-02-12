@@ -651,3 +651,149 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ============================================================================
+# Module Tests
+# ============================================================================
+
+
+def _create_module_tests():
+    """Create and run tests for generate_image module."""
+    from test_framework import TestSuite
+
+    suite = TestSuite("Generate Image", "generate_image.py")
+
+    def test_hardware_settings_defaults():
+        """Test HardwareSettings has correct defaults."""
+        settings = HardwareSettings()
+        assert settings.dtype == "bfloat16"
+        assert settings.enable_attention_slicing is True
+        assert settings.enable_vae_slicing is True
+        assert settings.enable_vae_tiling is False
+        assert settings.enable_model_cpu_offload is False
+        assert settings.max_size == 1024
+        assert settings.recommended_steps == 28
+
+    def test_hardware_settings_custom():
+        """Test HardwareSettings with custom values."""
+        settings = HardwareSettings(max_size=512, recommended_steps=12, vram_gb=4.0)
+        assert settings.max_size == 512
+        assert settings.recommended_steps == 12
+        assert settings.vram_gb == 4.0
+
+    def test_optimize_size_within_limits():
+        """Test optimize_size_for_hardware with size within limits."""
+        settings = HardwareSettings(max_size=1024)
+        w, h = optimize_size_for_hardware(768, 768, settings)
+        assert w == 768
+        assert h == 768
+
+    def test_optimize_size_exceeds_limits():
+        """Test optimize_size_for_hardware clamps to max_size."""
+        settings = HardwareSettings(max_size=512)
+        w, h = optimize_size_for_hardware(1024, 1024, settings)
+        assert w <= 512
+        assert h <= 512
+
+    def test_optimize_size_alignment():
+        """Test optimize_size_for_hardware aligns to 64-pixel grid."""
+        settings = HardwareSettings(max_size=1024)
+        w, h = optimize_size_for_hardware(500, 500, settings)
+        assert w % 64 == 0
+        assert h % 64 == 0
+
+    def test_optimize_size_minimum():
+        """Test optimize_size_for_hardware enforces minimum 256."""
+        settings = HardwareSettings(max_size=256)
+        w, h = optimize_size_for_hardware(100, 100, settings)
+        assert w >= 256
+        assert h >= 256
+
+    def test_optimize_size_rectangular():
+        """Test optimize_size_for_hardware preserves aspect ratio."""
+        settings = HardwareSettings(max_size=512)
+        w, h = optimize_size_for_hardware(1024, 512, settings)
+        assert w <= 512
+        assert h <= 512
+        # Width should be larger than or equal to height
+        assert w >= h
+
+    def test_clear_memory_non_aggressive():
+        """Test clear_memory in non-aggressive mode."""
+        clear_memory(aggressive=False)  # Should not raise
+
+    def test_clear_memory_aggressive():
+        """Test clear_memory in aggressive mode."""
+        clear_memory(aggressive=True)  # Should not raise (handles missing torch)
+
+    suite.run_test(
+        test_name="HardwareSettings defaults",
+        test_func=test_hardware_settings_defaults,
+        test_summary="Tests HardwareSettings default values",
+        method_description="Creates HardwareSettings with defaults",
+        expected_outcome="All defaults correct",
+    )
+    suite.run_test(
+        test_name="HardwareSettings custom",
+        test_func=test_hardware_settings_custom,
+        test_summary="Tests HardwareSettings with custom values",
+        method_description="Creates HardwareSettings with overrides",
+        expected_outcome="Custom values stored correctly",
+    )
+    suite.run_test(
+        test_name="Optimize size within limits",
+        test_func=test_optimize_size_within_limits,
+        test_summary="Tests size optimization with small input",
+        method_description="Passes size within max_size",
+        expected_outcome="Size unchanged",
+    )
+    suite.run_test(
+        test_name="Optimize size exceeds limits",
+        test_func=test_optimize_size_exceeds_limits,
+        test_summary="Tests size optimization with large input",
+        method_description="Passes size exceeding max_size",
+        expected_outcome="Size clamped to max",
+    )
+    suite.run_test(
+        test_name="Optimize size alignment",
+        test_func=test_optimize_size_alignment,
+        test_summary="Tests 64-pixel grid alignment",
+        method_description="Passes unaligned size",
+        expected_outcome="Output aligned to 64-pixel grid",
+    )
+    suite.run_test(
+        test_name="Optimize size minimum",
+        test_func=test_optimize_size_minimum,
+        test_summary="Tests minimum size enforcement",
+        method_description="Passes very small size",
+        expected_outcome="Output at least 256x256",
+    )
+    suite.run_test(
+        test_name="Optimize size rectangular",
+        test_func=test_optimize_size_rectangular,
+        test_summary="Tests aspect ratio handling",
+        method_description="Passes rectangular size",
+        expected_outcome="Aspect ratio approximately preserved",
+    )
+    suite.run_test(
+        test_name="Clear memory non-aggressive",
+        test_func=test_clear_memory_non_aggressive,
+        test_summary="Tests non-aggressive memory clear",
+        method_description="Calls clear_memory(aggressive=False)",
+        expected_outcome="No exception raised",
+    )
+    suite.run_test(
+        test_name="Clear memory aggressive",
+        test_func=test_clear_memory_aggressive,
+        test_summary="Tests aggressive memory clear",
+        method_description="Calls clear_memory(aggressive=True)",
+        expected_outcome="No exception raised",
+    )
+
+    return suite.finish_suite()
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)

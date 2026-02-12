@@ -965,3 +965,8 @@ if __name__ == "__main__":
 
     # Show history
     print(f"\nEvent history: {len(bus.get_history())} events")
+
+
+run_comprehensive_tests = __import__("test_framework").create_standard_test_runner(
+    _create_module_tests
+)
