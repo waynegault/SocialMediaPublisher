@@ -16,12 +16,15 @@ groq>=0.4.0
 google-genai>=1.56.0
 sentence-transformers>=5.2.0
 transformers>=4.57.0
-torch>=2.9.0         # For CUDA, install manually: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-torchvision>=0.18.0
-torchaudio>=2.4.0
+torch>=2.6.0         # For CUDA, install manually: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+torchvision>=0.21.0
+torchaudio>=2.6.0
 spacy>=3.8.0
 chromadb>=1.4.0
 huggingface-hub>=0.36.0
+diffusers>=0.36.0    # Z-Image (ZImagePipeline) and other local image generation
+accelerate>=0.29.0   # CPU offloading for local image generation on low-VRAM GPUs
+sentencepiece>=0.2.0 # Tokenizer for Z-Image text encoder
 
 # Image processing
 pillow>=12.0.0
@@ -56,17 +59,21 @@ brotli>=1.2.0
 # python -m spacy download en_core_web_sm
 
 # =============================================================================
-# Z-Image Local Image Generation (Optional)
+# Z-Image Local Image Generation (Optional extras)
 # =============================================================================
-# Requires NVIDIA GPU with CUDA support (8GB+ VRAM recommended)
-# Install with: pip install -r requirements-z-image.txt
-# Or manually:
-#   pip install git+https://github.com/huggingface/diffusers
-#   pip install accelerate sentencepiece
-#   pip install xformers  # Optional, for memory efficiency
+# Core Z-Image deps (diffusers, accelerate, sentencepiece) are listed above.
+# For additional optional optimizations, install:
+#   pip install -r requirements-z-image.txt
+#
+# Requires NVIDIA GPU with CUDA support:
+#   - 4GB VRAM: Works with sequential CPU offload (~50GB system RAM needed)
+#   - 8GB+ VRAM: Works with model CPU offload
+#   - 16GB+ VRAM: Full GPU acceleration
 #
 # Configure in .env:
 #   IMAGE_PROVIDER=z_image
-#   Z_IMAGE_STEPS=28
-#   Z_IMAGE_GUIDANCE=4.0
+#   Z_IMAGE_DTYPE=bfloat16   # Use bfloat16 on Ampere+ GPUs to avoid NaN issues
+#   Z_IMAGE_OFFLOAD=1        # Enable CPU offloading for low-VRAM GPUs
+#   Z_IMAGE_SIZE=512x512     # Recommended for 4GB VRAM
+#   Z_IMAGE_STEPS=20         # Fewer steps = faster on low VRAM
 # =============================================================================

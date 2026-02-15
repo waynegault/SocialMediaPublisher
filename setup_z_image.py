@@ -68,11 +68,11 @@ def check_diffusers():
         return True
     except ImportError as e:
         if "ZImagePipeline" in str(e):
-            print("❌ diffusers installed but missing ZImagePipeline")
-            print("   Run: pip install git+https://github.com/huggingface/diffusers")
+            print("❌ diffusers installed but missing ZImagePipeline (need >=0.36.0)")
+            print("   Run: pip install --upgrade diffusers>=0.36.0")
         else:
             print("❌ diffusers not installed")
-            print("   Run: pip install git+https://github.com/huggingface/diffusers")
+            print("   Run: pip install diffusers>=0.36.0")
         return False
 
 
@@ -126,8 +126,8 @@ def install_packages():
     print("\n📦 Installing Z-Image Dependencies\n" + "=" * 40)
 
     packages = [
-        # Install diffusers from git for latest ZImagePipeline
-        ("diffusers (from git)", "git+https://github.com/huggingface/diffusers"),
+        # diffusers from PyPI (ZImagePipeline available since v0.36.0)
+        ("diffusers", "diffusers>=0.36.0"),
         # Core dependencies
         ("torch", "torch"),
         ("torchvision", "torchvision"),

@@ -92,6 +92,24 @@ PROVIDER_MODELS = {
             ),
         ],
     },
+    "z_image": {
+        "description": "Local GPU generation - Tongyi-MAI/Z-Image (requires CUDA)",
+        "models": [
+            ("Tongyi-MAI/Z-Image", "Z-Image - high quality, local GPU, bfloat16"),
+        ],
+    },
+    "openai_dalle": {
+        "description": "OpenAI DALL-E - paid API",
+        "models": [
+            ("dall-e-3", "DALL-E 3 - highest quality, paid"),
+        ],
+    },
+    "google_imagen": {
+        "description": "Google Imagen - paid API",
+        "models": [
+            ("imagen-4.0-generate-001", "Imagen 4.0 - Google's latest"),
+        ],
+    },
 }
 
 

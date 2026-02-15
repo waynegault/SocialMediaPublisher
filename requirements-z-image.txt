@@ -1,0 +1,33 @@
+# =============================================================================
+# Z-Image Local Image Generation Requirements
+# =============================================================================
+# Install with: pip install -r requirements-z-image.txt
+#
+# Requires NVIDIA GPU with CUDA support
+#   - 4GB VRAM: Works with sequential CPU offload (slower, ~50GB RAM needed)
+#   - 8GB+ VRAM: Works with model CPU offload
+#   - 16GB+ VRAM: Full GPU acceleration
+#
+# Model: Tongyi-MAI/Z-Image (~10GB download)
+# =============================================================================
+
+# diffusers (ZImagePipeline available since v0.36.0)
+diffusers>=0.36.0
+
+# PyTorch with CUDA (install separately if needed for your CUDA version)
+# See: https://pytorch.org/get-started/locally/
+torch>=2.6.0
+torchvision>=0.21.0
+
+# Core dependencies
+transformers>=4.57.0
+accelerate>=0.29.0
+sentencepiece>=0.2.0
+
+# Optional: memory-efficient attention (recommended for <8GB VRAM)
+# May fail to install on some platforms - that's OK, it's optional
+xformers
+
+# Optional: INT8 quantization for extreme low VRAM (<4GB)
+# optimum-quanto
+

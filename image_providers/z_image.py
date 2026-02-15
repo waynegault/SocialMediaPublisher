@@ -6,7 +6,7 @@ text-to-image generation without requiring external API calls.
 This provider runs the model on your local GPU (CUDA required).
 
 Requirements:
-    pip install git+https://github.com/huggingface/diffusers
+    pip install diffusers>=0.36.0
     pip install torch torchvision accelerate transformers sentencepiece
 
 Environment variables:
@@ -99,12 +99,24 @@ class ZImageProvider(ImageProvider):
         self._auto_adjust_for_vram()
 
     def _auto_adjust_for_vram(self):
-        """Auto-adjust settings based on available VRAM."""
+        """Auto-adjust settings based on available VRAM and GPU capabilities."""
         try:
             import torch
             if self.device == "cuda" and torch.cuda.is_available():
-                _vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-                # No auto-adjustment needed — use official recommended guidance_scale=4.0
+                props = torch.cuda.get_device_properties(0)
+                _vram_gb = props.total_memory / (1024**3)
+                compute_cap = (props.major, props.minor)
+                is_ampere_or_newer = compute_cap[0] >= 8
+
+                # float16 causes NaN corruption in Z-Image on many GPUs.
+                # Auto-upgrade to bfloat16 on Ampere+ (native hw support).
+                if self.dtype == "float16" and is_ampere_or_newer:
+                    logger.warning(
+                        "Z-Image: float16 can produce NaN/corrupt images. "
+                        "Auto-upgrading to bfloat16 (native on Ampere+). "
+                        "Set Z_IMAGE_DTYPE=bfloat16 in .env to silence this."
+                    )
+                    self.dtype = "bfloat16"
         except Exception:
             pass  # Silently ignore if can't detect
 
@@ -236,7 +248,7 @@ class ZImageProvider(ImageProvider):
         except ImportError as e:
             raise ImageProviderError(
                 "Required packages not installed. Run:\n"
-                "  pip install git+https://github.com/huggingface/diffusers\n"
+                "  pip install diffusers>=0.36.0\n"
                 "  pip install torch torchvision accelerate transformers sentencepiece",
                 provider=self.name,
             ) from e

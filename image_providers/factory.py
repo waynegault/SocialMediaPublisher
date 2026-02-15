@@ -244,7 +244,7 @@ def offer_z_image_install(interactive: bool = True) -> bool:
                         "-m",
                         "pip",
                         "install",
-                        "git+https://github.com/huggingface/diffusers",
+                        "diffusers>=0.36.0",
                         "accelerate",
                         "sentencepiece",
                     ]
