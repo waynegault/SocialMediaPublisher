@@ -45,8 +45,8 @@ logs/
 data/
 output/
 
-# Database files (ignore local DB; backups are also ignored)
-content_engine.db
+# Database files (ignore all DB files and backups)
+*.db
 *.db.backup
 /content_engine.db.backup
 /.linkedin_session
