@@ -18,6 +18,7 @@ from openai import OpenAI
 from api_client import api_client
 from config import Config
 from database import Story
+from text_utils import calculate_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +106,7 @@ class OriginalityChecker:
         combined_source = " ".join(source_texts)
 
         # Calculate word-level similarity (Jaccard)
-        similarity_score = self._calculate_word_similarity(summary, combined_source)
+        similarity_score = calculate_similarity(summary, combined_source)
 
         # Calculate n-gram overlap
         ngram_overlap, flagged_phrases = self._calculate_ngram_overlap(
@@ -205,113 +206,6 @@ class OriginalityChecker:
             )
 
         return self.check_originality(story.summary, source_texts)
-
-    def _calculate_word_similarity(self, text1: str, text2: str) -> float:
-        """
-        Calculate Jaccard similarity between two texts using word sets.
-        Returns a value between 0.0 (no similarity) and 1.0 (identical).
-        """
-        # Normalize: lowercase, remove punctuation, split into words
-        words1 = set(re.sub(r"[^\w\s]", "", text1.lower()).split())
-        words2 = set(re.sub(r"[^\w\s]", "", text2.lower()).split())
-
-        # Remove common stopwords
-        stopwords = {
-            "the",
-            "a",
-            "an",
-            "and",
-            "or",
-            "but",
-            "in",
-            "on",
-            "at",
-            "to",
-            "for",
-            "of",
-            "with",
-            "by",
-            "from",
-            "is",
-            "are",
-            "was",
-            "were",
-            "be",
-            "been",
-            "being",
-            "have",
-            "has",
-            "had",
-            "do",
-            "does",
-            "did",
-            "will",
-            "would",
-            "could",
-            "should",
-            "may",
-            "might",
-            "must",
-            "shall",
-            "can",
-            "this",
-            "that",
-            "these",
-            "those",
-            "it",
-            "its",
-            "i",
-            "me",
-            "my",
-            "we",
-            "our",
-            "you",
-            "your",
-            "he",
-            "she",
-            "they",
-            "them",
-            "their",
-            "what",
-            "which",
-            "who",
-            "when",
-            "where",
-            "why",
-            "how",
-            "all",
-            "each",
-            "every",
-            "both",
-            "few",
-            "more",
-            "most",
-            "other",
-            "some",
-            "such",
-            "no",
-            "not",
-            "only",
-            "own",
-            "same",
-            "so",
-            "than",
-            "too",
-            "very",
-            "just",
-            "also",
-            "now",
-        }
-        words1 -= stopwords
-        words2 -= stopwords
-
-        if not words1 or not words2:
-            return 0.0
-
-        intersection = words1 & words2
-        union = words1 | words2
-
-        return len(intersection) / len(union) if union else 0.0
 
     def _calculate_ngram_overlap(
         self, summary: str, source: str
@@ -485,8 +379,7 @@ def _create_module_tests() -> bool:
     suite.start_suite()
 
     def test_word_similarity_identical():
-        checker = OriginalityChecker()
-        result = checker._calculate_word_similarity(
+        result = calculate_similarity(
             "The quick brown fox jumps over the lazy dog",
             "The quick brown fox jumps over the lazy dog",
         )
@@ -495,16 +388,14 @@ def _create_module_tests() -> bool:
         )
 
     def test_word_similarity_different():
-        checker = OriginalityChecker()
-        result = checker._calculate_word_similarity(
+        result = calculate_similarity(
             "Hydrogen fuel cells power electric vehicles",
             "Ocean waves generate renewable electricity",
         )
         assert result < 0.3, f"Different texts should have low similarity, got {result}"
 
     def test_word_similarity_partial():
-        checker = OriginalityChecker()
-        result = checker._calculate_word_similarity(
+        result = calculate_similarity(
             "New catalyst improves hydrogen production efficiency",
             "Researchers develop catalyst for hydrogen production",
         )

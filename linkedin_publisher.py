@@ -54,10 +54,10 @@ class PublishValidationResult:
 
 
 class LinkedInPublisher:
-    """Publish stories to LinkedIn."""
+    """Publish stories to LinkedIn using the REST API (/rest/* endpoints)."""
 
-    BASE_URL = "https://api.linkedin.com/v2"
-    UPLOAD_URL = "https://api.linkedin.com/v2/assets?action=registerUpload"
+    BASE_URL = "https://api.linkedin.com/rest"
+    USERINFO_URL = "https://api.linkedin.com/v2/userinfo"
 
     def __init__(self, database: Database) -> None:
         """Initialize the LinkedIn publisher."""
@@ -72,11 +72,12 @@ class LinkedInPublisher:
             logger.warning("LINKEDIN_AUTHOR_URN is not configured")
 
     def _get_headers(self) -> dict:
-        """Get request headers for LinkedIn API."""
+        """Get request headers for LinkedIn REST API."""
         return {
             "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
             "Content-Type": "application/json",
             "X-Restli-Protocol-Version": "2.0.0",
+            "LinkedIn-Version": Config.LINKEDIN_API_VERSION,
         }
 
     def _get_post_url(self, post_id: str) -> str:
@@ -148,31 +149,26 @@ class LinkedInPublisher:
 
     def _upload_image(self, image_path: str, owner: str | None = None) -> str | None:
         """
-        Upload an image to LinkedIn.
-        Returns the asset URN if successful.
+        Upload an image to LinkedIn using the REST API.
+
+        Uses /rest/images?action=initializeUpload to register, then PUT binary data.
+        Returns the image URN (e.g., 'urn:li:image:...') if successful.
         """
         try:
             upload_owner = owner or Config.LINKEDIN_AUTHOR_URN
 
-            # Step 1: Register the upload
-            register_payload = {
-                "registerUploadRequest": {
-                    "recipes": ["urn:li:digitalmediaRecipe:feedshare-image"],
+            # Step 1: Initialize the upload via REST API
+            init_payload = {
+                "initializeUploadRequest": {
                     "owner": upload_owner,
-                    "serviceRelationships": [
-                        {
-                            "relationshipType": "OWNER",
-                            "identifier": "urn:li:userGeneratedContent",
-                        }
-                    ],
                 }
             }
 
             response = api_client.linkedin_request(
                 method="POST",
-                url=self.UPLOAD_URL,
+                url=f"{self.BASE_URL}/images?action=initializeUpload",
                 headers=self._get_headers(),
-                json=register_payload,
+                json=init_payload,
                 timeout=30,
                 endpoint="upload_register",
             )
@@ -189,7 +185,7 @@ class LinkedInPublisher:
                     raise ValueError(
                         "LinkedIn access token expired or invalid. Please re-authenticate."
                     )
-                logger.error(f"Image registration failed: {response_text[:500]}")
+                logger.error(f"Image upload init failed: {response_text[:500]}")
                 return None
 
             # Check for HTML in response before parsing JSON
@@ -205,10 +201,8 @@ class LinkedInPublisher:
                 )
 
             upload_data = response.json()
-            upload_url = upload_data["value"]["uploadMechanism"][
-                "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"
-            ]["uploadUrl"]
-            asset_urn = upload_data["value"]["asset"]
+            upload_url = upload_data["value"]["uploadUrl"]
+            image_urn = upload_data["value"]["image"]
 
             # Step 2: Upload the binary image
             with open(image_path, "rb") as image_file:
@@ -226,8 +220,8 @@ class LinkedInPublisher:
             )
 
             if upload_response.status_code in (200, 201):
-                logger.debug(f"Image uploaded successfully: {asset_urn}")
-                return asset_urn
+                logger.debug(f"Image uploaded successfully: {image_urn}")
+                return image_urn
             else:
                 logger.error(f"Image upload failed: {upload_response.text}")
                 return None
@@ -238,7 +232,7 @@ class LinkedInPublisher:
 
     def _create_post(self, story: Story, image_asset: str | None = None) -> str | None:
         """
-        Create a LinkedIn post with the story content.
+        Create a LinkedIn post using the REST API (/rest/posts).
         Returns the post ID if successful.
         """
         # Format the post text
@@ -253,7 +247,7 @@ class LinkedInPublisher:
         try:
             response = api_client.linkedin_request(
                 method="POST",
-                url=f"{self.BASE_URL}/ugcPosts",
+                url=f"{self.BASE_URL}/posts",
                 headers=self._get_headers(),
                 json=payload,
                 timeout=30,
@@ -261,8 +255,8 @@ class LinkedInPublisher:
             )
 
             if response.status_code == 201:
-                # Extract post ID from response
-                post_id = response.headers.get("X-RestLi-Id", "")
+                # Extract post ID from response header
+                post_id = response.headers.get("x-restli-id", "")
                 return post_id
             else:
                 # Check if we got HTML instead of JSON (usually means auth error)
@@ -474,98 +468,87 @@ class LinkedInPublisher:
     def _build_image_post_payload(
         self, text: str, story: Story, image_asset: str
     ) -> dict:
-        """Build payload for a post with an image."""
+        """Build payload for a REST API post with an image."""
         return {
             "author": Config.LINKEDIN_AUTHOR_URN,
-            "lifecycleState": "PUBLISHED",
-            "specificContent": {
-                "com.linkedin.ugc.ShareContent": {
-                    "shareCommentary": {"text": text},
-                    "shareMediaCategory": "IMAGE",
-                    "media": [
-                        {
-                            "status": "READY",
-                            "description": {"text": story.summary[:200]},
-                            "media": image_asset,
-                            "title": {"text": story.title},
-                        }
-                    ],
+            "commentary": text,
+            "visibility": "PUBLIC",
+            "distribution": {
+                "feedDistribution": "MAIN_FEED",
+                "targetEntities": [],
+                "thirdPartyDistributionChannels": [],
+            },
+            "content": {
+                "media": {
+                    "title": story.title,
+                    "id": image_asset,
                 }
             },
-            "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
+            "lifecycleState": "PUBLISHED",
+            "isReshareDisabledByAuthor": False,
         }
 
     def _build_article_post_payload(self, text: str, story: Story) -> dict:
-        """Build payload for a post with article link."""
+        """Build payload for a REST API post with article link."""
         primary_link = story.source_links[0] if story.source_links else ""
 
-        return {
+        payload: dict = {
             "author": Config.LINKEDIN_AUTHOR_URN,
-            "lifecycleState": "PUBLISHED",
-            "specificContent": {
-                "com.linkedin.ugc.ShareContent": {
-                    "shareCommentary": {"text": text},
-                    "shareMediaCategory": "ARTICLE",
-                    "media": [
-                        {
-                            "status": "READY",
-                            "description": {"text": story.summary[:200]},
-                            "originalUrl": primary_link,
-                            "title": {"text": story.title},
-                        }
-                    ]
-                    if primary_link
-                    else [],
-                }
+            "commentary": text,
+            "visibility": "PUBLIC",
+            "distribution": {
+                "feedDistribution": "MAIN_FEED",
+                "targetEntities": [],
+                "thirdPartyDistributionChannels": [],
             },
-            "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
+            "lifecycleState": "PUBLISHED",
+            "isReshareDisabledByAuthor": False,
         }
+
+        if primary_link:
+            payload["content"] = {
+                "article": {
+                    "source": primary_link,
+                    "title": story.title,
+                    "description": story.summary[:200],
+                }
+            }
+
+        return payload
 
     def publish_one_off(
         self, author_urn: str, text: str, image_path: str | None = None
     ) -> str | None:
-        """Publish a one-off UGC post for given author (person or org). Returns the post ID if successful."""
+        """Publish a one-off post via REST API for given author. Returns the post ID if successful."""
         image_asset = None
         if image_path and Path(image_path).exists():
             image_asset = self._upload_image(image_path, owner=author_urn)
 
+        payload: dict = {
+            "author": author_urn,
+            "commentary": text,
+            "visibility": "PUBLIC",
+            "distribution": {
+                "feedDistribution": "MAIN_FEED",
+                "targetEntities": [],
+                "thirdPartyDistributionChannels": [],
+            },
+            "lifecycleState": "PUBLISHED",
+            "isReshareDisabledByAuthor": False,
+        }
+
         if image_asset:
-            payload = {
-                "author": author_urn,
-                "lifecycleState": "PUBLISHED",
-                "specificContent": {
-                    "com.linkedin.ugc.ShareContent": {
-                        "shareCommentary": {"text": text},
-                        "shareMediaCategory": "IMAGE",
-                        "media": [
-                            {
-                                "status": "READY",
-                                "description": {"text": text[:200]},
-                                "media": image_asset,
-                                "title": {"text": text[:100]},
-                            }
-                        ],
-                    }
-                },
-                "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
-            }
-        else:
-            payload = {
-                "author": author_urn,
-                "lifecycleState": "PUBLISHED",
-                "specificContent": {
-                    "com.linkedin.ugc.ShareContent": {
-                        "shareCommentary": {"text": text},
-                        "shareMediaCategory": "NONE",
-                    }
-                },
-                "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
+            payload["content"] = {
+                "media": {
+                    "title": text[:100],
+                    "id": image_asset,
+                }
             }
 
         try:
             response = api_client.linkedin_request(
                 method="POST",
-                url=f"{self.BASE_URL}/ugcPosts",
+                url=f"{self.BASE_URL}/posts",
                 headers=self._get_headers(),
                 json=payload,
                 timeout=30,
@@ -573,7 +556,7 @@ class LinkedInPublisher:
             )
 
             if response.status_code in (200, 201):
-                post_id = response.headers.get("X-RestLi-Id", "")
+                post_id = response.headers.get("x-restli-id", "")
                 logger.info(f"Published one-off post: {post_id}")
                 return post_id
             else:
@@ -587,14 +570,14 @@ class LinkedInPublisher:
             return None
 
     def test_connection(self) -> bool:
-        """Test the LinkedIn API connection."""
+        """Test the LinkedIn API connection using the OpenID userinfo endpoint."""
         if not Config.LINKEDIN_ACCESS_TOKEN:
             return False
 
         try:
             response = api_client.linkedin_request(
                 method="GET",
-                url=f"{self.BASE_URL}/userinfo",
+                url=self.USERINFO_URL,
                 headers=self._get_headers(),
                 timeout=10,
                 endpoint="test_connection",
@@ -605,14 +588,14 @@ class LinkedInPublisher:
             return False
 
     def get_profile_info(self) -> dict | None:
-        """Get the authenticated user's profile info."""
+        """Get the authenticated user's profile info via OpenID userinfo endpoint."""
         if not Config.LINKEDIN_ACCESS_TOKEN:
             return None
 
         try:
             response = api_client.linkedin_request(
                 method="GET",
-                url=f"{self.BASE_URL}/userinfo",
+                url=self.USERINFO_URL,
                 headers=self._get_headers(),
                 timeout=10,
                 endpoint="profile_info",
@@ -824,11 +807,7 @@ class LinkedInPublisher:
             # Use REST API endpoint with required headers
             rest_url = f"https://api.linkedin.com/rest/posts/{encoded_urn}"
 
-            # LinkedIn REST API version header format is YYYYMM01
-            # Use a known valid version (LinkedIn's Marketing APIs)
-            version = "202501"
-
-            headers = {**self._get_headers(), "Linkedin-Version": version}
+            headers = self._get_headers()
 
             response = api_client.linkedin_request(
                 method="GET",
@@ -913,7 +892,6 @@ class LinkedInPublisher:
                 f"Published story {story.id} immediately with post ID: {post_id}"
             )
             logger.info(f"Post URL: {story.linkedin_post_url}")
-        return post_id
         return post_id
 
     # =========================================================================
@@ -1210,11 +1188,16 @@ def _create_module_tests() -> bool:
                 title="Test", summary="Summary", source_links=[], quality_score=7
             )
             payload = publisher._build_image_post_payload(
-                "Test text", story, "urn:li:digitalmediaAsset:123"
+                "Test text", story, "urn:li:image:123"
             )
             assert "author" in payload
-            assert "specificContent" in payload
+            assert "commentary" in payload
+            assert payload["commentary"] == "Test text"
             assert "visibility" in payload
+            assert payload["visibility"] == "PUBLIC"
+            assert "distribution" in payload
+            assert "content" in payload
+            assert payload["content"]["media"]["id"] == "urn:li:image:123"
         finally:
             os.unlink(db_path)
 
@@ -1232,7 +1215,13 @@ def _create_module_tests() -> bool:
             )
             payload = publisher._build_article_post_payload("Test text", story)
             assert "author" in payload
-            assert "specificContent" in payload
+            assert "commentary" in payload
+            assert payload["commentary"] == "Test text"
+            assert "visibility" in payload
+            assert payload["visibility"] == "PUBLIC"
+            assert "distribution" in payload
+            assert "content" in payload
+            assert payload["content"]["article"]["source"] == "https://example.com"
         finally:
             os.unlink(db_path)
 

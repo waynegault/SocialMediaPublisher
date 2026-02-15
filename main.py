@@ -5468,6 +5468,7 @@ def _test_api_keys(engine: ContentEngine) -> None:
             headers = {
                 "Authorization": f"Bearer {Config.LINKEDIN_ACCESS_TOKEN}",
                 "X-Restli-Protocol-Version": "2.0.0",
+                "LinkedIn-Version": Config.LINKEDIN_API_VERSION,
             }
             response = api_client.linkedin_request(
                 method="GET",

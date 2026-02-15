@@ -317,7 +317,7 @@ if __name__ == "__main__":
 # ============================================================================
 def _create_module_tests() -> bool:
     """Create unit tests for find_indirect_people module."""
-    from test_framework import TestSuite, patch
+    from test_framework import MagicMock, TestSuite, patch
 
     suite = TestSuite("Find Indirect People Tests", "find_indirect_people.py")
     suite.start_suite()
@@ -372,19 +372,31 @@ def _create_module_tests() -> bool:
         finally:
             os.unlink(tmp.name)
 
-    def test_main_function_exists():
-        import inspect
-        sig = inspect.signature(main)
-        params = list(sig.parameters.keys())
-        assert len(params) >= 0  # main accepts args
-        assert callable(main)
+    def test_search_indirect_people_uc_returns_empty_when_uc_unavailable():
+        """Verify search_indirect_people_uc gracefully returns [] when UC is not available."""
+        with patch("find_indirect_people.UC_AVAILABLE", False):
+            result = search_indirect_people_uc("Acme Corp", ["CEO", "CTO"])
+            assert isinstance(result, list)
+            assert len(result) == 0
 
-    def test_search_indirect_people_uc_exists():
-        import inspect
-        sig = inspect.signature(search_indirect_people_uc)
-        params = list(sig.parameters.keys())
-        assert "organizations" in params or len(params) > 0
-        assert callable(search_indirect_people_uc)
+    def test_main_selects_correct_roles_per_org_type():
+        """Verify main() uses UNIVERSITY_ROLES for universities and COMPANY_ROLES for companies."""
+        captured_calls: list[tuple] = []
+
+        def mock_search(org: str, roles: list[str]) -> list[dict]:
+            captured_calls.append((org, roles))
+            return []
+
+        mock_orgs = ["MIT", "Shell Oil Company"]
+        with patch("find_indirect_people.get_organizations_from_db", return_value=mock_orgs), \
+             patch("find_indirect_people.search_indirect_people_uc", side_effect=mock_search), \
+             patch("builtins.open", MagicMock()):
+            main()
+        assert len(captured_calls) == 2
+        # MIT is a university → should get UNIVERSITY_ROLES
+        assert captured_calls[0] == ("MIT", UNIVERSITY_ROLES)
+        # Shell Oil Company is a company → should get COMPANY_ROLES
+        assert captured_calls[1] == ("Shell Oil Company", COMPANY_ROLES)
 
     suite.run_test(
         test_name="is_university returns True for universities",
@@ -422,18 +434,18 @@ def _create_module_tests() -> bool:
         expected_outcome="Function correctly processes multiple items",
     )
     suite.run_test(
-        test_name="main function exists",
-        test_func=test_main_function_exists,
-        test_summary="Tests main function exists functionality",
-        method_description="Calls callable and verifies the result",
-        expected_outcome="Function produces the correct result without errors",
+        test_name="search_indirect_people_uc returns [] when UC unavailable",
+        test_func=test_search_indirect_people_uc_returns_empty_when_uc_unavailable,
+        test_summary="Verify search returns empty list when undetected-chromedriver is not available",
+        method_description="Patches UC_AVAILABLE to False and calls search_indirect_people_uc",
+        expected_outcome="Returns empty list without error",
     )
     suite.run_test(
-        test_name="search_indirect_people_uc function exists",
-        test_func=test_search_indirect_people_uc_exists,
-        test_summary="Tests search indirect people uc function exists functionality",
-        method_description="Calls callable and verifies the result",
-        expected_outcome="Function finds and returns the expected results",
+        test_name="main selects correct roles per org type",
+        test_func=test_main_selects_correct_roles_per_org_type,
+        test_summary="Verify main() dispatches UNIVERSITY_ROLES vs COMPANY_ROLES correctly",
+        method_description="Mocks get_organizations_from_db and search_indirect_people_uc, then checks call args",
+        expected_outcome="University orgs get UNIVERSITY_ROLES, company orgs get COMPANY_ROLES",
     )
 
     return suite.finish_suite()

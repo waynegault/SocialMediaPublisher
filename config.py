@@ -100,6 +100,16 @@ class SettingsModel(BaseSettings):
     )
     linkedin_author_name: str = Field(default="", alias="LINKEDIN_AUTHOR_NAME")
 
+    # --- LinkedIn OAuth 2.0 Credentials ---
+    linkedin_client_id: str = Field(default="", alias="LINKEDIN_CLIENT_ID")
+    linkedin_client_secret: str = Field(default="", alias="LINKEDIN_CLIENT_SECRET")
+    linkedin_redirect_uri: str = Field(
+        default="https://www.linkedin.com/developers/tools/oauth/redirect",
+        alias="LINKEDIN_REDIRECT_URI",
+    )
+    # LinkedIn REST API version header (YYYYMM format)
+    linkedin_api_version: str = Field(default="202501", alias="LINKEDIN_API_VERSION")
+
     # --- Professional Discipline ---
     # The user's professional discipline (e.g., "chemical engineer", "software developer")
     discipline: str = Field(default="chemical engineer", alias="DISCIPLINE")
@@ -710,6 +720,13 @@ class Config(metaclass=_ConfigMeta):
             f"  LINKEDIN_ACCESS_TOKEN: {'*' * 8 if s.linkedin_access_token else 'NOT SET'}"
         )
         print(f"  LINKEDIN_AUTHOR_URN: {s.linkedin_author_urn or 'NOT SET'}")
+        print(
+            f"  LINKEDIN_CLIENT_ID: {'*' * 8 if s.linkedin_client_id else 'NOT SET'}"
+        )
+        print(
+            f"  LINKEDIN_CLIENT_SECRET: {'*' * 8 if s.linkedin_client_secret else 'NOT SET'}"
+        )
+        print(f"  LINKEDIN_API_VERSION: {s.linkedin_api_version}")
         print(f"  LINKEDIN_SEARCH_ENABLED: {s.linkedin_search_enabled}")
         print(f"  MODEL_TEXT: {s.model_text}")
         print(f"  MODEL_IMAGE: {s.model_image}")

@@ -23,33 +23,6 @@ from url_utils import validate_url, extract_path_keywords
 logger = logging.getLogger(__name__)
 
 
-# Alias for backwards compatibility - use error_handling.with_enhanced_recovery instead
-def retry_with_backoff(
-    max_retries: int | None = None,
-    base_delay: float | None = None,
-    retryable_exceptions: tuple = (requests.exceptions.RequestException,),
-) -> Callable:
-    """
-    Decorator for retry with exponential backoff.
-    Uses Config values if not specified.
-
-    Note: This is an alias for error_handling.with_enhanced_recovery for
-    backwards compatibility. New code should use with_enhanced_recovery directly.
-    """
-    _max_retries = max_retries if max_retries is not None else Config.API_RETRY_COUNT
-    _base_delay = base_delay if base_delay is not None else Config.API_RETRY_DELAY
-
-    return with_enhanced_recovery(
-        max_attempts=_max_retries + 1,
-        base_delay=_base_delay,
-        retryable_exceptions=retryable_exceptions,
-    )
-
-
-# calculate_similarity is now imported from text_utils
-# validate_url is now imported from url_utils
-
-
 def calibrate_quality_score(
     base_score: int,
     story_data: dict,
@@ -1582,7 +1555,11 @@ class StorySearcher:
         search_results = []
         max_results = Config.DUCKDUCKGO_MAX_RESULTS
 
-        @retry_with_backoff(retryable_exceptions=(Exception,))
+        @with_enhanced_recovery(
+            max_attempts=Config.API_RETRY_COUNT + 1,
+            base_delay=Config.API_RETRY_DELAY,
+            retryable_exceptions=(Exception,),
+        )
         def do_search():
             with DDGS() as ddgs:
                 # Try News search first
@@ -1810,35 +1787,6 @@ def _create_module_tests() -> bool:
     suite = TestSuite("Searcher Tests", "searcher.py")
     suite.start_suite()
 
-    def test_calculate_similarity_identical():
-        result = calculate_similarity("hello world", "hello world")
-        assert result == 1.0
-
-    def test_calculate_similarity_different():
-        result = calculate_similarity("hello world", "goodbye moon")
-        assert result == 0.0
-
-    def test_calculate_similarity_partial():
-        result = calculate_similarity("hello world", "hello there")
-        assert 0.0 < result < 1.0
-
-    def test_calculate_similarity_empty():
-        result = calculate_similarity("", "")
-        assert result == 0.0
-
-    def test_validate_url_empty():
-        result = validate_url("")
-        assert result is False
-
-    def test_validate_url_valid_format():
-        result = validate_url("https://example.com")
-        # May fail if no network, but should not raise
-        assert isinstance(result, bool)
-
-    def test_validate_url_invalid_format():
-        result = validate_url("not-a-url")
-        assert result is False
-
     def test_extract_article_date_none():
         result = extract_article_date({})
         assert result is None
@@ -1972,36 +1920,6 @@ def _create_module_tests() -> bool:
         keywords = extract_url_keywords("")
         assert keywords == set()
 
-    def test_retry_decorator_success():
-        call_count = 0
-
-        @retry_with_backoff(max_retries=3, base_delay=0.01)
-        def succeeds_first_try():
-            nonlocal call_count
-            call_count += 1
-            return "success"
-
-        result = succeeds_first_try()
-        assert result == "success"
-        assert call_count == 1
-
-    def test_retry_decorator_eventual_success():
-        call_count = 0
-
-        @retry_with_backoff(
-            max_retries=3, base_delay=0.01, retryable_exceptions=(ValueError,)
-        )
-        def fails_then_succeeds():
-            nonlocal call_count
-            call_count += 1
-            if call_count < 3:
-                raise ValueError("Temporary failure")
-            return "success"
-
-        result = fails_then_succeeds()
-        assert result == "success"
-        assert call_count == 3
-
     def test_redirect_url_cache():
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             db_path = f.name
@@ -2090,55 +2008,6 @@ def _create_module_tests() -> bool:
         # Should have at most 1 unique valid URL
         assert len([k for k in results.keys() if k]) <= 1
 
-    suite.run_test(
-        test_name="Calculate similarity - identical",
-        test_func=test_calculate_similarity_identical,
-        test_summary="Tests Calculate similarity with identical scenario",
-        method_description="Calls calculate similarity and verifies the result",
-        expected_outcome="Function returns the expected value",
-    )
-    suite.run_test(
-        test_name="Calculate similarity - different",
-        test_func=test_calculate_similarity_different,
-        test_summary="Tests Calculate similarity with different scenario",
-        method_description="Calls calculate similarity and verifies the result",
-        expected_outcome="Function returns the expected value",
-    )
-    suite.run_test(
-        test_name="Calculate similarity - partial",
-        test_func=test_calculate_similarity_partial,
-        test_summary="Tests Calculate similarity with partial scenario",
-        method_description="Calls calculate similarity and verifies the result",
-        expected_outcome="Function produces the correct result without errors",
-    )
-    suite.run_test(
-        test_name="Calculate similarity - empty",
-        test_func=test_calculate_similarity_empty,
-        test_summary="Tests Calculate similarity with empty scenario",
-        method_description="Calls calculate similarity and verifies the result",
-        expected_outcome="Function returns the expected value",
-    )
-    suite.run_test(
-        test_name="Validate URL - empty",
-        test_func=test_validate_url_empty,
-        test_summary="Tests Validate URL with empty scenario",
-        method_description="Calls validate url and verifies the result",
-        expected_outcome="Function handles empty or missing input gracefully",
-    )
-    suite.run_test(
-        test_name="Validate URL - valid format",
-        test_func=test_validate_url_valid_format,
-        test_summary="Tests Validate URL with valid format scenario",
-        method_description="Calls validate url and verifies the result",
-        expected_outcome="Function returns the expected successful result",
-    )
-    suite.run_test(
-        test_name="Validate URL - invalid format",
-        test_func=test_validate_url_invalid_format,
-        test_summary="Tests Validate URL with invalid format scenario",
-        method_description="Calls validate url and verifies the result",
-        expected_outcome="Function handles invalid input appropriately",
-    )
     suite.run_test(
         test_name="Extract article date - none",
         test_func=test_extract_article_date_none,
@@ -2230,20 +2099,6 @@ def _create_module_tests() -> bool:
         test_summary="Tests Extract URL keywords with empty scenario",
         method_description="Calls extract url keywords and verifies the result",
         expected_outcome="Function handles empty or missing input gracefully",
-    )
-    suite.run_test(
-        test_name="Retry decorator - success",
-        test_func=test_retry_decorator_success,
-        test_summary="Tests Retry decorator with success scenario",
-        method_description="Calls retry with backoff and verifies the result",
-        expected_outcome="Function returns the expected value",
-    )
-    suite.run_test(
-        test_name="Retry decorator - eventual success",
-        test_func=test_retry_decorator_eventual_success,
-        test_summary="Tests Retry decorator with eventual success scenario",
-        method_description="Calls retry with backoff and verifies the result",
-        expected_outcome="Function raises the expected error or exception",
     )
     suite.run_test(
         test_name="Redirect URL cache",

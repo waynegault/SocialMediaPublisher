@@ -1767,10 +1767,11 @@ def _create_module_tests() -> bool:
                 summary="AI is revolutionizing medical diagnostics",
                 quality_score=8,
             )
-            # Without a client, should fall back to simple prompt
+            # Without a Gemini client, should fall back or use Groq if available
             prompt = gen._build_image_prompt(story)
-            assert "AI in Healthcare" in prompt
-            assert len(prompt) > 0
+            # Prompt must be non-empty and start with "A photo of" (enforced by _clean_image_prompt)
+            assert len(prompt) > 20
+            assert prompt.lower().startswith("a photo of")
         finally:
             os.unlink(db_path)
 
