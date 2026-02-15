@@ -15,8 +15,6 @@ Environment variables:
     Z_IMAGE_DEVICE: Device to use (default: 'cuda', can be 'cpu' for testing)
     Z_IMAGE_OFFLOAD: Set to '1' to enable CPU offload for low VRAM (default: '0')
     Z_IMAGE_CACHE_DIR: Directory to cache the model (optional)
-    Z_IMAGE_COMPILE: Set to '0' to disable torch.compile (default: '1' for CUDA)
-    Z_IMAGE_WARMUP: Set to '0' to disable warmup generation (default: '1' for <6GB VRAM)
     Z_IMAGE_QUANTIZE: Set to '1' to enable INT8 quantization (default: '0', experimental)
 
 Model info:

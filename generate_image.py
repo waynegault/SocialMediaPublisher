@@ -7,13 +7,13 @@ Usage:
     python generate_image.py                          # Interactive mode
     python generate_image.py "your prompt here"       # Direct prompt
     python generate_image.py -p "prompt" -n "negative prompt"
-    python generate_image.py -p "prompt" -o output.png -s 512x512
+    python generate_image.py -p "prompt" -o output.png -s 1024x768
     python generate_image.py --fast "quick test prompt"  # Fast mode for low VRAM
 
 Examples:
     python generate_image.py "A sunset over mountains, photorealistic"
     python generate_image.py -p "Professional headshot" -n "blurry, low quality"
-    python generate_image.py -p "Anime girl" -s 768x1024 --steps 35
+    python generate_image.py -p "Anime girl" -s 512x768 --steps 35
     python generate_image.py --fast "A cat" -s 512x512   # ~3-4x faster
 """
 
@@ -391,11 +391,15 @@ def interactive_mode() -> None:
 
     hw_settings = get_optimal_settings()
     if hw_settings.vram_gb > 0:
+        # Calculate landscape height
+        landscape_height = (hw_settings.max_size * 2) // 3
+        landscape_height = (landscape_height // 64) * 64
+        landscape_height = max(landscape_height, 256)
         print(
             f"\n  Hardware: {hw_settings.vram_gb:.1f}GB VRAM ({hw_settings.free_vram_gb:.1f}GB free)"
         )
         print(
-            f"  Recommended: {hw_settings.max_size}x{hw_settings.max_size}, {hw_settings.recommended_steps} steps"
+            f"  Recommended: {hw_settings.max_size}x{landscape_height} (landscape), {hw_settings.recommended_steps} steps"
         )
 
     print("\nEnter prompts to generate images. Type 'quit' to exit.")
@@ -406,7 +410,11 @@ def interactive_mode() -> None:
         "deformed, disfigured, extra limbs, bad anatomy, jpeg artifacts, "
         "oversaturated, underexposed, noise, grain"
     )
-    size = f"{hw_settings.max_size}x{hw_settings.max_size}"
+    # Default to landscape: 768x512 (or max_size x 2/3 max_size for other configs)
+    landscape_height = (hw_settings.max_size * 2) // 3
+    landscape_height = (landscape_height // 64) * 64  # Align to 64
+    landscape_height = max(landscape_height, 256)  # Minimum 256
+    size = f"{hw_settings.max_size}x{landscape_height}"
     steps: int = hw_settings.recommended_steps
     guidance: float = hw_settings.recommended_guidance
 
@@ -502,7 +510,11 @@ Just type a prompt to generate an image!
         if cmd == "reset":
             hw = get_optimal_settings()
             negative_prompt = "text, watermark, logo, blurry, low quality, artifacts"
-            size = f"{hw.max_size}x{hw.max_size}"
+            # Default to landscape: 768x512 (or max_size x 2/3 max_size for other configs)
+            landscape_height = (hw.max_size * 2) // 3
+            landscape_height = (landscape_height // 64) * 64  # Align to 64
+            landscape_height = max(landscape_height, 256)  # Minimum 256
+            size = f"{hw.max_size}x{landscape_height}"
             steps = hw.recommended_steps
             guidance = hw.recommended_guidance
             print("  ✓ Settings reset to hardware-optimized defaults")
@@ -543,8 +555,8 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    # Read defaults from .env (Z_IMAGE_* vars), falling back to sensible defaults
-    default_size = os.getenv("Z_IMAGE_SIZE", "1024x1024")
+    # Read defaults from .env (Z_IMAGE_* vars), falling back to landscape default
+    default_size = os.getenv("Z_IMAGE_SIZE", "768x512")
     default_steps = int(os.getenv("Z_IMAGE_STEPS", "28"))
     default_guidance = float(os.getenv("Z_IMAGE_GUIDANCE", "4.0"))
     default_dtype = os.getenv("Z_IMAGE_DTYPE", None)
