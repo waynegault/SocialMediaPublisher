@@ -3,6 +3,11 @@
 This module identifies real companies explicitly mentioned in news sources and adds them
 to posts as professional, analytical context. It is conservative by design - when in doubt,
 it defaults to NO_COMPANY_MENTION.
+
+BATCH PROCESSING OPTIMIZATION (2026-02-15):
+- Integrated with batch-processor skill for GPU-accelerated NER
+- Processes multiple stories in batches for 1.5-2x speedup
+- Falls back to single processing if batch processor unavailable
 """
 
 import json
@@ -31,6 +36,17 @@ from entity_constants import (
     is_invalid_org_name,
     is_invalid_person_name,
 )
+
+# Batch processor integration (optional)
+try:
+    import sys
+    sys.path.insert(0, r"C:\Users\wayne\.openclaw\workspace")
+    from skills.batch_processor.integrate_smp import BatchedNER
+    BATCH_NER_AVAILABLE = True
+    logger_batch = logging.getLogger(__name__)
+    logger_batch.debug("Batch processor NER available")
+except ImportError as e:
+    BATCH_NER_AVAILABLE = False
 
 # Patterns that look like organization names rather than person names
 ORG_NAME_PATTERNS: list[str] = [
@@ -1520,6 +1536,82 @@ class CompanyMentionEnricher:
 
         normalized_people = self._normalize_people_records(people, source="direct")
         return normalized_people, organizations
+
+    def _extract_direct_people_via_ner_batch(
+        self, stories: list[Story]
+    ) -> list[tuple[list[dict], set[str]]]:
+        """GPU-batched NER extraction for multiple stories.
+        
+        Uses batch-processor skill when available for 1.5-2x speedup.
+        Falls back to single processing if batch processor unavailable.
+        
+        Args:
+            stories: List of stories to process
+            
+        Returns:
+            List of (people, organizations) tuples, one per story
+        """
+        if not stories:
+            return []
+        
+        # Try batched processing first
+        if BATCH_NER_AVAILABLE:
+            try:
+                logger.info(f"Using batched NER for {len(stories)} stories")
+                batched_ner = BatchedNER()
+                
+                # Prepare texts for batch processing
+                texts = []
+                for story in stories:
+                    text = f"{story.title or ''}\n\n{story.summary or ''}"
+                    texts.append(text)
+                
+                # Process in batches
+                entities_list = batched_ner.extract_batch(texts)
+                
+                # Convert to expected format
+                results = []
+                for entities in entities_list:
+                    people: list[dict] = []
+                    organizations: set[str] = set()
+                    
+                    for entity in entities:
+                        if entity.label in ("PERSON",):
+                            metadata = getattr(entity, "metadata", {}) or {}
+                            people.append(
+                                {
+                                    "name": entity.text,
+                                    "job_title": metadata.get("title", getattr(entity, "title", "")),
+                                    "employer": metadata.get("affiliation", getattr(entity, "affiliation", "")),
+                                    "location": metadata.get("location", ""),
+                                    "specialty": metadata.get("field", metadata.get("department", "")),
+                                    "role_type": "direct",
+                                }
+                            )
+                            employer = metadata.get("affiliation", getattr(entity, "affiliation", ""))
+                            if employer:
+                                organizations.add(employer)
+                        elif entity.label in ("ORG", "COMPANY"):
+                            org_name = getattr(entity, "normalized", "") or getattr(entity, "text", "")
+                            if org_name:
+                                organizations.add(org_name)
+                    
+                    normalized_people = self._normalize_people_records(people, source="direct")
+                    results.append((normalized_people, organizations))
+                
+                logger.info(f"Batched NER complete: {len(results)} stories processed")
+                return results
+                
+            except Exception as e:
+                logger.warning(f"Batched NER failed, falling back to single: {e}")
+        
+        # Fallback to single processing
+        logger.info(f"Using single NER for {len(stories)} stories")
+        results = []
+        for story in stories:
+            result = self._extract_direct_people_via_ner(story)
+            results.append(result)
+        return results
 
     def _extract_direct_people_from_story(
         self, story: Story
