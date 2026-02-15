@@ -57,3 +57,4 @@ output/
 /__pycache__
 /test_output.txt
 /.env.backup
+/replacements.txt

@@ -1,6 +1,7 @@
 """LinkedIn publishing functionality."""
 
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -58,6 +59,8 @@ class LinkedInPublisher:
 
     BASE_URL = "https://api.linkedin.com/rest"
     USERINFO_URL = "https://api.linkedin.com/v2/userinfo"
+    OAUTH_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
+    INTROSPECT_TOKEN_URL = "https://www.linkedin.com/oauth/v2/introspectToken"
 
     def __init__(self, database: Database) -> None:
         """Initialize the LinkedIn publisher."""
@@ -79,6 +82,175 @@ class LinkedInPublisher:
             "X-Restli-Protocol-Version": "2.0.0",
             "LinkedIn-Version": Config.LINKEDIN_API_VERSION,
         }
+
+    # ------------------------------------------------------------------
+    # OAuth 2.0 token management
+    # ------------------------------------------------------------------
+
+    def refresh_access_token(self) -> bool:
+        """
+        Refresh the LinkedIn OAuth 2.0 access token using the refresh token.
+
+        Calls POST https://www.linkedin.com/oauth/v2/accessToken with
+        grant_type=refresh_token.  On success the new access token (and
+        potentially new refresh token) are written back to both the
+        in-memory Config and the .env file on disk.
+
+        Returns:
+            True if the token was refreshed successfully, False otherwise.
+        """
+        if not Config.LINKEDIN_CLIENT_ID or not Config.LINKEDIN_CLIENT_SECRET:
+            logger.error(
+                "Cannot refresh token: LINKEDIN_CLIENT_ID / LINKEDIN_CLIENT_SECRET not set"
+            )
+            return False
+        if not Config.LINKEDIN_REFRESH_TOKEN:
+            logger.error("Cannot refresh token: LINKEDIN_REFRESH_TOKEN not set")
+            return False
+
+        data = {
+            "grant_type": "refresh_token",
+            "refresh_token": Config.LINKEDIN_REFRESH_TOKEN,
+            "client_id": Config.LINKEDIN_CLIENT_ID,
+            "client_secret": Config.LINKEDIN_CLIENT_SECRET,
+        }
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+        try:
+            response = api_client.http_post(
+                url=self.OAUTH_TOKEN_URL,
+                headers=headers,
+                data=data,
+                timeout=30,
+                endpoint="token_refresh",
+            )
+
+            if response.status_code != 200:
+                logger.error(
+                    f"Token refresh failed ({response.status_code}): "
+                    f"{response.text[:500]}"
+                )
+                return False
+
+            token_data = response.json()
+            new_access_token = token_data.get("access_token")
+            if not new_access_token:
+                logger.error("Token refresh response missing access_token")
+                return False
+
+            new_refresh_token = token_data.get(
+                "refresh_token", Config.LINKEDIN_REFRESH_TOKEN
+            )
+
+            # Update runtime config
+            Config.LINKEDIN_ACCESS_TOKEN = new_access_token
+            Config.LINKEDIN_REFRESH_TOKEN = new_refresh_token
+
+            # Persist to .env so the app survives a restart
+            self._persist_token_to_env(
+                "LINKEDIN_ACCESS_TOKEN", new_access_token
+            )
+            self._persist_token_to_env(
+                "LINKEDIN_REFRESH_TOKEN", new_refresh_token
+            )
+
+            expires_in = token_data.get("expires_in", "unknown")
+            refresh_expires = token_data.get("refresh_token_expires_in", "unknown")
+            logger.info(
+                f"LinkedIn access token refreshed successfully. "
+                f"Expires in {expires_in}s, refresh token expires in {refresh_expires}s"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Token refresh exception: {e}")
+            return False
+
+    def introspect_access_token(self) -> dict | None:
+        """
+        Introspect the current access token to check status and expiry.
+
+        Calls POST https://www.linkedin.com/oauth/v2/introspectToken.
+
+        Returns:
+            Token introspection dict (active, status, expires_at, …)
+            or None on failure.
+        """
+        if not Config.LINKEDIN_CLIENT_ID or not Config.LINKEDIN_CLIENT_SECRET:
+            logger.error("Cannot introspect: OAuth app credentials not set")
+            return None
+        if not Config.LINKEDIN_ACCESS_TOKEN:
+            logger.error("Cannot introspect: no access token configured")
+            return None
+
+        data = {
+            "token": Config.LINKEDIN_ACCESS_TOKEN,
+            "client_id": Config.LINKEDIN_CLIENT_ID,
+            "client_secret": Config.LINKEDIN_CLIENT_SECRET,
+        }
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+        try:
+            response = api_client.http_post(
+                url=self.INTROSPECT_TOKEN_URL,
+                headers=headers,
+                data=data,
+                timeout=30,
+                endpoint="token_introspect",
+            )
+            if response.status_code == 200:
+                return response.json()
+            logger.error(
+                f"Token introspection failed ({response.status_code}): "
+                f"{response.text[:500]}"
+            )
+            return None
+        except Exception as e:
+            logger.error(f"Token introspection exception: {e}")
+            return None
+
+    @staticmethod
+    def _is_token_expired_response(response) -> bool:
+        """Return True if *response* looks like an expired-token error."""
+        if response.status_code == 401:
+            return True
+        text = response.text.strip()
+        if text.startswith("<!") or text.startswith("<html"):
+            return True
+        return False
+
+    @staticmethod
+    def _persist_token_to_env(key: str, value: str) -> None:
+        """
+        Update a single key in the .env file on disk.
+
+        If the key already exists its value is replaced in-place;
+        otherwise a new line is appended after the last LINKEDIN_* line.
+        """
+        env_path = Path(".env")
+        if not env_path.exists():
+            logger.warning(".env file not found – cannot persist token")
+            return
+
+        lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
+        found = False
+        for i, line in enumerate(lines):
+            if line.startswith(f"{key}="):
+                lines[i] = f"{key}={value}\n"
+                found = True
+                break
+
+        if not found:
+            # Append after the last LINKEDIN_* line
+            last_li = -1
+            for i, line in enumerate(lines):
+                if line.startswith("LINKEDIN_"):
+                    last_li = i
+            insert_at = last_li + 1 if last_li >= 0 else len(lines)
+            lines.insert(insert_at, f"{key}={value}\n")
+
+        env_path.write_text("".join(lines), encoding="utf-8")
+        logger.debug(f"Persisted {key} to .env")
 
     def _get_post_url(self, post_id: str) -> str:
         """
@@ -147,12 +319,17 @@ class LinkedInPublisher:
         # Build and post content
         return self._create_post(story, image_asset)
 
-    def _upload_image(self, image_path: str, owner: str | None = None) -> str | None:
+    def _upload_image(
+        self, image_path: str, owner: str | None = None, *, _retry: bool = True
+    ) -> str | None:
         """
         Upload an image to LinkedIn using the REST API.
 
         Uses /rest/images?action=initializeUpload to register, then PUT binary data.
         Returns the image URN (e.g., 'urn:li:image:...') if successful.
+
+        If the access token appears expired and ``_retry`` is True, the method
+        will attempt one automatic token refresh and retry the upload.
         """
         try:
             upload_owner = owner or Config.LINKEDIN_AUTHOR_URN
@@ -173,32 +350,18 @@ class LinkedInPublisher:
                 endpoint="upload_register",
             )
 
-            if response.status_code != 200:
-                response_text = response.text
-                if response_text.strip().startswith(
-                    "<!"
-                ) or response_text.strip().startswith("<html"):
-                    logger.error(
-                        f"LinkedIn returned HTML instead of JSON (status {response.status_code}). "
-                        "Access token may be expired."
-                    )
-                    raise ValueError(
-                        "LinkedIn access token expired or invalid. Please re-authenticate."
-                    )
-                logger.error(f"Image upload init failed: {response_text[:500]}")
-                return None
-
-            # Check for HTML in response before parsing JSON
-            response_text = response.text
-            if response_text.strip().startswith(
-                "<!"
-            ) or response_text.strip().startswith("<html"):
-                logger.error(
-                    "LinkedIn returned HTML instead of JSON. Access token may be expired."
-                )
+            if self._is_token_expired_response(response):
+                if _retry and self.refresh_access_token():
+                    logger.info("Retrying image upload after token refresh")
+                    return self._upload_image(image_path, owner, _retry=False)
                 raise ValueError(
-                    "LinkedIn access token expired or invalid. Please re-authenticate."
+                    "LinkedIn access token expired or invalid. "
+                    "Automatic refresh failed – please re-authenticate."
                 )
+
+            if response.status_code != 200:
+                logger.error(f"Image upload init failed: {response.text[:500]}")
+                return None
 
             upload_data = response.json()
             upload_url = upload_data["value"]["uploadUrl"]
@@ -208,9 +371,11 @@ class LinkedInPublisher:
             with open(image_path, "rb") as image_file:
                 image_data = image_file.read()
 
-            upload_headers = {**self._get_headers(), "Content-Type": "application/octet-stream"}
+            upload_headers = {
+                **self._get_headers(),
+                "Content-Type": "application/octet-stream",
+            }
 
-            # Use centralized client for rate limiting and retry logic
             upload_response = api_client.http_put(
                 upload_url,
                 headers=upload_headers,
@@ -226,14 +391,21 @@ class LinkedInPublisher:
                 logger.error(f"Image upload failed: {upload_response.text}")
                 return None
 
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"Image upload exception: {e}")
             return None
 
-    def _create_post(self, story: Story, image_asset: str | None = None) -> str | None:
+    def _create_post(
+        self, story: Story, image_asset: str | None = None, *, _retry: bool = True
+    ) -> str | None:
         """
         Create a LinkedIn post using the REST API (/rest/posts).
         Returns the post ID if successful.
+
+        If the access token appears expired and ``_retry`` is True, the method
+        will attempt one automatic token refresh and retry the request.
         """
         # Format the post text
         post_text = self._format_post_text(story)
@@ -258,28 +430,23 @@ class LinkedInPublisher:
                 # Extract post ID from response header
                 post_id = response.headers.get("x-restli-id", "")
                 return post_id
-            else:
-                # Check if we got HTML instead of JSON (usually means auth error)
-                response_text = response.text
-                if response_text.strip().startswith(
-                    "<!"
-                ) or response_text.strip().startswith("<html"):
-                    logger.error(
-                        f"LinkedIn returned HTML instead of JSON (status {response.status_code}). "
-                        "This usually means the access token is expired or invalid. "
-                        "Please refresh your LinkedIn token."
-                    )
-                    raise ValueError(
-                        "LinkedIn access token expired or invalid. Please re-authenticate with LinkedIn."
-                    )
-                else:
-                    logger.error(
-                        f"Post creation failed (status {response.status_code}): {response_text[:500]}"
-                    )
-                return None
+
+            if self._is_token_expired_response(response):
+                if _retry and self.refresh_access_token():
+                    logger.info("Retrying post creation after token refresh")
+                    return self._create_post(story, image_asset, _retry=False)
+                raise ValueError(
+                    "LinkedIn access token expired or invalid. "
+                    "Automatic refresh failed – please re-authenticate."
+                )
+
+            logger.error(
+                f"Post creation failed (status {response.status_code}): "
+                f"{response.text[:500]}"
+            )
+            return None
 
         except ValueError:
-            # Re-raise auth errors with clear message
             raise
         except Exception as e:
             logger.error(f"Post creation exception: {e}")
@@ -604,6 +771,63 @@ class LinkedInPublisher:
                 return response.json()
             return None
         except Exception:
+            return None
+
+    def get_identity_me(self) -> dict | None:
+        """
+        Get authenticated user's identity via /rest/identityMe.
+
+        Requires the ``r_profile_basicinfo`` scope.
+        Returns profile data dict or None on failure.
+        """
+        if not Config.LINKEDIN_ACCESS_TOKEN:
+            return None
+
+        try:
+            response = api_client.linkedin_request(
+                method="GET",
+                url=f"{self.BASE_URL}/identityMe",
+                headers=self._get_headers(),
+                timeout=10,
+                endpoint="identity_me",
+            )
+            if response.status_code == 200:
+                return response.json()
+            logger.warning(
+                f"identityMe returned {response.status_code}: {response.text[:200]}"
+            )
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get identity: {e}")
+            return None
+
+    def get_verification_report(self) -> dict | None:
+        """
+        Get verification report via /rest/verificationReport.
+
+        Requires the ``r_verify`` scope.
+        Returns verification data dict or None on failure.
+        """
+        if not Config.LINKEDIN_ACCESS_TOKEN:
+            return None
+
+        try:
+            response = api_client.linkedin_request(
+                method="GET",
+                url=f"{self.BASE_URL}/verificationReport",
+                headers=self._get_headers(),
+                timeout=10,
+                endpoint="verification_report",
+            )
+            if response.status_code == 200:
+                return response.json()
+            logger.warning(
+                f"verificationReport returned {response.status_code}: "
+                f"{response.text[:200]}"
+            )
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get verification report: {e}")
             return None
 
     def validate_before_publish(self, story: Story) -> PublishValidationResult:

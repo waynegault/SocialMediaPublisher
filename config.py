@@ -99,14 +99,11 @@ class SettingsModel(BaseSettings):
         default="", alias="LINKEDIN_ORGANIZATION_URN"
     )
     linkedin_author_name: str = Field(default="", alias="LINKEDIN_AUTHOR_NAME")
-
-    # --- LinkedIn OAuth 2.0 Credentials ---
+    # OAuth 2.0 app credentials (for programmatic token refresh)
     linkedin_client_id: str = Field(default="", alias="LINKEDIN_CLIENT_ID")
     linkedin_client_secret: str = Field(default="", alias="LINKEDIN_CLIENT_SECRET")
-    linkedin_redirect_uri: str = Field(
-        default="https://www.linkedin.com/developers/tools/oauth/redirect",
-        alias="LINKEDIN_REDIRECT_URI",
-    )
+    linkedin_refresh_token: str = Field(default="", alias="LINKEDIN_REFRESH_TOKEN")
+
     # LinkedIn REST API version header (YYYYMM format)
     linkedin_api_version: str = Field(default="202501", alias="LINKEDIN_API_VERSION")
 
@@ -251,6 +248,8 @@ class SettingsModel(BaseSettings):
     )
 
     # --- Search Settings ---
+    search_engine: str = Field(default="duckduckgo", alias="SEARCH_ENGINE")
+    browser_backend: str = Field(default="nodriver", alias="BROWSER_BACKEND")
     search_prompt: str = Field(
         default=(
             "I'm a professional {discipline}. I'm looking for the latest professional {discipline} "
@@ -724,7 +723,7 @@ class Config(metaclass=_ConfigMeta):
             f"  LINKEDIN_CLIENT_ID: {'*' * 8 if s.linkedin_client_id else 'NOT SET'}"
         )
         print(
-            f"  LINKEDIN_CLIENT_SECRET: {'*' * 8 if s.linkedin_client_secret else 'NOT SET'}"
+            f"  LINKEDIN_REFRESH_TOKEN: {'*' * 8 if s.linkedin_refresh_token else 'NOT SET'}"
         )
         print(f"  LINKEDIN_API_VERSION: {s.linkedin_api_version}")
         print(f"  LINKEDIN_SEARCH_ENABLED: {s.linkedin_search_enabled}")
