@@ -56,3 +56,4 @@ content_engine.db
 /.pytest_cache
 /__pycache__
 /test_output.txt
+/.env.backup
