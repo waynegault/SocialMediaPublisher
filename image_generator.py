@@ -99,7 +99,7 @@ MODEL_CONFIGS: dict[ImageModel, ModelConfig] = {
         model_id=ImageModel.HUGGINGFACE_SDXL,
         display_name="HuggingFace SDXL",
         priority=4,
-        requires_api_key="HUGGINGFACE_API_TOKEN",
+        requires_api_key="HUGGINGFACE_API_KEY",
         best_for=["artistic", "stylized"],
     ),
     ImageModel.POLLINATIONS: ModelConfig(

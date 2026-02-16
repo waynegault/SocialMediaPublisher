@@ -248,6 +248,10 @@ class SettingsModel(BaseSettings):
     )
 
     # --- Search Settings ---
+    # SEARCH_PROVIDER controls how story discovery works:
+    #   "gemini"    – Gemini AI with Google Search grounding (requires quota)
+    #   "duckduckgo" – DuckDuckGo web search + Groq/Local LLM processing (free)
+    search_provider: str = Field(default="gemini", alias="SEARCH_PROVIDER")
     search_engine: str = Field(default="duckduckgo", alias="SEARCH_ENGINE")
     browser_backend: str = Field(default="nodriver", alias="BROWSER_BACKEND")
     search_prompt: str = Field(
@@ -518,7 +522,7 @@ class SettingsModel(BaseSettings):
             "- People quoted or mentioned by name with their titles\n\n"
             "Return ONLY valid JSON (no markdown, no explanation):\n"
             '{{"organizations": ["Org Name"], "direct_people": [{{"name": "Full Name", "title": "Job Title", "affiliation": "Organization"}}]}}\n\n'
-            'If nothing found, return: {"organizations": [], "direct_people": []}'
+            'If nothing found, return: {{"organizations": [], "direct_people": []}}'
         ),
         alias="STORY_ENRICHMENT_PROMPT",
     )
@@ -532,7 +536,7 @@ class SettingsModel(BaseSettings):
             "Story title: {story_title}\n\n"
             "Return ONLY valid JSON (no markdown, no explanation):\n"
             '{{"leaders": [{{"name": "Full Name", "title": "Job Title", "organization": "{organization_name}", "role_type": "executive|academic|pr_comms", "location": "City, Country"}}]}}\n\n'
-            'If you cannot find specific leaders, return: {"leaders": []}'
+            'If you cannot find specific leaders, return: {{"leaders": []}}'
         ),
         alias="INDIRECT_PEOPLE_PROMPT",
     )
@@ -713,7 +717,7 @@ class Config(metaclass=_ConfigMeta):
         print("=== Social Media Publisher Configuration ===")
         print(f"  GEMINI_API_KEY: {'*' * 8 if s.gemini_api_key else 'NOT SET'}")
         print(
-            f"  HUGGINGFACE_API_TOKEN: {'*' * 8 if s.huggingface_api_token else 'NOT SET'}"
+            f"  HUGGINGFACE_API_TOKEN: {'*' * 8 if s.effective_huggingface_token else 'NOT SET'}"
         )
         print(
             f"  LINKEDIN_ACCESS_TOKEN: {'*' * 8 if s.linkedin_access_token else 'NOT SET'}"
@@ -729,10 +733,11 @@ class Config(metaclass=_ConfigMeta):
         print(f"  LINKEDIN_SEARCH_ENABLED: {s.linkedin_search_enabled}")
         print(f"  MODEL_TEXT: {s.model_text}")
         print(f"  MODEL_IMAGE: {s.model_image}")
-        if s.huggingface_api_token:
+        if s.effective_huggingface_token:
             print(
                 f"  HF_TTI_MODEL: {s.hf_tti_model} (prefer={s.hf_prefer_if_configured})"
             )
+        print(f"  SEARCH_PROVIDER: {s.search_provider}")
         print(f"  SEARCH_PROMPT: {s.search_prompt[:50]}...")
         if s.search_prompt_template:
             print("  SEARCH_PROMPT_TEMPLATE: custom (from .env)")

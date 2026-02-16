@@ -1045,7 +1045,12 @@ class Database:
     def get_stories_needing_enrichment(self) -> list[Story]:
         """Get stories that need company mention enrichment.
 
-        Returns all stories with pending enrichment status.
+        Returns stories with:
+        - pending enrichment status (never enriched)
+        - error enrichment status (failed previously, retry)
+        - low-quality enrichment with no people AND no organizations
+          (likely enriched when NER/LLM was unavailable)
+
         Enrichment runs early in the pipeline (before verification),
         so we don't require verification_status='approved'.
         """
@@ -1055,6 +1060,13 @@ class Database:
                 """
                 SELECT * FROM stories
                 WHERE enrichment_status = 'pending'
+                   OR enrichment_status = 'error'
+                   OR (
+                       enrichment_status = 'enriched'
+                       AND enrichment_quality = 'low'
+                       AND (direct_people IS NULL OR direct_people = '[]')
+                       AND (organizations IS NULL OR organizations = '[]')
+                   )
                 ORDER BY quality_score DESC
                 """
             )
