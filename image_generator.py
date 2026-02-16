@@ -1173,15 +1173,7 @@ class ImageGenerator:
 
             # Use Gemini to analyze the image (requires vision capability)
             # Note: Groq doesn't support vision, so Gemini is required here
-            analysis_prompt = """Analyze this image from a technical/engineering news article.
-Describe in 2-3 sentences:
-1. What specific equipment, technology, or facility is shown (be precise - e.g., "PEM electrolyzer stack", "distillation column", "CRISPR gene editing setup")
-2. The setting/environment (laboratory, industrial plant, pilot facility, control room, etc.)
-3. Any distinctive visual elements (colors, scale, materials, instrumentation)
-
-Focus on technical accuracy. Be specific about equipment types, not generic.
-If this appears to be a stock photo or generic image, say "GENERIC STOCK IMAGE".
-Keep response under 100 words."""
+            analysis_prompt = Config.IMAGE_ANALYSIS_PROMPT
 
             try:
                 response = api_client.gemini_generate(
@@ -1454,29 +1446,13 @@ Keep response under 100 words."""
         # Conditionally inject appearance instruction based on HUMAN_IN_IMAGE setting
         if Config.HUMAN_IN_IMAGE:
             # Include central human character with specific appearance
-            appearance_instruction = f"""
-MANDATORY APPEARANCE FOR THIS IMAGE (use exactly as specified):
-    The female {Config.DISCIPLINE} professional in this image must be: {random_appearance}.
-Do NOT deviate from this appearance description. Include these exact physical traits in your prompt.
-"""
+            appearance_instruction = "\n" + Config.HUMAN_APPEARANCE_INSTRUCTION.format(
+                discipline=Config.DISCIPLINE,
+                random_appearance=random_appearance,
+            ) + "\n"
         else:
             # No central human character - focus on concepts, technology, environments
-            appearance_instruction = """
-IMPORTANT: NO CENTRAL HUMAN CHARACTER IN THIS IMAGE.
-Focus on illustrating the story through:
-- Technology, equipment, machinery, or scientific apparatus relevant to the story
-- Environments, facilities, or locations described in the story
-- Abstract concepts, data visualizations, or process diagrams
-- Natural phenomena, materials, or products being discussed
-
-If people appear in the image, they MUST be:
-- Incidental and peripheral to the main subject (e.g., small figures in background)
-- Part of a crowd or group scene where no individual is the focus
-- Silhouettes or partially visible, not the main subject
-
-The image should focus on the SUBJECT MATTER of the story, not on any individual person.
-Do NOT include: close-up portraits, waist-up shots of individuals, or any person as the central figure.
-"""
+            appearance_instruction = "\n" + Config.NO_HUMAN_INSTRUCTION + "\n"
         # Combine appearance instruction, source context, and refinement prompt
         refinement_prompt = (
             appearance_instruction + source_section + "\n" + refinement_prompt
@@ -1562,11 +1538,9 @@ Do NOT include: close-up portraits, waist-up shots of individuals, or any person
                 fallback = fallback.replace("a beautiful female", random_appearance, 1)
         else:
             # No-human fallback - create a concept-focused prompt
-            fallback = (
-                f"A photo of industrial/scientific equipment and technology related to: {story.title[:60]}. "
-                f"Focus on machinery, facilities, processes, or environments relevant to {Config.DISCIPLINE}. "
-                "No people as the central subject. Wide shot showing the technology or environment. "
-                "Professional documentary photography, editorial quality for a trade publication."
+            fallback = Config.IMAGE_FALLBACK_NO_HUMAN_PROMPT.format(
+                story_title=story.title[:60],
+                discipline=Config.DISCIPLINE,
             )
         return fallback
 
@@ -1645,22 +1619,11 @@ Do NOT include: close-up portraits, waist-up shots of individuals, or any person
 
         Creates a concise, descriptive alt text suitable for screen readers.
         """
-        alt_text_prompt = f"""Generate a concise alt text description (1-2 sentences, max 150 characters) for an image.
-
-The image was generated for this story:
-Title: {story.title}
-Summary: {story.summary[:200]}...
-
-The image depicts: {image_prompt[:300]}
-
-Write alt text that:
-1. Describes what's shown in the image for visually impaired users
-2. Is concise but informative (aim for 80-150 characters)
-3. Focuses on the main subject and setting
-4. Does NOT start with "Image of" or "Picture of"
-5. Does NOT include hashtags or promotional content
-
-Return ONLY the alt text, nothing else."""
+        alt_text_prompt = Config.ALT_TEXT_PROMPT.format(
+            story_title=story.title,
+            story_summary=story.summary[:200],
+            image_prompt=image_prompt[:300],
+        )
 
         try:
             alt_text = None

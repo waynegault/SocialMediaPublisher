@@ -183,7 +183,7 @@ class SettingsModel(BaseSettings):
     )
     hf_inference_endpoint: str = Field(default="", alias="HF_INFERENCE_ENDPOINT")
     hf_negative_prompt: str = Field(
-        default="text, watermark, logo, blurry, low quality, artifacts, jpeg artifacts, nsfw",
+        default="",
         alias="HF_NEGATIVE_PROMPT",
     )
     hf_prefer_if_configured: bool = Field(default=True, alias="HF_PREFER_IF_CONFIGURED")
@@ -195,25 +195,13 @@ class SettingsModel(BaseSettings):
     human_in_image: bool = Field(default=True, alias="HUMAN_IN_IMAGE")
 
     image_style: str = Field(
-        default=(
-            "professional editorial photography for a trade publication, "
-            "sharp focus on equipment, processes, and technical detail, "
-            "authentic workplace setting with real tools, instruments, and materials, "
-            "appropriate safety gear and professional attire for the setting, "
-            "natural workplace lighting, photorealistic, high editorial quality"
-        ),
+        default="",
         alias="IMAGE_STYLE",
     )
     image_aspect_ratio: str = Field(default="16:9", alias="IMAGE_ASPECT_RATIO")
     image_size: str = Field(default="2K", alias="IMAGE_SIZE")
     image_negative_prompt: str = Field(
-        default=(
-            "text, words, letters, numbers, labels, signs, writing, captions, titles, "
-            "watermark, logo, blurry, low quality, artifacts, jpeg artifacts, "
-            "cartoon, illustration, anime, drawing, painting, sketch, abstract, "
-            "deformed, distorted, disfigured, bad anatomy, unrealistic proportions, "
-            "stock photo watermark, grainy, out of focus, overexposed, underexposed"
-        ),
+        default="",
         alias="IMAGE_NEGATIVE_PROMPT",
     )
 
@@ -241,7 +229,7 @@ class SettingsModel(BaseSettings):
     z_image_dtype: str = Field(default="bfloat16", alias="Z_IMAGE_DTYPE")
     z_image_size: str = Field(default="", alias="Z_IMAGE_SIZE")
     z_image_negative_prompt: str = Field(
-        default="text, watermark, logo, blurry, low quality, artifacts, jpeg artifacts",
+        default="",
         alias="Z_IMAGE_NEGATIVE_PROMPT",
     )
 
@@ -253,10 +241,7 @@ class SettingsModel(BaseSettings):
     search_engine: str = Field(default="duckduckgo", alias="SEARCH_ENGINE")
     browser_backend: str = Field(default="nodriver", alias="BROWSER_BACKEND")
     search_prompt: str = Field(
-        default=(
-            "latest {discipline} news: breakthroughs, research findings, industry developments, "
-            "regulatory changes, and notable projects suitable for LinkedIn"
-        ),
+        default="",
         alias="SEARCH_PROMPT",
     )
     search_prompt_template: str = Field(default="", alias="SEARCH_PROMPT_TEMPLATE")
@@ -402,184 +387,107 @@ class SettingsModel(BaseSettings):
         default=60, ge=1, alias="PUBLISHER_CHECK_INTERVAL_SECONDS"
     )
 
-    # --- Prompt Templates (loaded separately for brevity) ---
-    # These are loaded from env vars but validated as non-empty strings
+    # --- Prompt Templates (loaded from .env) ---
+    # All prompts are configured in .env — no defaults in code.
+    # See .env PROMPT TEMPLATES section for values and documentation.
     image_refinement_prompt: str = Field(
-        default=(
-            "Create a single, detailed image-generation prompt for this story.\n\n"
-            "Story title: {story_title}\n"
-            "Story summary: {story_summary}\n\n"
-            "Style guidance: {image_style}\n\n"
-            "RULES:\n"
-            "1. Output ONLY the image prompt — no preamble, no commentary, no quotes.\n"
-            "2. Start the prompt with 'A photo of' for photorealistic output.\n"
-            "3. Describe a SPECIFIC scene that illustrates this particular story, not a generic workplace.\n"
-            "4. Include concrete visual details: specific equipment, materials, environment, and actions.\n"
-            "5. Include the central human character described in the MANDATORY APPEARANCE section above.\n"
-            "6. End with lighting and camera directions (e.g., 'shot with 85mm lens, natural light').\n"
-            "7. Keep the prompt under 120 words."
-        ),
+        default="",
         alias="IMAGE_REFINEMENT_PROMPT",
     )
     image_refinement_prompt_no_human: str = Field(
-        default=(
-            "Create a single, detailed image-generation prompt for this story.\n\n"
-            "Story title: {story_title}\n"
-            "Story summary: {story_summary}\n\n"
-            "Style guidance: {image_style}\n\n"
-            "RULES:\n"
-            "1. Output ONLY the image prompt — no preamble, no commentary, no quotes.\n"
-            "2. Start the prompt with 'A photo of' for photorealistic output.\n"
-            "3. Describe a SPECIFIC scene that illustrates this particular story, not a generic workplace.\n"
-            "4. Include concrete visual details: specific equipment, materials, environment, and actions.\n"
-            "5. Do NOT include any person as the central subject (see instructions above).\n"
-            "6. End with lighting and camera directions (e.g., 'wide-angle lens, natural light').\n"
-            "7. Keep the prompt under 120 words."
-        ),
+        default="",
         alias="IMAGE_REFINEMENT_PROMPT_NO_HUMAN",
     )
     image_fallback_prompt: str = Field(
-        default=(
-            "A photo of {appearance} {discipline} professional in an authentic workplace "
-            "actively engaged with the subject matter of: {story_title}. "
-            "Face clearly visible with a confident, warm expression. "
-            "Relevant tools, equipment, or technical environment in the background. "
-            "Natural workplace lighting, photorealistic, editorial quality for a professional publication."
-        ),
+        default="",
         alias="IMAGE_FALLBACK_PROMPT",
     )
     search_instruction_prompt: str = Field(
-        default=(
-            "You are an expert {discipline_title} news curator with high editorial standards.\n\n"
-            "TASK: Find up to {max_stories} noteworthy stories matching: {search_prompt}\n\n"
-            "REQUIREMENTS:\n"
-            "1. Stories must be DIRECTLY relevant to {discipline} professional practice\n"
-            "2. Must be from reputable sources (major publications, research institutions, industry news)\n"
-            "3. Must have verifiable facts and specific technical details\n"
-            "4. No speculation, opinion pieces, or tangentially related content\n"
-            "5. Must be published after {since_date}\n"
-            "6. Each story must cover a DISTINCT topic — no overlapping or duplicate stories\n\n"
-            "For EACH story, provide:\n"
-            "- title: Clear, factual headline (do not editorialize or add hype)\n"
-            "- summary: Approximately {summary_words} words. Write as a LinkedIn post from a {discipline} "
-            "professional sharing their perspective: use first-person ('I'), provide professional "
-            "insight and analysis, explain why this matters to the field. Do NOT just restate the headline.\n"
-            "- sources: Array of source article URLs\n"
-            "- quality_score: 1-10 rating (be strict: 7=solid relevance, 8=strong, 9=excellent, 10=exceptional)\n"
-            "- quality_justification: 1-2 sentences explaining WHY this score (REQUIRED)\n"
-            "- category: One of [Research, Industry, Career, Technology, Policy]\n"
-            "- direct_people: Array of people mentioned with name, position, company\n\n"
-            "QUALITY STANDARDS:\n"
-            "- Only include stories scoring 7+\n"
-            "- Reject content only tangentially related to {discipline}\n"
-            "- Prefer stories with real-world impact, technical depth, or professional significance\n\n"
-            "Return ONLY a valid JSON array. No markdown, no explanation, no wrapper text."
-        ),
+        default="",
         alias="SEARCH_INSTRUCTION_PROMPT",
     )
     verification_prompt: str = Field(
-        default=(
-            "You are a strict quality gatekeeper verifying content for LinkedIn publication.\n\n"
-            "STORY TO EVALUATE:\n"
-            "Title: {story_title}\n"
-            "Summary: {story_summary}\n"
-            "Summary word count: {summary_word_count} (target: {summary_word_limit})\n"
-            "Quality justification: {quality_justification}\n"
-            "Sources: {story_sources}\n"
-            "Discipline: {discipline}\n"
-            "Search criteria: {search_prompt}\n\n"
-            "REJECTION CRITERIA — reject if ANY apply:\n"
-            "1. SUMMARY LENGTH: Must be {min_summary_words}-{max_summary_words} words "
-            "(80%-130% of target). Too short = lacks depth; far over = needs tightening.\n"
-            "2. RELEVANCE: Must be DIRECTLY relevant to {discipline} professional practice. "
-            "Reject stories only tangentially connected to the discipline.\n"
-            "3. SUBSTANCE: Summary must provide professional insight or analysis, "
-            "not merely restate the headline.\n"
-            "4. QUALITY JUSTIFICATION: Missing justification signals poor curation — reject.\n"
-            "5. TONE: Summary should read as a credible LinkedIn post from a {discipline} "
-            "professional — no clickbait, no excessive hype, no promotional language.\n\n"
-            "RESPONSE FORMAT (exactly two lines):\n"
-            "Line 1: APPROVED or REJECTED\n"
-            "Line 2: Reason in ≤20 words citing the specific criterion.\n\n"
-            "Be strict on relevance and substance. Accept summaries within 80-130% of target length."
-        ),
+        default="",
         alias="VERIFICATION_PROMPT",
     )
     search_distill_prompt: str = Field(
-        default=(
-            "You are a search query optimizer. Extract 3-6 concise search keywords from the user's conversational query. "
-            "Return ONLY the keywords as a short phrase, no explanations or formatting. "
-            "Example: 'chemical engineering breakthroughs 2024' NOT 'Here are the keywords:...'"
-        ),
+        default="",
         alias="SEARCH_DISTILL_PROMPT",
     )
     local_llm_search_prompt: str = Field(
-        default=(
-            "You are a strict news curator for a {discipline} professional. Analyze these search results and extract ONLY highly relevant stories.\n\n"
-            "SEARCH RESULTS:\n{search_results}\n\n"
-            "TASK: Select up to {max_stories} stories that are DIRECTLY relevant to {discipline} professional work for LinkedIn publication.\n"
-            "Each story must cover a DISTINCT topic — no overlapping or duplicate stories.\n\n"
-            "RELEVANCE CRITERIA (be strict):\n"
-            "- Story must be about {discipline} processes, techniques, research, or industry developments\n"
-            "- Tangentially related stories (e.g., logistics, shipping, business deals) should be scored LOW or excluded\n"
-            "- Prefer stories with technical depth, research findings, or professional insights\n\n"
-            "For each story, provide:\n"
-            "- title: Clear, factual headline (do not editorialize)\n"
-            "- summary: Approximately {summary_words} words, first-person narrative starting with 'I' providing professional insight and analysis, NOT just restating the headline\n"
-            "- source_links: Array of source URLs\n"
-            "- quality_score: 1-10 rating (be harsh: 7-8 = good, 9-10 = exceptional only)\n"
-            "- quality_justification: 1-2 sentences explaining WHY this score (REQUIRED)\n"
-            "- category: One of [Research, Industry, Career, Technology, Policy]\n\n"
-            "Return ONLY a valid JSON array, no markdown or explanation:\n"
-            '[{{"title": "...", "summary": "...", "source_links": ["..."], "quality_score": 7, "quality_justification": "Directly relevant to {discipline} because...", "category": "Research"}}]'
-        ),
+        default="",
         alias="LOCAL_LLM_SEARCH_PROMPT",
     )
     linkedin_mention_prompt: str = Field(default="", alias="LINKEDIN_MENTION_PROMPT")
     story_enrichment_prompt: str = Field(
-        default=(
-            "Extract organizations and people from this news story.\n\n"
-            "Title: {story_title}\n"
-            "Summary: {story_summary}\n"
-            "Sources: {story_sources}\n\n"
-            "Look for:\n"
-            "- Company/organization names mentioned\n"
-            "- People quoted or mentioned by name with their titles\n\n"
-            "Return ONLY valid JSON (no markdown, no explanation):\n"
-            '{{"organizations": ["Org Name"], "direct_people": [{{"name": "Full Name", "title": "Job Title", "affiliation": "Organization"}}]}}\n\n'
-            'If nothing found, return: {{"organizations": [], "direct_people": []}}'
-        ),
+        default="",
         alias="STORY_ENRICHMENT_PROMPT",
     )
     linkedin_profile_search_prompt: str = Field(
         default="", alias="LINKEDIN_PROFILE_SEARCH_PROMPT"
     )
     indirect_people_prompt: str = Field(
-        default=(
-            "Find 1-3 senior leaders at {organization_name} relevant to this story.\n"
-            "Story category: {story_category}\n"
-            "Story title: {story_title}\n\n"
-            "Return ONLY valid JSON (no markdown, no explanation):\n"
-            '{{"leaders": [{{"name": "Full Name", "title": "Job Title", "organization": "{organization_name}", "role_type": "executive|academic|pr_comms", "location": "City, Country"}}]}}\n\n'
-            'If you cannot find specific leaders, return: {{"leaders": []}}'
-        ),
+        default="",
         alias="INDIRECT_PEOPLE_PROMPT",
     )
     company_mention_prompt: str = Field(
-        default=(
-            "Given this story, generate a brief company mention sentence.\n\n"
-            "Title: {story_title}\n"
-            "Summary: {story_summary}\n"
-            "Sources: {story_sources}\n\n"
-            "If companies are mentioned, return a single sentence mentioning them.\n"
-            "If no companies are mentioned, return: NO_COMPANY_MENTION"
-        ),
+        default="",
         alias="COMPANY_MENTION_PROMPT",
     )
     individual_extraction_prompt: str = Field(
         default="", alias="INDIVIDUAL_EXTRACTION_PROMPT"
     )
     json_repair_prompt: str = Field(default="", alias="JSON_REPAIR_PROMPT")
+
+    # --- Additional Prompt Templates (loaded from .env) ---
+    promotion_message_prompt: str = Field(
+        default="", alias="PROMOTION_MESSAGE_PROMPT"
+    )
+    source_url_lookup_prompt: str = Field(
+        default="", alias="SOURCE_URL_LOOKUP_PROMPT"
+    )
+    org_urn_lookup_prompt: str = Field(
+        default="", alias="ORG_URN_LOOKUP_PROMPT"
+    )
+    company_search_prompt: str = Field(
+        default="", alias="COMPANY_SEARCH_PROMPT"
+    )
+    person_profile_search_prompt: str = Field(
+        default="", alias="PERSON_PROFILE_SEARCH_PROMPT"
+    )
+    department_search_prompt: str = Field(
+        default="", alias="DEPARTMENT_SEARCH_PROMPT"
+    )
+    image_analysis_prompt: str = Field(
+        default="", alias="IMAGE_ANALYSIS_PROMPT"
+    )
+    alt_text_prompt: str = Field(
+        default="", alias="ALT_TEXT_PROMPT"
+    )
+    image_fallback_no_human_prompt: str = Field(
+        default="", alias="IMAGE_FALLBACK_NO_HUMAN_PROMPT"
+    )
+    no_human_instruction: str = Field(
+        default="", alias="NO_HUMAN_INSTRUCTION"
+    )
+    human_appearance_instruction: str = Field(
+        default="", alias="HUMAN_APPEARANCE_INSTRUCTION"
+    )
+    direct_people_extraction_prompt: str = Field(
+        default="", alias="DIRECT_PEOPLE_EXTRACTION_PROMPT"
+    )
+    source_people_search_prompt: str = Field(
+        default="", alias="SOURCE_PEOPLE_SEARCH_PROMPT"
+    )
+    originality_analysis_prompt: str = Field(
+        default="", alias="ORIGINALITY_ANALYSIS_PROMPT"
+    )
+    rag_personalization_prompt: str = Field(
+        default="", alias="RAG_PERSONALIZATION_PROMPT"
+    )
+    rag_base_prompt: str = Field(
+        default="", alias="RAG_BASE_PROMPT"
+    )
 
     @field_validator("image_aspect_ratio")
     @classmethod
@@ -646,6 +554,28 @@ class SettingsModel(BaseSettings):
             raise ValueError(
                 f"LINKEDIN_POST_OPTIMAL_CHARS ({self.linkedin_post_optimal_chars}) must be "
                 f"less than LINKEDIN_POST_MAX_CHARS ({self.linkedin_post_max_chars})"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def warn_empty_prompts(self) -> "SettingsModel":
+        """Warn at startup if critical prompt templates are not set in .env."""
+        import warnings
+
+        critical_prompts = [
+            "search_prompt",
+            "search_instruction_prompt",
+            "verification_prompt",
+            "image_refinement_prompt",
+            "image_fallback_prompt",
+            "image_style",
+        ]
+        empty = [p.upper() for p in critical_prompts if not getattr(self, p)]
+        if empty:
+            warnings.warn(
+                f"Empty prompt template(s) in .env: {', '.join(empty)}. "
+                "The app requires these to function. Add them to your .env file.",
+                stacklevel=2,
             )
         return self
 

@@ -257,25 +257,10 @@ class OriginalityChecker:
             - recommendation: str
             - override_decision: bool (whether to override threshold-based decision)
         """
-        prompt = f"""Analyze the originality of this summary compared to the source text.
-
-SUMMARY:
-{summary[:1500]}
-
-SOURCE EXCERPT:
-{source[:2000]}
-
-EVALUATE:
-1. Is the summary sufficiently paraphrased (not just rearranged words)?
-2. Does it add unique perspective or insight beyond the source?
-3. Are there any phrases copied verbatim that should be quoted or rephrased?
-4. Would this pass academic plagiarism standards?
-
-Respond in this exact format:
-ORIGINAL: YES or NO
-CONFIDENCE: 0.0-1.0
-ISSUES: [comma-separated list or "none"]
-RECOMMENDATION: [one sentence]"""
+        prompt = Config.ORIGINALITY_ANALYSIS_PROMPT.format(
+            summary=summary[:1500],
+            source=source[:2000],
+        )
 
         try:
             if self.local_client:

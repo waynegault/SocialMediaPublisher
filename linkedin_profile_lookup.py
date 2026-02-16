@@ -2810,20 +2810,11 @@ class LinkedInCompanyLookup:
 
         org_type = "company" if "/company/" in url else "school"
 
-        prompt = f"""Find the LinkedIn organization ID for: {url}
-
-I need the numeric organization ID (also called company ID) for this LinkedIn page.
-The slug is: {org_slug}
-
-Search for information about this LinkedIn {org_type} page's numeric ID.
-The ID is typically a number like 1234567 or similar.
-
-RESPONSE FORMAT:
-If you find the organization ID, respond with just the number:
-12345678
-
-If you cannot find it, respond with:
-NOT_FOUND"""
+        prompt = Config.ORG_URN_LOOKUP_PROMPT.format(
+            url=url,
+            org_slug=org_slug,
+            org_type=org_type,
+        )
 
         try:
             response = api_client.gemini_generate(
@@ -3108,32 +3099,10 @@ NOT_FOUND"""
         # Note: caller (search_company) guarantees self.client is not None
         assert self.client is not None
 
-        prompt = f"""Find the official LinkedIn page for: {company_name}
-
-Search for: {search_query}
-
-TASK: Find the MAIN LinkedIn company or school page URL.
-
-IMPORTANT RULES:
-1. Find the MAIN/OFFICIAL page for the whole organization, NOT a department or subsidiary
-2. For universities, look for the main university page, not individual departments
-3. The URL must be linkedin.com/company/xxx or linkedin.com/school/xxx
-4. Return the most official/verified page if multiple exist
-5. If the organization has multiple entities, return the main/parent one
-
-EXAMPLES of what to return:
-- For "Stanford University" → https://www.linkedin.com/school/stanford-university
-- For "Google" → https://www.linkedin.com/company/google
-- For "MIT" → https://www.linkedin.com/school/massachusetts-institute-of-technology
-
-RESPONSE FORMAT:
-If found, respond with ONLY the LinkedIn URL on a single line:
-https://www.linkedin.com/company/company-name
-OR
-https://www.linkedin.com/school/school-name
-
-If NOT found or only department pages exist, respond with exactly:
-NOT_FOUND"""
+        prompt = Config.COMPANY_SEARCH_PROMPT.format(
+            company_name=company_name,
+            search_query=search_query,
+        )
 
         try:
             response = api_client.gemini_generate(
@@ -3464,43 +3433,11 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
 - Research area should match their published work
 - May be affiliated with universities, labs, or R&D divisions"""
 
-        prompt = f"""Find the LinkedIn profile for this specific person:
-
-{person_context}
-
-TASK: Search for the LinkedIn personal profile page for this individual.
-
-CRITICAL MATCHING RULES:
-1. Find a linkedin.com/in/username profile URL for THIS SPECIFIC PERSON
-2. The person MUST work at or be affiliated with {company}
-3. ALL available context (position, department, location) should match
-4. Be VERY careful with common names - require multiple matching attributes
-5. Do NOT return company pages (linkedin.com/company/...)
-6. Do NOT return school pages (linkedin.com/school/...)
-7. Only return a profile if you're HIGHLY CONFIDENT it's the right person
-{matching_guidance}
-
-CONTRADICTION DETECTION - REJECT if ANY of these are true:
-- Profile shows a completely DIFFERENT field of work (e.g., real estate agent when expecting researcher)
-- Profile shows a conflicting location (e.g., India when expecting USA, unless recent move indicated)
-- Profile shows unrelated industry (e.g., hospitality, retail when expecting engineering/science)
-- Profile title/role is fundamentally incompatible (e.g., "Marketing Manager" when expecting "Professor")
-- Same name but clearly different person (different photo context, different career entirely)
-
-VERIFICATION CHECKLIST:
-- Name matches (including possible variations like Dr., Prof.)
-- Organization/company affiliation matches
-- Job title/position is consistent with the context
-- Location is consistent (if provided)
-- Department or field aligns (if provided)
-- NO contradictory information present
-
-RESPONSE FORMAT:
-If you find their LinkedIn profile with HIGH CONFIDENCE, respond with ONLY the URL like:
-https://www.linkedin.com/in/username
-
-If you cannot find their personal LinkedIn profile OR are uncertain OR found contradictory information, respond exactly:
-NOT_FOUND"""
+        prompt = Config.PERSON_PROFILE_SEARCH_PROMPT.format(
+            person_context=person_context,
+            company=company,
+            matching_guidance=matching_guidance,
+        )
 
         try:
             response = api_client.gemini_generate(
@@ -5400,32 +5337,12 @@ NOT_FOUND"""
         if not self.client:
             return (None, None)
 
-        prompt = f"""Find the LinkedIn company/school page for this specific department, faculty, or school:
-
-Department/Faculty: {department}
-Parent Organization: {parent_org}
-{f"Parent LinkedIn slug: {parent_slug}" if parent_slug else ""}
-
-TASK: Search for a LinkedIn page that is specifically for this department, faculty, or school unit - NOT the main parent organization.
-
-SEARCH EXAMPLES:
-- "UCL Biochemical Engineering" might have linkedin.com/school/ucl-biochemical-engineering
-- "MIT Sloan" might have linkedin.com/school/mit-sloan
-- "Stanford Graduate School of Business" might have linkedin.com/school/stanford-gsb
-
-IMPORTANT:
-- Many university departments have their own LinkedIn pages
-- Look for pages with names like "{parent_org} {department}" or "{department} at {parent_org}"
-- The URL format is linkedin.com/company/xxx or linkedin.com/school/xxx
-- Do NOT return the main parent organization page (e.g., don't return UCL main page)
-- The page name should specifically reference the department or faculty
-
-RESPONSE:
-If you find a department-specific LinkedIn page, respond with ONLY the full URL, like:
-https://www.linkedin.com/school/ucl-biochemical-engineering
-
-If you cannot find a department-specific page (only the parent org exists), respond with exactly:
-NOT_FOUND"""
+        parent_slug_line = f"Parent LinkedIn slug: {parent_slug}" if parent_slug else ""
+        prompt = Config.DEPARTMENT_SEARCH_PROMPT.format(
+            department=department,
+            parent_org=parent_org,
+            parent_slug_line=parent_slug_line,
+        )
 
         try:
             response = api_client.gemini_generate(

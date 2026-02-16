@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+from config import Config
+
 logger = logging.getLogger(__name__)
 
 # Type hints for optional dependencies
@@ -568,30 +570,18 @@ class RAGEngine:
         context = self.get_context_for_story(title, summary)
 
         if context:
-            personalized_prompt = f"""
-AUTHOR'S PROFESSIONAL CONTEXT:
-{context}
-
-STORY TO PERSONALIZE:
-Title: {title}
-Summary: {summary}
-
-INSTRUCTIONS:
-{base_prompt}
-
-When writing, naturally connect the story to the author's experience where relevant.
-Reference specific skills, projects, or achievements that relate to the topic.
-Maintain authenticity - only reference experiences that genuinely connect to the story.
-"""
+            personalized_prompt = Config.RAG_PERSONALIZATION_PROMPT.format(
+                context=context,
+                title=title,
+                summary=summary,
+                base_prompt=base_prompt,
+            )
         else:
-            personalized_prompt = f"""
-STORY:
-Title: {title}
-Summary: {summary}
-
-INSTRUCTIONS:
-{base_prompt}
-"""
+            personalized_prompt = Config.RAG_BASE_PROMPT.format(
+                title=title,
+                summary=summary,
+                base_prompt=base_prompt,
+            )
 
         return personalized_prompt
 

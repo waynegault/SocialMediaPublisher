@@ -58,3 +58,6 @@ output/
 /test_output.txt
 /.env.backup
 /replacements.txt
+/cache.db
+/social_publisher.db
+/socialmedia.db

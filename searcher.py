@@ -688,10 +688,14 @@ class StorySearcher:
             # Use Gemini with grounding to find the article
             from google.genai.types import Tool, GoogleSearch
 
+            lookup_prompt = Config.SOURCE_URL_LOOKUP_PROMPT.format(
+                title=title,
+                summary=summary[:200] if summary else "N/A",
+            )
             response = api_client.gemini_generate(
                 client=self.client,
                 model=Config.MODEL_TEXT,
-                contents=f"Find the original news article URL for this story. Return ONLY the URL, nothing else.\n\nStory: {title}\n\nSummary: {summary[:200] if summary else 'N/A'}",
+                contents=lookup_prompt,
                 config={
                     "temperature": 0.1,
                     "max_output_tokens": 200,
@@ -1757,13 +1761,6 @@ class StorySearcher:
         repair_prompt = Config.JSON_REPAIR_PROMPT.format(
             malformed_json=malformed_json[:3000]
         )
-
-        # If no repair prompt configured, use a sensible default
-        if not repair_prompt.strip():
-            repair_prompt = (
-                "Fix this malformed JSON and return ONLY the corrected JSON array, no explanation:\n\n"
-                f"{malformed_json[:3000]}"
-            )
 
         content = None
 

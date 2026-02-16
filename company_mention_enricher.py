@@ -1662,49 +1662,11 @@ class CompanyMentionEnricher:
         sources_str = (
             ", ".join(story.source_links[:5]) if story.source_links else "Not provided"
         )
-        prompt = f"""
-You are extracting people explicitly mentioned in a news story. Your goal is to provide DETAILED information that enables accurate LinkedIn profile matching.
-
-Story title: {story.title}
-Story summary: {story.summary}
-Story sources: {sources_str}
-
-Return STRICT JSON with this shape:
-{{
-  "direct_people": [
-    {{
-      "name": "Full Name (First Last format)",
-      "job_title": "Exact title as mentioned (e.g., 'Senior Research Scientist', 'CEO', 'Professor')",
-      "employer": "Company/Institution name (official name, not abbreviation)",
-      "department": "Department, Division, or Lab name if mentioned",
-      "location": "City, State/Country if mentioned",
-      "specialty": "Field of expertise, research area, or domain",
-      "credentials": "PhD, Dr., Prof., etc. if mentioned",
-      "role_in_story": "primary|quoted|mentioned",
-      "context_clues": "Any other identifying details (e.g., 'co-author', 'led the study', 'announced at conference')"
-    }}
-  ],
-  "organizations": ["Official Organization Name", ...]
-}}
-
-EXTRACTION RULES:
-1. Include ONLY people explicitly named BY NAME in the story content. If no individuals are named, return an EMPTY "direct_people" list
-2. NEVER use the article title, headline, or topic as a person's name
-3. Use FULL official organization names (e.g., "Massachusetts Institute of Technology" not "MIT")
-4. Extract department/lab names when available (e.g., "Department of Chemical Engineering")
-5. Include location details for disambiguation (multiple people may share names)
-6. Capture credentials like "Dr.", "Professor", "PhD" when present
-7. For "role_in_story":
-   - "primary": Main subject of the story or lead researcher
-   - "quoted": Directly quoted in the story
-   - "mentioned": Referenced but not quoted
-8. Keep strings concise; no markdown, no additional text beyond the JSON
-9. If any field is not available, use empty string ""
-10. NEVER use the same word for first AND last name (e.g., don't create "Srinivasan Srinivasan")
-11. For single-name mentions, try to find the full name from context, or use the single name only
-12. Do NOT include organization names (universities, companies, institutes) as person names
-13. Do NOT include article titles, topics, or technology names as person names
-"""
+        prompt = Config.DIRECT_PEOPLE_EXTRACTION_PROMPT.format(
+            story_title=story.title,
+            story_summary=story.summary,
+            sources_str=sources_str,
+        )
 
         try:
             response_text = self._get_ai_response(prompt)
@@ -2369,38 +2331,11 @@ EXTRACTION RULES:
         )
 
         # Build a prompt that instructs the AI to search the source URL for people
-        search_prompt = f"""Find all people mentioned in this news story by searching the source URL.
-
-STORY TITLE: {story.title}
-
-STORY SUMMARY: {story.summary}
-
-SOURCE URL TO SEARCH: {sources_str}
-
-TASK: Search the source URL and extract:
-1. All researchers, scientists, professors named in the article
-2. Any executives, leaders, or spokespersons quoted
-3. Authors of the study if it's research
-4. Anyone receiving awards or honors
-
-Look for:
-- Names in quotes (people who said something)
-- Names linked to profile pages
-- Names in bylines or "about the author" sections
-- Names in research paper citations
-- "Senior author", "lead researcher", "principal investigator" mentions
-
-Return a JSON object:
-{{
-  "organizations": ["Org Name 1", "Org Name 2"],
-  "direct_people": [
-    {{"name": "Full Name", "title": "Their Title/Role", "affiliation": "Their Institution"}}
-  ]
-}}
-
-If nothing found, return: {{"organizations": [], "direct_people": []}}
-
-Return ONLY valid JSON, no explanation."""
+        search_prompt = Config.SOURCE_PEOPLE_SEARCH_PROMPT.format(
+            story_title=story.title,
+            story_summary=story.summary,
+            sources_str=sources_str,
+        )
 
         # If PREFER_GROQ is set, skip Gemini Google Search grounding and use fallback directly
         # This avoids 429 rate limit errors when Gemini quota is exhausted

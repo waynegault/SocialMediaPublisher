@@ -295,40 +295,18 @@ class ContentEngine:
             title = story.title
             summary = story.summary or ""
 
-            prompt = f"""Generate a DIRECT, ACTION-ORIENTED job-seeking message for LinkedIn that connects to this specific story.
-
-STORY:
-Title: {title}
-Summary: {summary[:500]}
-
-YOUR GOAL: You are a {Config.DISCIPLINE} actively seeking employment. This message must:
-1. Directly connect YOUR job search to the SPECIFIC technology/topic in this story
-2. Make it crystal clear you are ACTIVELY JOB HUNTING (use phrases like "actively seeking", "job hunting", "interviewing", "looking for roles")
-3. Include a DIRECT call-to-action asking people to help (tag hiring managers, DM you, connect, refer you)
-
-REQUIREMENTS:
-1. Write in FIRST PERSON ("I", "my", "I'm")
-2. MUST reference the specific technology, company, or topic from THIS story (not generic)
-3. {("Weave this credential naturally: " + signature_detail + " (no trailing tagline)") if signature_detail else "Mention a concise qualification (e.g., MEng) relevant to the story"}
-4. MUST include ONE polite, first-person call-to-action:
-   - "I'd really appreciate it if you could tag a hiring manager!"
-   - "Please feel free to DM me if you're hiring!"
-   - "I'd welcome introductions to recruiters in this space!"
-   - "If you know of any openings, I'd love to hear from you!"
-   - "I'd be grateful for any connections to people hiring in this field!"
-5. Sound confident and eager, NOT passive or note-like
-6. Keep it to 1-2 punchy sentences, max 250 characters
-7. No emojis
-
-BAD EXAMPLES (too passive/vague - DO NOT write like this):
-- "Interesting developments in the field." (no job ask)
-- "This is relevant to my background." (no CTA)
-- "I find this topic fascinating." (sounds like a note)
-
-GOOD EXAMPLES (direct job-seeking with clear CTA):
-{examples_text}
-
-OUTPUT: Write ONLY the promotion message, nothing else."""
+            credential_instruction = (
+                f"Weave this credential naturally: {signature_detail} (no trailing tagline)"
+                if signature_detail
+                else "Mention a concise qualification (e.g., MEng) relevant to the story"
+            )
+            prompt = Config.PROMOTION_MESSAGE_PROMPT.format(
+                title=title,
+                summary=summary[:500],
+                discipline=Config.DISCIPLINE,
+                credential_instruction=credential_instruction,
+                examples_text=examples_text,
+            )
 
             promotion = None
 
@@ -5374,7 +5352,8 @@ def _show_all_prompts() -> None:
 
     print("\n" + "=" * 80)
     print(
-        "Prompts are defined in config.py defaults; override by setting the matching entries in your .env (e.g., SEARCH_INSTRUCTION_PROMPT, IMAGE_REFINEMENT_PROMPT, IMAGE_FALLBACK_PROMPT, VERIFICATION_PROMPT)."
+        "All prompts are configured in .env (PROMPT TEMPLATES section). "
+        "Edit your .env file to customize any prompt."
     )
     print("=" * 80)
 
