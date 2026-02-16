@@ -43,6 +43,9 @@ logging.getLogger("undetected_chromedriver").setLevel(logging.WARNING)
 logging.getLogger("undetected_chromedriver.patcher").setLevel(logging.WARNING)
 logging.getLogger("selenium").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("primp").setLevel(logging.WARNING)
+logging.getLogger("nodriver").setLevel(logging.WARNING)
+logging.getLogger("nodriver.core.browser").setLevel(logging.WARNING)
 
 
 class ContentEngine:
@@ -223,8 +226,8 @@ class ContentEngine:
 
             # Step 5: Verify content
             logger.info("Step 5: Verifying content...")
-            approved, rejected = self.verifier.verify_pending_content()
-            logger.info(f"Verification: {approved} approved, {rejected} rejected")
+            approved, rejected, skipped = self.verifier.verify_pending_content()
+            logger.info(f"Verification: {approved} approved, {rejected} rejected, {skipped} skipped")
 
             # Step 6: Cleanup old stories
             logger.info("Step 6: Cleaning up old stories...")
@@ -439,15 +442,12 @@ class ContentEngine:
         self.run_search_cycle()
 
     def status(self) -> None:
-        """Print current status."""
+        """Print current status (database, schedule, LinkedIn — no config)."""
         stats = self.db.get_statistics()
 
         print("\n" + "=" * 60)
         print("Social Media Publisher - Status")
         print("=" * 60)
-
-        # Configuration
-        Config.print_config()
 
         # Database stats
         print("\n--- Database Statistics ---")
@@ -493,8 +493,8 @@ Social Media Publisher - Menu
     3. View All Prompts
     4. Show Full Status
     5. Configure Image Provider
-    6. Configure LinkedIn Voyager API Cookies
-    7. Configure RapidAPI Key (LinkedIn Lookups)
+    6. Configure LLM Provider
+    7. Configure LinkedIn Voyager API Cookies
     8. Install Dependencies (requirements.txt)
 
   Database:
@@ -576,9 +576,9 @@ Social Media Publisher - Menu
         elif choice == "5":
             _configure_image_provider()
         elif choice == "6":
-            _configure_linkedin_voyager()
+            _configure_llm_provider()
         elif choice == "7":
-            _configure_rapidapi_key()
+            _configure_linkedin_voyager()
         elif choice == "8":
             _install_dependencies()
         # Database
@@ -722,6 +722,12 @@ def _test_search(engine: ContentEngine) -> None:
         print("\n[Step 2/5] Enriching stories (people, profiles, URNs)...")
         enriched, skipped = engine.enricher.enrich_pending_stories()
         print(f"  → Enriched {enriched} stories, skipped {skipped}")
+
+        # Step 2b: Find indirect people for stories that have orgs but no indirect people
+        # This catches already-enriched stories that need leader lookup
+        indirect_enriched, indirect_skipped = engine.enricher.find_indirect_people()
+        if indirect_enriched > 0:
+            print(f"  → Found indirect people for {indirect_enriched} additional stories")
 
         # Extract URNs for any profiles that don't have them yet
         # (This uses the same browser session if already open)
@@ -1223,8 +1229,12 @@ def _test_verification(engine: ContentEngine) -> None:
         for s in stories
         if not s.image_path and s.quality_score < Config.MIN_QUALITY_SCORE
     )
+    awaiting_images = len(stories) - with_images - low_quality
     print(f"  - {with_images} with images (will be AI-verified)")
-    print(f"  - {low_quality} low quality without images (will be auto-rejected)")
+    if low_quality:
+        print(f"  - {low_quality} low quality without images (will be auto-rejected)")
+    if awaiting_images:
+        print(f"  - {awaiting_images} awaiting image generation (will be skipped)")
     print()
     for story in stories[:5]:  # Show first 5
         img_icon = "✓" if story.image_path else "✗"
@@ -1237,10 +1247,13 @@ def _test_verification(engine: ContentEngine) -> None:
         _lookup_linkedin_profiles_for_people(engine, stories_to_process)
 
     try:
-        approved, rejected = engine.verifier.verify_pending_content(
+        approved, rejected, skipped = engine.verifier.verify_pending_content(
             linkedin_lookup_callback=linkedin_lookup_callback
         )
-        print(f"\nResult: {approved} approved, {rejected} rejected")
+        parts = [f"{approved} approved", f"{rejected} rejected"]
+        if skipped:
+            parts.append(f"{skipped} skipped (need images first)")
+        print(f"\nResult: {', '.join(parts)}")
 
         # Check for image-related rejections and offer to retry
         if rejected > 0:
@@ -1837,8 +1850,8 @@ def log_enrichment_baseline_metrics(engine: ContentEngine) -> dict:
         "quality_high_rate_pct": round(quality_high_rate, 1),
     }
 
-    # Log in structured format for easy parsing
-    logger.info(
+    # Log in structured format for easy parsing (debug level to reduce terminal noise)
+    logger.debug(
         f"BASELINE:enrichment_summary "
         f"stories={total_stories} "
         f"people={total_people} "
@@ -1881,7 +1894,7 @@ def _log_story_enrichment_metrics(story, context: str = "") -> None:
     with_urn = sum(1 for p in all_people if p.get("linkedin_urn"))
     match_rate = (with_linkedin / total * 100) if total > 0 else 0
 
-    logger.info(
+    logger.debug(
         f"BASELINE:story_enrichment "
         f"story_id={story.id} "
         f"context={context} "
@@ -1906,6 +1919,11 @@ def log_story_details(
     """
     import json as json_module
 
+    from entity_constants import clean_org_name, is_invalid_org_name
+    from text_utils import calculate_similarity
+
+    dedup_threshold = Config.dedup_similarity_threshold
+
     with engine.db._get_connection() as conn:
         cursor = conn.cursor()
 
@@ -1927,12 +1945,49 @@ def log_story_details(
 
         rows = cursor.fetchall()
 
+    # Track titles for display-time dedup
+    seen_titles: list[str] = []
+
     for row in rows:
         story_id = row["id"]
         title = row["title"] or "Untitled"
+
+        # Display-time dedup: skip stories too similar to one already shown
+        is_dup = False
+        for prev_title in seen_titles:
+            if calculate_similarity(title, prev_title) >= dedup_threshold:
+                is_dup = True
+                break
+        if is_dup:
+            continue
+        seen_titles.append(title)
+
         summary = row["summary"] or "No summary"
         quality_score = row["quality_score"] or 0
         quality_justification = row["quality_justification"] or "No justification"
+
+        # Parse organizations first (needed for person org cross-reference below)
+        organizations = (
+            json_module.loads(row["organizations"]) if row["organizations"] else []
+        )
+
+        # Filter out invalid org names at display time (cleans up legacy DB data)
+        if organizations:
+            cleaned_orgs = []
+            seen_cleaned = set()
+            for org in organizations:
+                if not org or not isinstance(org, str):
+                    continue
+                cleaned = clean_org_name(org)
+                if not cleaned or is_invalid_org_name(cleaned):
+                    continue
+                lower = cleaned.lower()
+                if lower in seen_cleaned:
+                    continue
+                seen_cleaned.add(lower)
+                cleaned_orgs.append(cleaned)
+            organizations = cleaned_orgs
+
         direct_people = (
             json_module.loads(row["direct_people"]) if row["direct_people"] else []
         )
@@ -1943,12 +1998,46 @@ def log_story_details(
                 p for p in direct_people
                 if p.get("name", "").lower().strip() != title_lower
             ]
+
+        # Display-time filtering: remove single-word names and org-like names
+        if direct_people:
+            direct_people = [
+                p for p in direct_people
+                if len(p.get("name", "").split()) >= 2
+                and not is_invalid_org_name(p.get("name", ""))
+            ]
+
+        # Display-time: fix single-word person orgs using story organizations
+        # e.g., "Engineering" → "National Academy of Engineering"
+        if direct_people and organizations:
+            for person in direct_people:
+                emp = (
+                    person.get("employer", "")
+                    or person.get("company", "")
+                    or person.get("organization", "")
+                )
+                if emp and " " not in emp.strip():
+                    emp_lower = emp.strip().lower()
+                    for org_name in organizations:
+                        if org_name.lower().endswith(emp_lower) and len(org_name) > len(emp):
+                            # Update whichever key had the value
+                            for key in ("employer", "company", "organization"):
+                                if person.get(key, "").strip().lower() == emp_lower:
+                                    person[key] = org_name
+                            break
+
         indirect_people = (
             json_module.loads(row["indirect_people"]) if row["indirect_people"] else []
         )
-        organizations = (
-            json_module.loads(row["organizations"]) if row["organizations"] else []
-        )
+
+        # Display-time: remove indirect people whose org is invalid (e.g. newspaper leaders)
+        if indirect_people:
+            indirect_people = [
+                p for p in indirect_people
+                if not is_invalid_org_name(
+                    p.get("organization", "") or p.get("company", "") or p.get("employer", "")
+                )
+            ]
 
         print(f"\n{'=' * 70}")
         print(f"STORY [{story_id}]: {title}")
@@ -2093,7 +2182,7 @@ def log_story_details(
         with_linkedin = sum(
             1 for p in direct_people + indirect_people if p.get("linkedin_profile")
         )
-        logger.info(
+        logger.debug(
             f"STORY_DETAIL story_id={story_id} "
             f'title="{title[:50]}" '
             f"direct_people={len(direct_people)} "
@@ -3566,7 +3655,7 @@ def _list_stories(
 
 
 def _retry_rejected_stories(engine: ContentEngine) -> None:
-    """Retry rejected stories by regenerating images and re-verifying."""
+    """Retry rejected stories — re-verify only, or regenerate image + re-verify."""
     print("\n--- Retry Rejected Stories ---")
 
     rejected = engine.db.get_rejected_stories()
@@ -3576,9 +3665,22 @@ def _retry_rejected_stories(engine: ContentEngine) -> None:
 
     print(f"Found {len(rejected)} rejected stories:\n")
     for story in rejected:
+        has_img = "Yes" if story.image_path and Path(story.image_path).exists() else "No"
         print(f"[{story.id}] {story.title}")
-        print(f"    Reason: {story.verification_reason or 'Unknown'}")
+        print(f"    Reason: {story.verification_reason or 'Unknown'}  |  Image: {has_img}")
         print()
+
+    # Ask for mode
+    print("Retry mode:")
+    print("  1. Re-verify only (keep existing images)")
+    print("  2. Regenerate images + re-verify")
+    print("  0. Cancel")
+    mode = input("\nMode: ").strip()
+    if mode not in ("1", "2"):
+        print("Cancelled.")
+        return
+
+    regenerate_images = mode == "2"
 
     # Ask user which stories to retry
     story_input = (
@@ -3607,44 +3709,51 @@ def _retry_rejected_stories(engine: ContentEngine) -> None:
             print("Invalid input. Please enter comma-separated IDs or 'all'.")
             return
 
-    print(f"\nRetrying {len(stories_to_retry)} story/stories...")
+    action = "re-verifying" if not regenerate_images else "regenerating images + re-verifying"
+    print(f"\n{action.capitalize()} {len(stories_to_retry)} story/stories...")
 
     success_count = 0
     for story in stories_to_retry:
         print(f"\n--- Processing story {story.id}: {story.title} ---")
 
-        # Step 1: Delete old image if exists
-        if story.image_path:
-            old_image = Path(story.image_path)
-            if old_image.exists():
-                try:
-                    old_image.unlink()
-                    print(f"  Deleted old image: {story.image_path}")
-                except Exception as e:
-                    print(f"  Warning: Could not delete old image: {e}")
+        if regenerate_images:
+            # Step 1: Delete old image if exists
+            if story.image_path:
+                old_image = Path(story.image_path)
+                if old_image.exists():
+                    try:
+                        old_image.unlink()
+                        print(f"  Deleted old image: {story.image_path}")
+                    except Exception as e:
+                        print(f"  Warning: Could not delete old image: {e}")
 
-        # Step 2: Clear image path and reset status
-        story.image_path = None
-        story.verification_status = "pending"
-        story.verification_reason = None
-        engine.db.update_story(story)
+            # Step 2: Clear image path and reset status
+            story.image_path = None
+            story.verification_status = "pending"
+            story.verification_reason = None
+            engine.db.update_story(story)
 
-        # Step 3: Generate new image
-        print("  Generating new image...")
-        try:
-            result = engine.image_generator._generate_image_for_story(story)
-            if result:
-                image_path, image_alt_text = result
-                story.image_path = image_path
-                story.image_alt_text = image_alt_text
-                engine.db.update_story(story)
-                print(f"  ✓ New image generated: {image_path}")
-            else:
-                print("  ✗ Failed to generate new image")
+            # Step 3: Generate new image
+            print("  Generating new image...")
+            try:
+                result = engine.image_generator._generate_image_for_story(story)
+                if result:
+                    image_path, image_alt_text = result
+                    story.image_path = image_path
+                    story.image_alt_text = image_alt_text
+                    engine.db.update_story(story)
+                    print(f"  ✓ New image generated: {image_path}")
+                else:
+                    print("  ✗ Failed to generate new image")
+                    continue
+            except Exception as e:
+                print(f"  ✗ Image generation error: {e}")
                 continue
-        except Exception as e:
-            print(f"  ✗ Image generation error: {e}")
-            continue
+        else:
+            # Just reset verification status
+            story.verification_status = "pending"
+            story.verification_reason = None
+            engine.db.update_story(story)
 
         # Step 4: Re-verify
         print("  Re-verifying...")
@@ -4713,107 +4822,131 @@ def _reset_all(engine: ContentEngine) -> None:
 
 def _configure_linkedin_voyager() -> None:
     """Configure LinkedIn Voyager API cookies for reliable profile lookups."""
-    # Check if LinkedIn search is enabled
-    if not Config.LINKEDIN_SEARCH_ENABLED:
-        print("\n" + "=" * 70)
-        print("⚠️  LINKEDIN SEARCH DISABLED")
-        print("=" * 70)
-        print("\nLinkedIn profile searching is currently disabled.")
-        print("Set LINKEDIN_SEARCH_ENABLED=true in .env to enable this feature.")
-        print("\nWARNING: LinkedIn actively detects automation and may restrict")
-        print("or ban accounts. Only enable if you accept the risk.")
-        return
-
     print("\n" + "=" * 70)
-    print("LINKEDIN VOYAGER API CONFIGURATION")
+    print("LINKEDIN VOYAGER COOKIES")
     print("=" * 70)
+
+    # Explain purpose
     print("""
-The Voyager API uses LinkedIn's internal API for reliable profile lookups
-without CAPTCHA detection. It requires two cookies from your browser:
+These cookies let the app use LinkedIn's internal API for people search
+and profile lookups. This is separate from the official LinkedIn API
+tokens used for publishing posts.
 
-  1. li_at - Main authentication cookie (long-lived)
-  2. JSESSIONID - Session cookie (helps with CSRF)
-
-To get these cookies:
-  1. Open Chrome and log into LinkedIn
-  2. Press F12 to open Developer Tools
-  3. Go to Application tab → Cookies → www.linkedin.com
-  4. Copy the values for 'li_at' and 'JSESSIONID'
+  li_at       - Your main LinkedIn session cookie (required)
+  JSESSIONID  - CSRF token cookie (recommended)
 """)
 
-    # Check current status
+    # Show current status
     li_at = Config.LINKEDIN_LI_AT
     jsessionid = Config.LINKEDIN_JSESSIONID
+    search_enabled = Config.LINKEDIN_SEARCH_ENABLED
 
+    print("Current status:")
     if li_at:
-        print(
-            f"Current li_at: {li_at[:20]}...{li_at[-10:]}"
-            if len(li_at) > 30
-            else f"Current li_at: {li_at}"
-        )
-        print(
-            f"Current JSESSIONID: {jsessionid[:20]}..."
-            if jsessionid
-            else "Current JSESSIONID: (not set)"
-        )
+        masked = li_at[:8] + "..." + li_at[-6:] if len(li_at) > 20 else li_at
+        print(f"  li_at:       {masked}")
+        if jsessionid:
+            js_masked = jsessionid[:12] + "..." if len(jsessionid) > 12 else jsessionid
+            print(f"  JSESSIONID:  {js_masked}")
+        else:
+            print("  JSESSIONID:  (not set)")
     else:
-        print("Status: No LinkedIn Voyager cookies configured")
+        print("  li_at:       (not set)")
+        print("  JSESSIONID:  (not set)")
 
-    print("-" * 70)
+    print(f"  Search:      {'Enabled' if search_enabled else 'DISABLED (set LINKEDIN_SEARCH_ENABLED=true in .env)'}")
 
-    # Option 1: Try auto-extract from browser
+    print("\n" + "-" * 70)
     print("\nOptions:")
-    print("  1. Auto-extract from Chrome (requires browser-cookie3)")
-    print("  2. Manual entry")
-    print("  3. Test current configuration")
+    print("  1. Auto-extract from browser (opens LinkedIn login)")
+    print("  2. Enter cookies manually (copy from DevTools)")
+    print("  3. Test current cookies")
+    print("  4. Clear cookies")
     print("  0. Cancel")
 
     choice = input("\nChoice: ").strip()
 
     if choice == "1":
-        try:
-            from linkedin_voyager_client import extract_linkedin_cookies_from_browser
+        print("\n" + "-" * 70)
+        print("AUTO-EXTRACT COOKIES")
+        print("-" * 70)
+        print("""
+This will try two methods:
 
-            print("\nExtracting cookies from Chrome...")
-            print("(Make sure Chrome is CLOSED for best results)")
+  1. Read cookies directly from Chrome/Edge (requires browser to be closed)
+  2. Open a browser window where you can log in to LinkedIn
+     — cookies are captured automatically once login completes
+     — supports 2FA / verification prompts
+""")
+        proceed = input("Continue? (Y/n): ").strip().lower()
+        if proceed == "n":
+            print("Cancelled.")
+            return
 
-            li_at, jsessionid = extract_linkedin_cookies_from_browser()
+        from linkedin_voyager_client import extract_linkedin_cookies_from_browser
 
-            if li_at:
-                print(f"\n✓ Extracted li_at: {li_at[:20]}...")
-                if jsessionid:
-                    print(f"✓ Extracted JSESSIONID: {jsessionid[:20]}...")
+        li_at_input, jsessionid_input = extract_linkedin_cookies_from_browser()
 
-                # Save to .env file
-                _save_voyager_cookies_to_env(li_at, jsessionid)
-            else:
-                print("\n✗ Automatic extraction failed.")
-                print("\n  Common causes:")
-                print("  - Chrome is still running (close it completely)")
-                print("  - Windows cookie encryption issues")
-                print("  - Not logged into LinkedIn in Chrome")
-                print("\n  → Please use option 2 (Manual entry) instead.")
-                print(
-                    "    It only takes 30 seconds to copy the cookies from Chrome DevTools."
-                )
-        except ImportError:
-            print("\n✗ browser-cookie3 not installed.")
-            print("  Install with: pip install browser-cookie3")
-        except Exception as e:
-            print(f"\n✗ Failed to extract cookies: {e}")
-            print("\n  → Please use option 2 (Manual entry) instead.")
+        if not li_at_input:
+            print("\n✗ Could not extract cookies.")
+            print("  Try option 2 (manual entry) instead.")
+            return
+
+        # Save using the shared helper
+        updates: dict[str, str] = {"LINKEDIN_LI_AT": li_at_input}
+        if jsessionid_input:
+            updates["LINKEDIN_JSESSIONID"] = jsessionid_input
+
+        _save_env_values(updates)
+
+        masked = li_at_input[:8] + "..." + li_at_input[-6:] if len(li_at_input) > 20 else li_at_input
+        print(f"\n✓ Saved li_at: {masked}")
+        if jsessionid_input:
+            print(f"✓ Saved JSESSIONID: {jsessionid_input[:12]}...")
+        print("\nRestart the application for changes to take effect.")
 
     elif choice == "2":
-        print("\nEnter the cookie values (paste from browser dev tools):")
-        li_at = input("li_at: ").strip()
-        jsessionid = input("JSESSIONID: ").strip()
+        print("\n" + "-" * 70)
+        print("HOW TO GET YOUR COOKIES")
+        print("-" * 70)
+        print("""
+  1. Open Chrome/Edge and go to  linkedin.com  (log in if needed)
+  2. Press F12 to open Developer Tools
+  3. Click the 'Application' tab at the top
+     (if you don't see it, click '>>' to reveal hidden tabs)
+  4. In the left sidebar, expand 'Cookies' and click 'www.linkedin.com'
+  5. In the cookie list, find 'li_at' — click its row and copy the Value
+  6. Do the same for 'JSESSIONID'
 
-        if li_at:
-            _save_voyager_cookies_to_env(li_at, jsessionid)
-        else:
-            print("Cancelled - no li_at provided.")
+Tip: You can click the 'Value' column to select it, then Ctrl+C to copy.
+The li_at value is a long string like 'AQEDAQe...' (~300 chars).
+The JSESSIONID value looks like 'ajax:1234567890123456789'.
+""")
+        li_at_input = input("Paste li_at value: ").strip().strip('"').strip("'")
+        if not li_at_input:
+            print("Cancelled — no value entered.")
+            return
+
+        jsessionid_input = input("Paste JSESSIONID value (or Enter to skip): ").strip().strip('"').strip("'")
+
+        # Save using the shared helper
+        updates: dict[str, str] = {"LINKEDIN_LI_AT": li_at_input}
+        if jsessionid_input:
+            updates["LINKEDIN_JSESSIONID"] = jsessionid_input
+
+        _save_env_values(updates)
+
+        masked = li_at_input[:8] + "..." + li_at_input[-6:] if len(li_at_input) > 20 else li_at_input
+        print(f"\n✓ Saved li_at: {masked}")
+        if jsessionid_input:
+            print(f"✓ Saved JSESSIONID: {jsessionid_input[:12]}...")
+        print("\nRestart the application for changes to take effect.")
 
     elif choice == "3":
+        if not li_at:
+            print("\nNo cookies configured. Use option 1 or 2 to set them first.")
+            return
+
         print("\nTesting Voyager API connection...")
         try:
             from linkedin_voyager_client import LinkedInVoyagerClient
@@ -4821,216 +4954,503 @@ To get these cookies:
             client = LinkedInVoyagerClient()
             print("✓ Client initialized with cookies")
 
-            # Skip auth check (endpoints deprecated) and go straight to search test
-            print("\nTesting people search...")
+            # First verify authentication
+            print("Checking authentication...")
+            if not client.is_authenticated():
+                print("\n✗ Authentication failed — cookies are expired or invalid.")
+                print("  Use option 1 to re-enter fresh cookies from your browser.")
+                client.close()
+                return
+
+            print("✓ Authenticated with LinkedIn")
+            print("Testing people search...")
             results = client.search_people(keywords=Config.DISCIPLINE, limit=3)
             if results:
-                print(f"✓ Search successful! Found {len(results)} profiles:")
+                print(f"✓ Search returned {len(results)} profiles:")
                 for p in results[:3]:
-                    headline_display = (
+                    headline = (
                         p.headline[:50] + "..." if len(p.headline) > 50 else p.headline
                     )
-                    print(f"  - {p.name}: {headline_display}")
-                print("\n✓ Voyager API is working correctly!")
+                    print(f"  - {p.name}: {headline}")
+                print("\n✓ Voyager API is working!")
             else:
-                print("! Search returned no results.")
-                print("  This could mean:")
-                print("  - Cookies expired (re-enter them)")
-                print("  - LinkedIn blocked the request")
-                print("  - API endpoints changed")
+                print("\n! Search returned no results. Possible causes:")
+                print("  - LinkedIn temporarily blocked the request")
+                print("  - Your account has search restrictions")
+                print("  - Try a different search term in DISCIPLINE config")
             client.close()
         except Exception as e:
-            print(f"✗ Test failed: {e}")
-            import traceback
+            print(f"\n✗ Test failed: {e}")
+            print("\n  If cookies expired, use option 1 or 2 to refresh them.")
 
-            traceback.print_exc()
+    elif choice == "4":
+        if not li_at:
+            print("\nNo cookies to clear.")
+            return
+        confirm = input("\nClear stored Voyager cookies? (y/N): ").strip().lower()
+        if confirm == "y":
+            _save_env_values({"LINKEDIN_LI_AT": "", "LINKEDIN_JSESSIONID": ""})
+            print("✓ Cookies cleared. Restart the application for changes to take effect.")
+        else:
+            print("Cancelled.")
 
     else:
         print("Cancelled.")
 
 
-def _save_voyager_cookies_to_env(li_at: str, jsessionid: str) -> None:
-    """Save Voyager cookies to .env file."""
-    env_file = Path(".env")
-
-    # Read existing .env content
-    existing_lines = []
-    if env_file.exists():
-        with open(env_file, "r", encoding="utf-8") as f:
-            existing_lines = f.readlines()
-
-    # Update or add the cookie settings
-    updated = False
-    new_lines = []
-    for line in existing_lines:
-        if line.startswith("LINKEDIN_LI_AT="):
-            new_lines.append(f"LINKEDIN_LI_AT={li_at}\n")
-            updated = True
-        elif line.startswith("LINKEDIN_JSESSIONID="):
-            if jsessionid:
-                new_lines.append(f"LINKEDIN_JSESSIONID={jsessionid}\n")
-            # Skip empty jsessionid
-        else:
-            new_lines.append(line)
-
-    # Add if not found
-    if not updated:
-        new_lines.append(f"LINKEDIN_LI_AT={li_at}\n")
-        if jsessionid:
-            new_lines.append(f"LINKEDIN_JSESSIONID={jsessionid}\n")
-
-    # Write back
-    with open(env_file, "w", encoding="utf-8") as f:
-        f.writelines(new_lines)
-
-    print(f"\n✓ Saved cookies to {env_file}")
-    print("  Restart the application for changes to take effect.")
-
-
-def _configure_rapidapi_key() -> None:
-    """Configure RapidAPI key for Fresh LinkedIn Profile Data API lookups."""
-    # Check if LinkedIn search is enabled
-    if not Config.LINKEDIN_SEARCH_ENABLED:
-        print("\n" + "=" * 70)
-        print("⚠️  LINKEDIN SEARCH DISABLED")
-        print("=" * 70)
-        print("\nLinkedIn profile searching is currently disabled.")
-        print("Set LINKEDIN_SEARCH_ENABLED=true in .env to enable this feature.")
-        print("\nWARNING: LinkedIn actively detects automation and may restrict")
-        print("or ban accounts. Only enable if you accept the risk.")
-        return
-
+def _configure_llm_provider() -> None:
+    """Configure LLM provider for text processing."""
     print("\n" + "=" * 70)
-    print("RAPIDAPI KEY CONFIGURATION (Fresh LinkedIn Profile Data)")
+    print("LLM PROVIDER CONFIGURATION")
     print("=" * 70)
     print("""
-The Fresh LinkedIn Profile Data API provides reliable LinkedIn profile
-lookups for @mentions. This is the primary method for finding profiles.
-
-╔══════════════════════════════════════════════════════════════════════╗
-║  HOW TO SUBSCRIBE (5 minutes):                                       ║
-╠══════════════════════════════════════════════════════════════════════╣
-║  1. Go to: https://rapidapi.com/freshdata-freshdata-default/         ║
-║             api/fresh-linkedin-profile-data/pricing                  ║
-║                                                                      ║
-║  2. Sign up for a FREE RapidAPI account (if you don't have one)      ║
-║                                                                      ║
-║  3. Click "Subscribe" → Select "BASIC" plan ($10/month)              ║
-║     • 500 requests/month (enough for ~150-200 lookups)               ║
-║     • Cancel anytime from RapidAPI dashboard                         ║
-║                                                                      ║
-║  4. Copy your API key from the "X-RapidAPI-Key" header               ║
-║     (same key works for all RapidAPI subscriptions)                  ║
-╚══════════════════════════════════════════════════════════════════════╝
-
-ALTERNATIVE (FREE): Browser-based lookup uses DuckDuckGo + Selenium.
-                    Slower but works without API key.
+Select the LLM provider for text processing (search, enrichment,
+verification, etc.). Your choice is saved to .env and takes effect
+immediately.
 """)
 
-    # Check current status
-    current_key = Config.RAPIDAPI_KEY
+    # Current state (use LLM_PROVIDER if set, else infer from legacy flags)
+    provider = Config.LLM_PROVIDER.lower() if hasattr(Config, "LLM_PROVIDER") and Config.LLM_PROVIDER else ""
+    if not provider:
+        if Config.PREFER_LOCAL_LLM:
+            provider = "local"
+        elif Config.PREFER_GROQ:
+            provider = "groq"
+        else:
+            provider = "gemini"
 
-    if current_key:
-        masked = (
-            current_key[:8] + "..." + current_key[-4:]
-            if len(current_key) > 12
-            else current_key
-        )
-        print(f"Current API key: {masked}")
-    else:
-        print("Status: No RapidAPI key configured")
+    provider_labels = {
+        "gemini": "Gemini (Google)",
+        "groq": "Groq (Free Cloud)",
+        "local": "Local LLM (LM Studio)",
+        "openai": "OpenAI",
+        "claude": "Claude (Anthropic)",
+        "deepseek": "DeepSeek",
+        "kimi": "Kimi K2 (Moonshot AI)",
+    }
+    current_label = provider_labels.get(provider, provider)
 
+    print(f"Current provider: {current_label}")
     print("-" * 70)
 
-    print("\nOptions:")
-    print("  1. Enter/update API key")
-    print("  2. Test current configuration")
+    # Check availability
+    gemini_ok = bool(Config.GEMINI_API_KEY)
+    groq_ok = bool(Config.GROQ_API_KEY)
+    openai_ok = bool(Config.OPENAI_API_KEY)
+    anthropic_ok = bool(getattr(Config, "ANTHROPIC_API_KEY", ""))
+    deepseek_ok = bool(getattr(Config, "DEEPSEEK_API_KEY", ""))
+    moonshot_ok = bool(getattr(Config, "MOONSHOT_API_KEY", ""))
+
+    providers = [
+        (
+            "gemini",
+            "Gemini (Google)",
+            f"Cloud API, model: {Config.MODEL_TEXT}",
+            "\u2713" if gemini_ok else "\u2717 GEMINI_API_KEY not set",
+        ),
+        (
+            "groq",
+            "Groq (Free Cloud)",
+            f"Free tier, fast, model: {Config.GROQ_MODEL}",
+            "\u2713" if groq_ok else "\u2717 GROQ_API_KEY not set",
+        ),
+        (
+            "local",
+            "Local LLM (LM Studio)",
+            f"Local inference at {Config.LM_STUDIO_BASE_URL}",
+            "Configured" if provider == "local" else "Available",
+        ),
+        (
+            "openai",
+            "OpenAI",
+            f"GPT models, model: {getattr(Config, 'OPENAI_TEXT_MODEL', 'gpt-4o-mini')}",
+            "\u2713" if openai_ok else "\u2717 OPENAI_API_KEY not set",
+        ),
+        (
+            "claude",
+            "Claude (Anthropic)",
+            f"Claude models, model: {getattr(Config, 'ANTHROPIC_MODEL', 'claude-sonnet-4-20250514')}",
+            "\u2713" if anthropic_ok else "\u2717 ANTHROPIC_API_KEY not set",
+        ),
+        (
+            "deepseek",
+            "DeepSeek",
+            f"DeepSeek models, model: {getattr(Config, 'DEEPSEEK_MODEL', 'deepseek-chat')}",
+            "\u2713" if deepseek_ok else "\u2717 DEEPSEEK_API_KEY not set",
+        ),
+        (
+            "kimi",
+            "Kimi K2 (Moonshot AI)",
+            f"Kimi models, model: {getattr(Config, 'MOONSHOT_MODEL', 'kimi-k2')}",
+            "\u2713" if moonshot_ok else "\u2717 MOONSHOT_API_KEY not set",
+        ),
+    ]
+
+    print("\nAvailable LLM Providers:\n")
+    for i, (key, name, desc, status) in enumerate(providers, 1):
+        marker = " (CURRENT)" if key == provider else ""
+        print(f"  {i}. {name}{marker}")
+        print(f"     {desc}")
+        print(f"     Status: [{status}]")
+        print()
+
     print("  0. Cancel")
+    print("-" * 70)
 
-    choice = input("\nChoice: ").strip()
+    choice = input(f"\nSelect provider (1-{len(providers)}, or 0 to cancel): ").strip()
 
-    if choice == "1":
-        print("\nEnter your RapidAPI key:")
-        api_key = input("API Key: ").strip()
-
-        if api_key:
-            _save_rapidapi_key_to_env(api_key)
-        else:
-            print("Cancelled - no API key provided.")
-
-    elif choice == "2":
-        if not current_key:
-            print("\n✗ No API key configured. Please enter one first.")
-            return
-
-        print("\nTesting Fresh LinkedIn Profile Data API connection...")
-        try:
-            from linkedin_rapidapi_client import FreshLinkedInAPIClient
-
-            client = FreshLinkedInAPIClient(api_key=current_key)
-            print("✓ Client initialized")
-
-            print("\nTesting search for 'Satya Nadella' at 'Microsoft'...")
-            result = client.search_person("Satya Nadella", "Microsoft")
-
-            if result and result.linkedin_url:
-                print("✓ Search successful!")
-                print(f"  Name: {result.full_name}")
-                print(f"  Title: {result.job_title}")
-                print(f"  Company: {result.company}")
-                print(f"  LinkedIn: {result.linkedin_url}")
-                print(f"  Match Score: {result.match_score:.2f}")
-                print("\n✓ Fresh LinkedIn Profile Data API is working!")
-            else:
-                print("✗ Search returned no results.")
-                print("  This could mean:")
-                print("  - Not subscribed to Fresh LinkedIn Profile Data API")
-                print(
-                    "    → Subscribe at: https://rapidapi.com/freshdata-freshdata-default/"
-                )
-                print("                    api/fresh-linkedin-profile-data/pricing")
-                print("  - API rate limit exceeded")
-                print("  - Service temporarily unavailable")
-
-        except Exception as e:
-            print(f"✗ Test failed: {e}")
-            import traceback
-
-            traceback.print_exc()
-    else:
+    if choice == "0":
         print("Cancelled.")
+        return
+
+    try:
+        idx = int(choice) - 1
+        if idx < 0 or idx >= len(providers):
+            print("Invalid choice.")
+            return
+    except ValueError:
+        print("Invalid choice.")
+        return
+
+    selected_key = providers[idx][0]
+    selected_name = providers[idx][1]
+
+    # Provider-specific configuration
+    env_updates: dict[str, str] = {}
+
+    if selected_key == "gemini":
+        if not gemini_ok:
+            print("\n\u26a0\ufe0f  GEMINI_API_KEY is not set in .env.")
+            proceed = input("Proceed anyway? (y/N): ").strip().lower()
+            if proceed != "y":
+                print("Cancelled.")
+                return
+
+        model = input(
+            f"\nGemini model (Enter for current [{Config.MODEL_TEXT}]): "
+        ).strip()
+        if not model:
+            model = Config.MODEL_TEXT
+
+        env_updates = {
+            "LLM_PROVIDER": "gemini",
+            "PREFER_LOCAL_LLM": "False",
+            "PREFER_GROQ": "False",
+            "MODEL_TEXT": model,
+        }
+        label = f"Gemini ({model})"
+
+    elif selected_key == "groq":
+        if not groq_ok:
+            print("\n\u26a0\ufe0f  GROQ_API_KEY is not set in .env.")
+            proceed = input("Proceed anyway? (y/N): ").strip().lower()
+            if proceed != "y":
+                print("Cancelled.")
+                return
+
+        groq_models = [
+            ("llama-3.3-70b-versatile", "Llama 3.3 70B - best quality (recommended)"),
+            ("llama-3.1-8b-instant", "Llama 3.1 8B - fastest"),
+            ("mixtral-8x7b-32768", "Mixtral 8x7B - good balance"),
+            ("gemma2-9b-it", "Gemma 2 9B - Google's open model"),
+        ]
+        print("\nAvailable Groq models:")
+        for i, (mid, desc) in enumerate(groq_models, 1):
+            cur = " (CURRENT)" if mid == Config.GROQ_MODEL else ""
+            print(f"  {i}. {mid}{cur}")
+            print(f"     {desc}")
+
+        model_choice = input(
+            f"\nSelect model (1-{len(groq_models)}, or Enter for current): "
+        ).strip()
+        if model_choice:
+            try:
+                midx = int(model_choice) - 1
+                if 0 <= midx < len(groq_models):
+                    groq_model = groq_models[midx][0]
+                else:
+                    groq_model = Config.GROQ_MODEL
+            except ValueError:
+                groq_model = Config.GROQ_MODEL
+        else:
+            groq_model = Config.GROQ_MODEL
+
+        env_updates = {
+            "LLM_PROVIDER": "groq",
+            "PREFER_LOCAL_LLM": "False",
+            "PREFER_GROQ": "True",
+            "GROQ_MODEL": groq_model,
+        }
+        label = f"Groq ({groq_model})"
+
+    elif selected_key == "local":
+        url = input(
+            f"\nLM Studio URL (Enter for current [{Config.LM_STUDIO_BASE_URL}]): "
+        ).strip()
+        if not url:
+            url = Config.LM_STUDIO_BASE_URL
+
+        model = input(
+            f"Model name (Enter for current [{Config.LM_STUDIO_MODEL}]): "
+        ).strip()
+        if not model:
+            model = Config.LM_STUDIO_MODEL
+
+        env_updates = {
+            "LLM_PROVIDER": "local",
+            "PREFER_LOCAL_LLM": "True",
+            "PREFER_GROQ": "False",
+            "LM_STUDIO_BASE_URL": url,
+            "LM_STUDIO_MODEL": model,
+        }
+        label = f"Local LLM ({model} at {url})"
+
+    elif selected_key == "openai":
+        if not openai_ok:
+            print("\n\u26a0\ufe0f  OPENAI_API_KEY is not set in .env.")
+            proceed = input("Proceed anyway? (y/N): ").strip().lower()
+            if proceed != "y":
+                print("Cancelled.")
+                return
+
+        openai_models = [
+            ("gpt-4o", "GPT-4o - flagship, best quality"),
+            ("gpt-4o-mini", "GPT-4o Mini - fast and affordable (recommended)"),
+            ("gpt-4.1", "GPT-4.1 - latest, great for coding"),
+            ("gpt-4.1-mini", "GPT-4.1 Mini - fast, cost-effective"),
+            ("gpt-4.1-nano", "GPT-4.1 Nano - fastest, cheapest"),
+            ("o3-mini", "o3-mini - reasoning model"),
+        ]
+        current_model = getattr(Config, "OPENAI_TEXT_MODEL", "gpt-4o-mini")
+        print("\nAvailable OpenAI models:")
+        for i, (mid, desc) in enumerate(openai_models, 1):
+            cur = " (CURRENT)" if mid == current_model else ""
+            print(f"  {i}. {mid}{cur}")
+            print(f"     {desc}")
+
+        model_choice = input(
+            f"\nSelect model (1-{len(openai_models)}, or Enter for current): "
+        ).strip()
+        if model_choice:
+            try:
+                midx = int(model_choice) - 1
+                if 0 <= midx < len(openai_models):
+                    selected_model = openai_models[midx][0]
+                else:
+                    selected_model = current_model
+            except ValueError:
+                selected_model = current_model
+        else:
+            selected_model = current_model
+
+        env_updates = {
+            "LLM_PROVIDER": "openai",
+            "PREFER_LOCAL_LLM": "False",
+            "PREFER_GROQ": "False",
+            "OPENAI_TEXT_MODEL": selected_model,
+        }
+        label = f"OpenAI ({selected_model})"
+
+    elif selected_key == "claude":
+        if not anthropic_ok:
+            print("\n\u26a0\ufe0f  ANTHROPIC_API_KEY is not set in .env.")
+            key = input("Enter your Anthropic API key (or Enter to skip): ").strip()
+            if key:
+                env_updates["ANTHROPIC_API_KEY"] = key
+            else:
+                proceed = input("Proceed without API key? (y/N): ").strip().lower()
+                if proceed != "y":
+                    print("Cancelled.")
+                    return
+
+        claude_models = [
+            ("claude-sonnet-4-20250514", "Claude Sonnet 4 - best balance (recommended)"),
+            ("claude-3-5-haiku-20241022", "Claude 3.5 Haiku - fastest, cheapest"),
+            ("claude-opus-4-20250514", "Claude Opus 4 - highest capability"),
+        ]
+        current_model = getattr(Config, "ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+        print("\nAvailable Claude models:")
+        for i, (mid, desc) in enumerate(claude_models, 1):
+            cur = " (CURRENT)" if mid == current_model else ""
+            print(f"  {i}. {mid}{cur}")
+            print(f"     {desc}")
+
+        model_choice = input(
+            f"\nSelect model (1-{len(claude_models)}, or Enter for current): "
+        ).strip()
+        if model_choice:
+            try:
+                midx = int(model_choice) - 1
+                if 0 <= midx < len(claude_models):
+                    selected_model = claude_models[midx][0]
+                else:
+                    selected_model = current_model
+            except ValueError:
+                selected_model = current_model
+        else:
+            selected_model = current_model
+
+        env_updates.update({
+            "LLM_PROVIDER": "claude",
+            "PREFER_LOCAL_LLM": "False",
+            "PREFER_GROQ": "False",
+            "ANTHROPIC_MODEL": selected_model,
+        })
+        label = f"Claude ({selected_model})"
+
+    elif selected_key == "deepseek":
+        if not deepseek_ok:
+            print("\n\u26a0\ufe0f  DEEPSEEK_API_KEY is not set in .env.")
+            key = input("Enter your DeepSeek API key (or Enter to skip): ").strip()
+            if key:
+                env_updates["DEEPSEEK_API_KEY"] = key
+            else:
+                proceed = input("Proceed without API key? (y/N): ").strip().lower()
+                if proceed != "y":
+                    print("Cancelled.")
+                    return
+
+        deepseek_models = [
+            ("deepseek-chat", "DeepSeek V3 - general purpose (recommended)"),
+            ("deepseek-reasoner", "DeepSeek R1 - reasoning/chain-of-thought"),
+        ]
+        current_model = getattr(Config, "DEEPSEEK_MODEL", "deepseek-chat")
+        print("\nAvailable DeepSeek models:")
+        for i, (mid, desc) in enumerate(deepseek_models, 1):
+            cur = " (CURRENT)" if mid == current_model else ""
+            print(f"  {i}. {mid}{cur}")
+            print(f"     {desc}")
+
+        model_choice = input(
+            f"\nSelect model (1-{len(deepseek_models)}, or Enter for current): "
+        ).strip()
+        if model_choice:
+            try:
+                midx = int(model_choice) - 1
+                if 0 <= midx < len(deepseek_models):
+                    selected_model = deepseek_models[midx][0]
+                else:
+                    selected_model = current_model
+            except ValueError:
+                selected_model = current_model
+        else:
+            selected_model = current_model
+
+        env_updates.update({
+            "LLM_PROVIDER": "deepseek",
+            "PREFER_LOCAL_LLM": "False",
+            "PREFER_GROQ": "False",
+            "DEEPSEEK_MODEL": selected_model,
+        })
+        label = f"DeepSeek ({selected_model})"
+
+    elif selected_key == "kimi":
+        if not moonshot_ok:
+            print("\n\u26a0\ufe0f  MOONSHOT_API_KEY is not set in .env.")
+            key = input("Enter your Moonshot API key (or Enter to skip): ").strip()
+            if key:
+                env_updates["MOONSHOT_API_KEY"] = key
+            else:
+                proceed = input("Proceed without API key? (y/N): ").strip().lower()
+                if proceed != "y":
+                    print("Cancelled.")
+                    return
+
+        kimi_models = [
+            ("kimi-k2", "Kimi K2 - flagship, MoE architecture (recommended)"),
+            ("moonshot-v1-8k", "Moonshot v1 8K - fast, 8K context"),
+            ("moonshot-v1-32k", "Moonshot v1 32K - balanced, 32K context"),
+            ("moonshot-v1-128k", "Moonshot v1 128K - long context"),
+        ]
+        current_model = getattr(Config, "MOONSHOT_MODEL", "kimi-k2")
+        print("\nAvailable Kimi / Moonshot models:")
+        for i, (mid, desc) in enumerate(kimi_models, 1):
+            cur = " (CURRENT)" if mid == current_model else ""
+            print(f"  {i}. {mid}{cur}")
+            print(f"     {desc}")
+
+        model_choice = input(
+            f"\nSelect model (1-{len(kimi_models)}, or Enter for current): "
+        ).strip()
+        if model_choice:
+            try:
+                midx = int(model_choice) - 1
+                if 0 <= midx < len(kimi_models):
+                    selected_model = kimi_models[midx][0]
+                else:
+                    selected_model = current_model
+            except ValueError:
+                selected_model = current_model
+        else:
+            selected_model = current_model
+
+        env_updates.update({
+            "LLM_PROVIDER": "kimi",
+            "PREFER_LOCAL_LLM": "False",
+            "PREFER_GROQ": "False",
+            "MOONSHOT_MODEL": selected_model,
+        })
+        label = f"Kimi ({selected_model})"
+
+    else:
+        print("Invalid choice.")
+        return
+
+    # Confirm
+    print("\n" + "-" * 70)
+    print("Configuration to save:")
+    for k, v in env_updates.items():
+        # Mask API keys in display
+        if "API_KEY" in k and v and not v.startswith("your_"):
+            display_v = v[:8] + "..." + v[-4:] if len(v) > 16 else "****"
+        else:
+            display_v = v
+        print(f"  {k} = {display_v}")
+    print("-" * 70)
+
+    confirm = input("\nSave this configuration? (Y/n): ").strip().lower()
+    if confirm == "n":
+        print("Cancelled.")
+        return
+
+    # Save to .env
+    _save_env_values(env_updates)
+    print(f"\n\u2713 LLM provider set to {label}")
+    print("  Changes take effect on next pipeline run (restart recommended).")
 
 
-def _save_rapidapi_key_to_env(api_key: str) -> None:
-    """Save RapidAPI key to .env file."""
+def _save_env_values(updates: dict[str, str]) -> None:
+    """Save multiple key=value pairs to .env file."""
     env_file = Path(".env")
 
-    # Read existing .env content
     existing_lines = []
     if env_file.exists():
         with open(env_file, "r", encoding="utf-8") as f:
             existing_lines = f.readlines()
 
-    # Update or add the API key
-    updated = False
+    remaining = dict(updates)  # track what still needs appending
     new_lines = []
     for line in existing_lines:
-        if line.startswith("RAPIDAPI_KEY="):
-            new_lines.append(f"RAPIDAPI_KEY={api_key}\n")
-            updated = True
-        else:
+        replaced = False
+        for key in list(remaining):
+            if line.startswith(f"{key}="):
+                new_lines.append(f"{key}={remaining.pop(key)}\n")
+                replaced = True
+                break
+        if not replaced:
             new_lines.append(line)
 
-    # Add if not found
-    if not updated:
-        new_lines.append(f"RAPIDAPI_KEY={api_key}\n")
+    # Append anything not found
+    for key, val in remaining.items():
+        new_lines.append(f"{key}={val}\n")
 
-    # Write back
     with open(env_file, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
 
-    print(f"\n✓ Saved API key to {env_file}")
-    print("  Restart the application for changes to take effect.")
+    # Update runtime environment
+    import os
+    for key, val in updates.items():
+        os.environ[key] = val
 
 
 def _configure_image_provider() -> None:
@@ -5223,47 +5643,9 @@ def _get_provider_model_options(provider: str) -> list[tuple[str, str]]:
 
 def _save_image_provider_to_env(provider: str, model: str) -> None:
     """Save image provider settings to .env file."""
-    env_file = Path(".env")
-
-    # Read existing .env content
-    existing_lines = []
-    if env_file.exists():
-        with open(env_file, "r", encoding="utf-8") as f:
-            existing_lines = f.readlines()
-
-    # Track which settings we've updated
-    updated_provider = False
-    updated_model = False
-
-    new_lines = []
-    for line in existing_lines:
-        if line.startswith("IMAGE_PROVIDER="):
-            new_lines.append(f"IMAGE_PROVIDER={provider}\n")
-            updated_provider = True
-        elif line.startswith("IMAGE_MODEL="):
-            new_lines.append(f"IMAGE_MODEL={model}\n")
-            updated_model = True
-        else:
-            new_lines.append(line)
-
-    # Add if not found
-    if not updated_provider:
-        new_lines.append(f"IMAGE_PROVIDER={provider}\n")
-    if not updated_model:
-        new_lines.append(f"IMAGE_MODEL={model}\n")
-
-    # Write back
-    with open(env_file, "w", encoding="utf-8") as f:
-        f.writelines(new_lines)
-
-    print(f"\n✓ Saved image provider configuration to {env_file}")
+    _save_env_values({"IMAGE_PROVIDER": provider, "IMAGE_MODEL": model})
+    print(f"\n✓ Saved image provider configuration to .env")
     print("  Settings will be used on next image generation.")
-
-    # Also update the runtime config
-    import os
-
-    os.environ["IMAGE_PROVIDER"] = provider
-    os.environ["IMAGE_MODEL"] = model
 
 
 def _test_image_provider(provider: str, model: str) -> None:
@@ -5297,63 +5679,73 @@ def _test_image_provider(provider: str, model: str) -> None:
 
 def _show_all_prompts() -> None:
     """Display all configured prompts in full."""
+    # Complete list of all prompt/style/instruction Config fields
+    prompt_fields = [
+        ("SEARCH_PROMPT", "Topic/criteria for finding stories"),
+        ("SEARCH_INSTRUCTION_PROMPT", "System prompt for Gemini search"),
+        ("LOCAL_LLM_SEARCH_PROMPT", "System prompt for local LLM / Groq search"),
+        ("SEARCH_DISTILL_PROMPT", "Query optimizer for keyword extraction"),
+        ("SEARCH_PROMPT_TEMPLATE", "Legacy override (replaces SEARCH_INSTRUCTION_PROMPT if set)"),
+        ("VERIFICATION_PROMPT", "Content quality gatekeeper"),
+        ("IMAGE_STYLE", "Style directive for image generation"),
+        ("IMAGE_REFINEMENT_PROMPT", "LLM prompt to create image prompts (with human)"),
+        ("IMAGE_REFINEMENT_PROMPT_NO_HUMAN", "LLM prompt to create image prompts (no human)"),
+        ("IMAGE_FALLBACK_PROMPT", "Fallback when LLM refinement fails (with human)"),
+        ("IMAGE_FALLBACK_NO_HUMAN_PROMPT", "Fallback when LLM refinement fails (no human)"),
+        ("IMAGE_ANALYSIS_PROMPT", "Analyze source article images"),
+        ("ALT_TEXT_PROMPT", "Generate image alt text for accessibility"),
+        ("HUMAN_APPEARANCE_INSTRUCTION", "Mandatory appearance block for human images"),
+        ("NO_HUMAN_INSTRUCTION", "Instruction block when no central human"),
+        ("IMAGE_NEGATIVE_PROMPT", "Negative prompt for image generation"),
+        ("HF_NEGATIVE_PROMPT", "Negative prompt for HuggingFace provider"),
+        ("Z_IMAGE_NEGATIVE_PROMPT", "Negative prompt for Z-Image local provider"),
+        ("PROMOTION_MESSAGE_PROMPT", "Job-seeking promotion message generation"),
+        ("SOURCE_URL_LOOKUP_PROMPT", "Find original article URL via Gemini"),
+        ("JSON_REPAIR_PROMPT", "Fix malformed JSON from LLM responses"),
+        ("STORY_ENRICHMENT_PROMPT", "Extract organizations and people from stories"),
+        ("COMPANY_MENTION_PROMPT", "Generate company mention sentences"),
+        ("DIRECT_PEOPLE_EXTRACTION_PROMPT", "Extract named people from stories"),
+        ("SOURCE_PEOPLE_SEARCH_PROMPT", "Find people by searching source URLs"),
+        ("INDIRECT_PEOPLE_PROMPT", "Find senior leaders at organizations"),
+        ("ORG_URN_LOOKUP_PROMPT", "Find LinkedIn organization numeric ID"),
+        ("COMPANY_SEARCH_PROMPT", "Find official LinkedIn company/school page"),
+        ("PERSON_PROFILE_SEARCH_PROMPT", "Find LinkedIn personal profile"),
+        ("DEPARTMENT_SEARCH_PROMPT", "Find LinkedIn department/faculty page"),
+        ("ORIGINALITY_ANALYSIS_PROMPT", "LLM-based originality assessment"),
+        ("RAG_PERSONALIZATION_PROMPT", "RAG prompt with author context"),
+        ("RAG_BASE_PROMPT", "RAG prompt without author context"),
+    ]
+
     print("\n" + "=" * 80)
     print("ALL CONFIGURED PROMPTS")
     print("=" * 80)
 
-    print("\n" + "-" * 80)
-    print("1. SEARCH_PROMPT (topic/criteria for finding stories)")
-    print("-" * 80)
-    print(Config.SEARCH_PROMPT)
+    shown = 0
+    for idx, (field_name, description) in enumerate(prompt_fields, 1):
+        value = getattr(Config, field_name, "")
+        if not value:
+            continue
+        shown += 1
+        print(f"\n{'─' * 80}")
+        print(f"{idx}. {field_name}  —  {description}")
+        print(f"{'─' * 80}")
+        # Truncate very long prompts for readability
+        if len(value) > 2000:
+            print(value[:2000])
+            print(f"\n  ... ({len(value)} chars total, truncated for display)")
+        else:
+            print(value)
 
-    print("\n" + "-" * 80)
-    print("2. SEARCH_INSTRUCTION_PROMPT (system prompt for LLM search)")
+    # Count empty ones
+    empty = [f for f, _ in prompt_fields if not getattr(Config, f, "")]
+    if empty:
+        print(f"\n{'─' * 80}")
+        print(f"Empty/unset ({len(empty)}): {', '.join(empty)}")
+
+    print(f"\n{'=' * 80}")
     print(
-        "   Placeholders: {max_stories}, {search_prompt}, {since_date}, {summary_words}"
-    )
-    print("-" * 80)
-    print(Config.SEARCH_INSTRUCTION_PROMPT)
-
-    print("\n" + "-" * 80)
-    print("3. IMAGE_STYLE (style directive for image generation)")
-    print("-" * 80)
-    print(Config.IMAGE_STYLE)
-
-    print("\n" + "-" * 80)
-    print("4. IMAGE_REFINEMENT_PROMPT (LLM prompt to create image prompts)")
-    print("   Placeholders: {story_title}, {story_summary}, {image_style}")
-    print("-" * 80)
-    print(Config.IMAGE_REFINEMENT_PROMPT)
-
-    print("\n" + "-" * 80)
-    print("5. IMAGE_FALLBACK_PROMPT (fallback when LLM refinement fails)")
-    print("   Placeholders: {story_title}, {appearance}, {discipline}")
-    print("-" * 80)
-    print(Config.IMAGE_FALLBACK_PROMPT)
-
-    print("\n" + "-" * 80)
-    print("6. VERIFICATION_PROMPT (content verification prompt)")
-    print(
-        "   Placeholders: {search_prompt}, {story_title}, {story_summary}, {story_sources}"
-    )
-    print("-" * 80)
-    print(Config.VERIFICATION_PROMPT)
-
-    if Config.SEARCH_PROMPT_TEMPLATE:
-        print("\n" + "-" * 80)
-        print(
-            "7. SEARCH_PROMPT_TEMPLATE (legacy override - if set, replaces SEARCH_INSTRUCTION_PROMPT)"
-        )
-        print(
-            "   Placeholders: {criteria}, {since_date}, {summary_words}, {max_stories}"
-        )
-        print("-" * 80)
-        print(Config.SEARCH_PROMPT_TEMPLATE)
-
-    print("\n" + "=" * 80)
-    print(
-        "All prompts are configured in .env (PROMPT TEMPLATES section). "
-        "Edit your .env file to customize any prompt."
+        f"Showing {shown}/{len(prompt_fields)} prompts. "
+        "All prompts are configured in .env — edit your .env file to customize."
     )
     print("=" * 80)
 

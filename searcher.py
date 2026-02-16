@@ -15,6 +15,7 @@ from openai import OpenAI
 from config import Config
 from database import Database, Story
 from domain_credibility import get_domain_tier
+from entity_constants import clean_org_name, is_invalid_org_name
 from error_handling import with_enhanced_recovery
 from api_client import api_client
 from text_utils import calculate_similarity
@@ -306,13 +307,13 @@ class StorySearcher:
         if Config.USE_LAST_CHECKED_DATE:
             last_check = self.db.get_last_check_date()
             if last_check:
-                logger.info(f"Using last check date: {last_check}")
+                logger.debug(f"Using last check date: {last_check}")
                 self._cached_start_date = last_check
                 return last_check
 
         # Fallback to lookback days
         lookback = datetime.now() - timedelta(days=Config.SEARCH_LOOKBACK_DAYS)
-        logger.info(f"Using lookback of {Config.SEARCH_LOOKBACK_DAYS} days: {lookback}")
+        logger.debug(f"Using lookback of {Config.SEARCH_LOOKBACK_DAYS} days: {lookback}")
         self._cached_start_date = lookback
         return lookback
 
@@ -333,7 +334,7 @@ class StorySearcher:
         search_prompt = Config.SEARCH_PROMPT.format(discipline=Config.DISCIPLINE)
         summary_words = Config.SUMMARY_WORD_COUNT
 
-        logger.info(
+        logger.debug(
             f"Searching for stories matching: '{search_prompt}' since {since_date.date()}"
         )
 
@@ -745,64 +746,33 @@ class StorySearcher:
             return None
 
     def _get_search_query(self, search_prompt: str) -> str:
-        """Convert a conversational prompt into a concise search query using Local LLM or Groq."""
+        """Convert a conversational prompt into a concise search query using the configured LLM provider."""
         # If the prompt is already short (e.g. < 8 words), just use it
         if len(search_prompt.split()) < 8:
             return search_prompt
 
-        logger.info("Distilling conversational prompt into search keywords...")
+        logger.debug("Distilling conversational prompt into search keywords...")
 
         # Include current year to avoid LLM hallucinating outdated years
         current_year = datetime.now().year
 
-        messages = [
-            {
-                "role": "system",
-                "content": Config.SEARCH_DISTILL_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": f"The current year is {current_year}. Extract search keywords from: {search_prompt}",
-            },
-        ]
+        # Combine system + user instructions into a single prompt for generate_text
+        prompt = (
+            f"{Config.SEARCH_DISTILL_PROMPT}\n\n"
+            f"The current year is {current_year}. Extract search keywords from: {search_prompt}"
+        )
 
         content = None
-
-        # Try Local LLM first
-        if self.local_client:
-            try:
-                content = api_client.local_llm_generate(
-                    client=self.local_client,
-                    messages=messages,
-                    max_tokens=50,
-                    temperature=0.1,
-                    timeout=30,
-                    endpoint="search_distill",
-                )
-            except Exception as e:
-                if "No models loaded" in str(e):
-                    logger.debug("Local LLM has no model loaded, using Groq...")
-                else:
-                    logger.warning(
-                        f"Local LLM distillation failed: {e}. Trying Groq..."
-                    )
-
-        # Fallback to Groq
-        if not content:
-            groq_client = api_client.get_groq_client()
-            if groq_client:
-                try:
-                    content = api_client.groq_generate(
-                        client=groq_client,
-                        messages=messages,
-                        max_tokens=50,
-                        temperature=0.1,
-                        endpoint="search_distill",
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Groq distillation failed: {e}. Using manual distillation."
-                    )
+        try:
+            content = api_client.generate_text(
+                prompt=prompt,
+                max_tokens=50,
+                temperature=0.1,
+                endpoint="search_distill",
+                gemini_client=self.client,
+            )
+        except Exception as e:
+            logger.warning(f"LLM distillation failed: {e}. Using manual distillation.")
 
         if not content:
             logger.warning(
@@ -810,7 +780,7 @@ class StorySearcher:
             )
             return self._manual_distill(search_prompt)
 
-        logger.info(f"LLM distillation raw output: '{content.strip()}'")
+        logger.debug(f"LLM distillation raw output: '{content.strip()}'")
 
         query = content.strip().strip('"').strip()
         # Remove common prefixes LLMs add
@@ -826,7 +796,7 @@ class StorySearcher:
         if not query:
             return self._manual_distill(search_prompt)
 
-        logger.info(f"Distilled query: {query}")
+        logger.debug(f"Distilled query: {query}")
         return query
 
     def _manual_distill(self, text: str) -> str:
@@ -872,7 +842,7 @@ class StorySearcher:
         self, search_prompt: str, since_date: datetime, summary_words: int
     ) -> int:
         """Search using DuckDuckGo and process with Local LLM."""
-        logger.info("Using Local LLM with DuckDuckGo search...")
+        logger.debug("Using Local LLM with DuckDuckGo search...")
 
         # Distill conversational prompt into keywords for better search results
         search_query = self._get_search_query(search_prompt)
@@ -889,16 +859,16 @@ class StorySearcher:
             timelimit = None  # No limit for older searches
 
         # 1. Search DuckDuckGo using consolidated method with retry logic
-        logger.info(f"Querying DuckDuckGo (timelimit={timelimit}): {search_query}")
+        logger.debug(f"Querying DuckDuckGo (timelimit={timelimit}): {search_query}")
         search_results = self._fetch_duckduckgo_results(search_query, timelimit)
 
         if not search_results:
             logger.warning("No search results from DuckDuckGo")
             return 0
 
-        logger.info(f"DuckDuckGo search complete. Found {len(search_results)} results.")
+        logger.debug(f"DuckDuckGo search complete. Found {len(search_results)} results.")
 
-        # 2. Process results with Local LLM -> Groq -> error
+        # 2. Process results with configured LLM provider
         max_stories = Config.MAX_STORIES_PER_SEARCH
         author_name = Config.LINKEDIN_AUTHOR_NAME or "the LinkedIn profile owner"
         prompt = Config.LOCAL_LLM_SEARCH_PROMPT.format(
@@ -910,55 +880,61 @@ class StorySearcher:
             discipline=Config.DISCIPLINE,
         )
 
-        content = None
+        # System prompt anchors the LLM to respond with JSON only
+        system_prompt = (
+            "You are a JSON API. You MUST respond with ONLY a valid JSON array. "
+            "Do NOT include any other text, commentary, code, or markdown. "
+            "Respond in English only."
+        )
 
-        # Try Local LLM first
-        if self.local_client:
-            self._report_progress(
-                f"Processing {len(search_results)} results with Local LLM ({Config.LM_STUDIO_MODEL})..."
-            )
+        content = None
+        provider = Config.LLM_PROVIDER or "gemini"
+        self._report_progress(
+            f"Processing {len(search_results)} results with {provider}..."
+        )
+
+        # Try up to 2 attempts — retry once if the LLM returns garbage
+        for attempt in range(2):
             try:
-                content = api_client.local_llm_generate(
-                    client=self.local_client,
-                    messages=[{"role": "user", "content": prompt}],
-                    timeout=Config.LLM_LOCAL_TIMEOUT,
+                content = api_client.generate_text(
+                    prompt=prompt,
+                    max_tokens=2048,
                     endpoint="search_process",
+                    gemini_client=self.client,
+                    system_prompt=system_prompt,
                 )
             except Exception as e:
-                error_msg = str(e)
-                if "No models loaded" in error_msg:
-                    logger.debug("Local LLM has no model loaded, using Groq...")
-                else:
-                    logger.warning(f"Local LLM processing failed: {e}. Trying Groq...")
+                logger.error(f"LLM processing failed: {e}")
+                content = None
 
-        # Fallback to Groq if local failed or not available
-        if not content:
-            groq_client = api_client.get_groq_client()
-            if groq_client:
-                self._report_progress(
-                    f"Processing {len(search_results)} results with Groq ({Config.GROQ_MODEL})..."
+            if content and self._is_plausible_json_response(content):
+                break  # Response looks like JSON — proceed
+
+            if attempt == 0 and content:
+                logger.warning(
+                    "LLM returned non-JSON response (%d chars). Retrying with stricter prompt...",
+                    len(content),
                 )
-                try:
-                    content = api_client.groq_generate(
-                        client=groq_client,
-                        messages=[{"role": "user", "content": prompt}],
-                        max_tokens=2048,
-                        endpoint="search_process",
-                    )
-                except Exception as e:
-                    logger.error(f"Groq processing failed: {e}")
+                logger.debug("Off-topic response (first 200 chars): %s", content[:200])
+                # Make system prompt even more explicit for retry
+                system_prompt = (
+                    "CRITICAL: You MUST respond with ONLY a valid JSON array of story objects. "
+                    "Each object must have keys: title, summary, source_links, quality_score, "
+                    "quality_justification, category. "
+                    "Do NOT output code, markdown, or any non-JSON text. "
+                    "Respond in English. Output NOTHING except the JSON array."
+                )
+                content = None  # Force retry
 
         if not content:
             logger.error(
-                "No LLM available for search processing (Local LLM and Groq both failed)"
+                f"No LLM available for search processing (provider={provider})"
             )
             print("\nERROR: No LLM available for search processing.")
-            print("Please either:")
-            print("  1. Load a model in LM Studio, OR")
-            print("  2. Set GROQ_API_KEY in .env (free at console.groq.com)")
+            print("Please check your LLM_PROVIDER and API key settings in .env")
             return 0
 
-        logger.info("LLM processing complete.")
+        logger.debug("LLM processing complete.")
         stories_data = self._parse_response(content)
         return self._process_stories_data(stories_data, since_date)
 
@@ -970,7 +946,7 @@ class StorySearcher:
             logger.warning("No stories found in search results")
             return 0
 
-        logger.info(f"Found {len(stories_data)} potential stories")
+        logger.debug(f"Found {len(stories_data)} potential stories")
 
         # Apply date post-filtering if since_date provided
         if since_date:
@@ -999,7 +975,7 @@ class StorySearcher:
         # Update last check date
         self.db.set_last_check_date()
 
-        logger.info(f"Saved {new_count} new stories to database")
+        logger.debug(f"Saved {new_count} new stories to database")
         return new_count
 
     def _build_search_prompt(
@@ -1037,6 +1013,54 @@ class StorySearcher:
             discipline=discipline,
             discipline_title=discipline.title(),
         )
+
+    def _is_plausible_json_response(self, text: str) -> bool:
+        """Check if an LLM response looks like it could contain JSON story data.
+
+        Returns False for clearly off-topic responses (e.g. Chinese text,
+        code tutorials, unrelated prose) so the caller can retry.
+        """
+        if not text or len(text.strip()) < 2:
+            return False
+
+        stripped = text.strip()
+
+        # Accept valid empty JSON array — it means "no relevant stories"
+        if stripped == "[]":
+            return True
+
+        # For very short responses (< 10 chars), only accept if they parse as JSON
+        if len(stripped) < 10:
+            try:
+                import json as _json
+                _json.loads(stripped)
+                return True
+            except (ValueError, TypeError):
+                return False
+
+        # Must contain at least one JSON structural character
+        has_json_structure = "{" in stripped or "[" in stripped
+
+        # Must mention "title" somewhere (all story objects have a title key)
+        has_title_key = '"title"' in stripped.lower() or "'title'" in stripped.lower()
+
+        # Reject if the response is predominantly non-ASCII (e.g. Chinese text)
+        ascii_chars = sum(1 for c in stripped if ord(c) < 128)
+        ascii_ratio = ascii_chars / len(stripped) if stripped else 0
+        if ascii_ratio < 0.5:
+            logger.debug(f"Response has low ASCII ratio ({ascii_ratio:.2f}), likely off-topic")
+            return False
+
+        # If it has JSON structure and a title key, it's plausible
+        if has_json_structure and has_title_key:
+            return True
+
+        # If it starts with code block markers but no title key, it's code not JSON
+        if stripped.startswith("#") or stripped.startswith("```"):
+            if not has_title_key:
+                return False
+
+        return has_json_structure
 
     def _parse_response(self, response_text: str) -> list[dict]:
         """Parse the JSON response from the LLM."""
@@ -1175,6 +1199,9 @@ class StorySearcher:
             days=Config.DEDUP_PUBLISHED_WINDOW_DAYS
         )
 
+        # Track titles saved in this batch for intra-batch deduplication
+        batch_titles: list[str] = []
+
         for i, data in enumerate(stories_data):
             try:
                 title = data.get("title", "").strip()
@@ -1238,6 +1265,21 @@ class StorySearcher:
                         existing.source_links = updated_sources
                         self.db.update_story(existing)
                         logger.debug(f"Updated sources for existing story: {title}")
+                    continue
+
+                # Intra-batch deduplication: skip if similar to another story in this batch
+                is_duplicate = False
+                for batch_title in batch_titles:
+                    similarity = calculate_similarity(title, batch_title)
+                    if similarity >= similarity_threshold:
+                        logger.info(
+                            f"Intra-batch duplicate (similarity={similarity:.2f}): "
+                            f"'{title}' matches '{batch_title}'"
+                        )
+                        is_duplicate = True
+                        break
+
+                if is_duplicate:
                     continue
 
                 # Semantic deduplication: check similarity against existing titles
@@ -1324,42 +1366,18 @@ class StorySearcher:
                 # Extract organizations (list of company/institution names)
                 organizations = data.get("organizations", [])
                 if isinstance(organizations, list):
-                    # Validate and filter organizations
                     validated_orgs = []
-                    # Patterns that indicate AI explanation rather than org name
-                    invalid_org_patterns = [
-                        "not applicable",
-                        "this is not",
-                        "no organization",
-                        "none mentioned",
-                        "not specified",
-                        "unknown",
-                        "n/a",
-                        "generalized",
-                        "generic",
-                        "various",
-                        "multiple",
-                        "several",
-                        "unspecified",
-                    ]
                     for org in organizations:
                         org_str = str(org).strip()
                         if not org_str or len(org_str) < 2:
                             continue
-                        # Skip if org name is too long (likely an explanation)
-                        if len(org_str) > 100:
-                            logger.debug(
-                                f"Skipping overly long org name: {org_str[:50]}..."
-                            )
+                        # Clean the name (strip possessives, leading 'the', etc.)
+                        org_str = clean_org_name(org_str)
+                        if not org_str:
                             continue
-                        # Skip if contains invalid patterns
-                        org_lower = org_str.lower()
-                        if any(
-                            pattern in org_lower for pattern in invalid_org_patterns
-                        ):
-                            logger.debug(
-                                f"Skipping invalid org (AI explanation): {org_str[:50]}"
-                            )
+                        # Use centralized validation (handles patterns, length, AI explanations, etc.)
+                        if is_invalid_org_name(org_str):
+                            logger.debug(f"Filtered invalid org: {org_str[:50]}")
                             continue
                         # Skip if it looks like a sentence (has too many words)
                         word_count = len(org_str.split())
@@ -1369,6 +1387,10 @@ class StorySearcher:
                             )
                             continue
                         validated_orgs.append(org_str)
+                    if len(validated_orgs) < len(organizations):
+                        logger.info(
+                            f"Org validation: {len(organizations)} -> {len(validated_orgs)}"
+                        )
                     organizations = validated_orgs
                 else:
                     organizations = []
@@ -1448,6 +1470,7 @@ class StorySearcher:
                 new_count += 1
                 # Add to existing titles for subsequent duplicate checks
                 existing_titles.append((story.id or 0, title))
+                batch_titles.append(title)
                 logger.info(
                     f"Added new story: {title} "
                     f"(Score: {quality_score}, Category: {category})"
@@ -1647,7 +1670,7 @@ class StorySearcher:
     def _process_with_local_llm(
         self, search_results: list[dict], search_prompt: str, summary_words: int
     ) -> list[dict]:
-        """Process search results with Local LLM → Groq fallback chain."""
+        """Process search results with the configured LLM provider."""
         max_stories = Config.MAX_STORIES_PER_SEARCH
         author_name = Config.LINKEDIN_AUTHOR_NAME or "the LinkedIn profile owner"
         prompt = Config.LOCAL_LLM_SEARCH_PROMPT.format(
@@ -1659,36 +1682,42 @@ class StorySearcher:
             discipline=Config.DISCIPLINE,
         )
 
-        content = None
+        system_prompt = (
+            "You are a JSON API. You MUST respond with ONLY a valid JSON array. "
+            "Do NOT include any other text, commentary, code, or markdown. "
+            "Respond in English only."
+        )
 
-        # Try Local LLM first
-        if self.local_client:
+        content = None
+        for attempt in range(2):
             try:
-                content = api_client.local_llm_generate(
-                    client=self.local_client,
-                    messages=[{"role": "user", "content": prompt}],
-                    timeout=Config.LLM_LOCAL_TIMEOUT,
+                content = api_client.generate_text(
+                    prompt=prompt,
+                    max_tokens=2048,
                     endpoint="local_search_process",
+                    gemini_client=self.client,
+                    system_prompt=system_prompt,
                 )
             except Exception as e:
-                if "No models loaded" in str(e):
-                    logger.debug("Local LLM has no model loaded, trying Groq...")
-                else:
-                    logger.warning(f"Local LLM processing failed: {e}. Trying Groq...")
+                logger.error(f"LLM processing failed: {e}")
+                content = None
 
-        # Fallback to Groq
-        if not content:
-            groq_client = api_client.get_groq_client()
-            if groq_client:
-                try:
-                    content = api_client.groq_generate(
-                        client=groq_client,
-                        messages=[{"role": "user", "content": prompt}],
-                        max_tokens=2048,
-                        endpoint="local_search_process",
-                    )
-                except Exception as e:
-                    logger.error(f"Groq processing failed: {e}")
+            if content and self._is_plausible_json_response(content):
+                break
+
+            if attempt == 0 and content:
+                logger.warning(
+                    "LLM returned non-JSON response (%d chars). Retrying...",
+                    len(content),
+                )
+                system_prompt = (
+                    "CRITICAL: You MUST respond with ONLY a valid JSON array of story objects. "
+                    "Each object must have keys: title, summary, source_links, quality_score, "
+                    "quality_justification, category. "
+                    "Do NOT output code, markdown, or any non-JSON text. "
+                    "Respond in English. Output NOTHING except the JSON array."
+                )
+                content = None
 
         if content:
             stories_data = self._parse_response(content)
@@ -1754,59 +1783,20 @@ class StorySearcher:
 
     def _repair_json_with_llm(self, malformed_json: str) -> str | None:
         """
-        Attempt to repair malformed JSON using an LLM.
+        Attempt to repair malformed JSON using the configured LLM provider.
         This is a fallback when initial parsing fails.
-        Uses Local LLM -> Groq -> Gemini fallback chain.
         """
         repair_prompt = Config.JSON_REPAIR_PROMPT.format(
             malformed_json=malformed_json[:3000]
         )
 
-        content = None
-
-        # Try Local LLM first
-        if self.local_client:
-            try:
-                content = api_client.local_llm_generate(
-                    client=self.local_client,
-                    messages=[{"role": "user", "content": repair_prompt}],
-                    timeout=Config.LLM_LOCAL_TIMEOUT,
-                    endpoint="json_repair",
-                )
-                if content:
-                    return content
-            except Exception as e:
-                if "No models loaded" in str(e):
-                    logger.debug("Local LLM has no model loaded, using Groq...")
-                else:
-                    logger.warning(f"Local LLM JSON repair failed: {e}. Trying Groq...")
-
-        # Fallback to Groq (free, fast)
-        groq_client = api_client.get_groq_client()
-        if groq_client:
-            try:
-                content = api_client.groq_generate(
-                    client=groq_client,
-                    messages=[{"role": "user", "content": repair_prompt}],
-                    endpoint="json_repair",
-                )
-                if content:
-                    return content
-            except Exception as e:
-                logger.warning(
-                    f"Groq JSON repair failed: {e}. Falling back to Gemini..."
-                )
-
-        # Final fallback to Gemini
         try:
-            response = api_client.gemini_generate(
-                client=self.client,
-                model=Config.MODEL_TEXT,
-                contents=repair_prompt,
-                config={"response_mime_type": "application/json"},
+            return api_client.generate_text(
+                prompt=repair_prompt,
                 endpoint="json_repair",
+                gemini_client=self.client,
+                gemini_config={"response_mime_type": "application/json"},
             )
-            return response.text
         except Exception as e:
             logger.error(f"JSON repair failed: {e}")
             return None

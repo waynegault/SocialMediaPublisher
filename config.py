@@ -170,6 +170,30 @@ class SettingsModel(BaseSettings):
     groq_model: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")
     prefer_groq: bool = Field(default=False, alias="PREFER_GROQ")
 
+    # --- OpenAI (for text generation, separate from DALL-E usage) ---
+    openai_text_model: str = Field(default="gpt-4o-mini", alias="OPENAI_TEXT_MODEL")
+
+    # --- Anthropic (Claude) ---
+    # Get API key from: https://console.anthropic.com/settings/keys
+    anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
+    anthropic_model: str = Field(
+        default="claude-sonnet-4-20250514", alias="ANTHROPIC_MODEL"
+    )
+
+    # --- DeepSeek ---
+    # Get API key from: https://platform.deepseek.com/api_keys
+    deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
+    deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
+
+    # --- Moonshot AI (Kimi K2) ---
+    # Get API key from: https://platform.moonshot.cn/console/api-keys
+    moonshot_api_key: str = Field(default="", alias="MOONSHOT_API_KEY")
+    moonshot_model: str = Field(default="kimi-k2", alias="MOONSHOT_MODEL")
+
+    # --- Active LLM Provider ---
+    # Which provider to use: gemini, groq, local, openai, claude, deepseek, kimi
+    llm_provider: str = Field(default="gemini", alias="LLM_PROVIDER")
+
     # --- AI Models ---
     model_text: str = Field(default="gemini-2.0-flash", alias="MODEL_TEXT")
     model_verification: str = Field(
@@ -688,6 +712,17 @@ class Config(metaclass=_ConfigMeta):
         print(f"  LINKEDIN_SEARCH_ENABLED: {s.linkedin_search_enabled}")
         print(f"  MODEL_TEXT: {s.model_text}")
         print(f"  MODEL_IMAGE: {s.model_image}")
+        print(f"  LLM_PROVIDER: {s.llm_provider}")
+        print(f"  OPENAI_API_KEY: {'*' * 8 if s.openai_api_key else 'NOT SET'}")
+        print(f"  OPENAI_TEXT_MODEL: {s.openai_text_model}")
+        print(f"  ANTHROPIC_API_KEY: {'*' * 8 if s.anthropic_api_key else 'NOT SET'}")
+        print(f"  ANTHROPIC_MODEL: {s.anthropic_model}")
+        print(f"  DEEPSEEK_API_KEY: {'*' * 8 if s.deepseek_api_key else 'NOT SET'}")
+        print(f"  DEEPSEEK_MODEL: {s.deepseek_model}")
+        print(f"  MOONSHOT_API_KEY: {'*' * 8 if s.moonshot_api_key else 'NOT SET'}")
+        print(f"  MOONSHOT_MODEL: {s.moonshot_model}")
+        print(f"  GROQ_API_KEY: {'*' * 8 if s.groq_api_key else 'NOT SET'}")
+        print(f"  GROQ_MODEL: {s.groq_model}")
         if s.effective_huggingface_token:
             print(
                 f"  HF_TTI_MODEL: {s.hf_tti_model} (prefer={s.hf_prefer_if_configured})"

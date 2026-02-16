@@ -42,6 +42,23 @@ from entity_constants import (
 
 logger = logging.getLogger(__name__)
 
+
+def _truncate_error(e: Exception, max_len: int = 120) -> str:
+    """Truncate verbose API error messages (e.g. Gemini 429 JSON) for cleaner logs."""
+    msg = str(e)
+    if len(msg) <= max_len:
+        return msg
+    # Try to extract key info from Gemini 429 errors
+    import re as _re
+    retry_match = _re.search(r'retry\s*(?:in|after|Delay)\s*["\']?([\d.]+)', msg, _re.IGNORECASE)
+    code_match = _re.search(r'(\d{3})\s+(\w[\w_]+)', msg)
+    if code_match:
+        short = f"{code_match.group(1)} {code_match.group(2)}"
+        if retry_match:
+            short += f" (retry in {float(retry_match.group(1)):.0f}s)"
+        return short
+    return msg[:max_len] + '...'
+
 # === Browser Backend Detection ===
 # Try to import both browser backends so we can fall back if one fails
 
@@ -674,6 +691,16 @@ class LinkedInCompanyLookup:
         self._gemini_attempts = 0
         self._gemini_successes = 0
         self._gemini_disabled = False
+
+        # Only use Gemini grounded search when user chose Gemini as LLM provider
+        self._gemini_search_enabled = (
+            self.client is not None
+            and Config.LLM_PROVIDER.lower() in ("gemini", "")
+        )
+        if not self._gemini_search_enabled and self.client is not None:
+            logger.debug(
+                f"Profile search using DuckDuckGo/Bing (LLM_PROVIDER={Config.LLM_PROVIDER})"
+            )
 
         # Rate limiting for search engines to avoid CAPTCHA
         # Basic timing now handled by api_client.browser_limiter
@@ -2841,13 +2868,13 @@ class LinkedInCompanyLookup:
             if id_match:
                 org_id = id_match.group(1)
                 urn = f"urn:li:organization:{org_id}"
-                logger.info(f"Found organization URN via Gemini for {org_slug}: {urn}")
+                logger.debug(f"Found organization URN via Gemini for {org_slug}: {urn}")
                 return urn
 
             return None
 
         except Exception as e:
-            logger.error(f"Error looking up organization URN for {url}: {e}")
+            logger.error(f"Error looking up organization URN for {url}: {_truncate_error(e)}")
             return None
 
     def search_company(
@@ -2871,10 +2898,6 @@ class LinkedInCompanyLookup:
             logger.debug("LinkedIn search disabled (LINKEDIN_SEARCH_ENABLED=false)")
             return (None, None)
 
-        if not self.client:
-            logger.warning("Cannot search - Gemini client not initialized")
-            return (None, None)
-
         if not company_name or not company_name.strip():
             logger.warning("Cannot search - company name is required")
             return (None, None)
@@ -2882,7 +2905,7 @@ class LinkedInCompanyLookup:
         # === Validate org name before searching ===
         # Skip invalid org names (generic terms, materials, person names, etc.)
         if not self._is_valid_org_name(company_name):
-            logger.info(f"Skipping invalid organization name: '{company_name}'")
+            logger.debug(f"Skipping invalid organization name: '{company_name}'")
             return (None, None)
 
         company_name = company_name.strip()
@@ -2893,7 +2916,7 @@ class LinkedInCompanyLookup:
         cached = self._linkedin_cache.get_company(cache_key)
         if cached is not None:
             if cached[0]:  # Has URL
-                logger.info(f"Company cache hit: {company_name} -> {cached[0]}")
+                logger.debug(f"Company cache hit: {company_name} -> {cached[0]}")
                 return (cached[0], cached[1])
             else:
                 logger.debug(
@@ -2905,7 +2928,7 @@ class LinkedInCompanyLookup:
         cached = self._linkedin_cache.get_company(company_name)
         if cached is not None:
             if cached[0]:  # Has URL
-                logger.info(f"Company cache hit: {company_name} -> {cached[0]}")
+                logger.debug(f"Company cache hit: {company_name} -> {cached[0]}")
                 return (cached[0], cached[1])
             else:
                 logger.debug(
@@ -2919,36 +2942,37 @@ class LinkedInCompanyLookup:
         # Track URLs we validate in Playwright fallback to avoid duplicate work
         seen_company_urls: set[str] = set()
 
-        # Try multiple search strategies
-        search_strategies = [
-            # Strategy 1: Direct company name search
-            f'"{company_name}" site:linkedin.com/company OR site:linkedin.com/school',
-            # Strategy 2: Simplified name (remove common suffixes)
-            self._get_simplified_search(company_name),
-            # Strategy 3: Acronym if applicable
-            self._get_acronym_search(company_name),
-            # Strategy 4: Try with common suffixes added (Inc, LLC, etc.)
-            self._get_suffix_search(company_name),
-        ]
+        # Try Gemini with Google Search grounding (only when Gemini is the chosen LLM)
+        if self._gemini_search_enabled:
+            search_strategies = [
+                # Strategy 1: Direct company name search
+                f'"{company_name}" site:linkedin.com/company OR site:linkedin.com/school',
+                # Strategy 2: Simplified name (remove common suffixes)
+                self._get_simplified_search(company_name),
+                # Strategy 3: Acronym if applicable
+                self._get_acronym_search(company_name),
+                # Strategy 4: Try with common suffixes added (Inc, LLC, etc.)
+                self._get_suffix_search(company_name),
+            ]
 
-        # Remove None strategies
-        search_strategies = [s for s in search_strategies if s]
+            # Remove None strategies
+            search_strategies = [s for s in search_strategies if s]
 
-        for i, search_query in enumerate(search_strategies):
-            if i > 0:
-                logger.info(
-                    f"Trying alternative search strategy {i + 1} for: {company_name}"
-                )
+            for i, search_query in enumerate(search_strategies):
+                if i > 0:
+                    logger.info(
+                        f"Trying alternative search strategy {i + 1} for: {company_name}"
+                    )
 
-            url, urn = self._search_with_query(company_name, search_query, validate)
-            if url:
-                elapsed = time.time() - start_time
-                self._timing_stats["company_search"].append(elapsed)
-                return (url, urn)
+                url, urn = self._search_with_query(company_name, search_query, validate)
+                if url:
+                    elapsed = time.time() - start_time
+                    self._timing_stats["company_search"].append(elapsed)
+                    return (url, urn)
 
-            # Small delay between retries
-            if i < len(search_strategies) - 1:
-                time.sleep(0.5)
+                # Small delay between retries
+                if i < len(search_strategies) - 1:
+                    time.sleep(0.5)
 
         # Fallback: Try Playwright/Bing search (most reliable)
         try:
@@ -3140,18 +3164,18 @@ class LinkedInCompanyLookup:
                     )
                     return (linkedin_url, org_urn)
                 else:
-                    logger.info(
+                    logger.debug(
                         f"LinkedIn URL failed validation for {company_name}: {linkedin_url}"
                     )
                     return (None, None)
             else:
-                logger.info(
+                logger.debug(
                     f"Found LinkedIn page for {company_name}: {linkedin_url} (not validated)"
                 )
                 return (linkedin_url, None)
 
         except Exception as e:
-            logger.error(f"Error searching LinkedIn for {company_name}: {e}")
+            logger.error(f"Error searching LinkedIn for {company_name}: {_truncate_error(e)}")
             return (None, None)
 
     def _extract_company_url(self, text: str) -> Optional[str]:
@@ -3225,7 +3249,7 @@ class LinkedInCompanyLookup:
         # === Validate person name before searching ===
         # Skip invalid names like "Individual Researcher", "Staff Writer", etc.
         if not self._is_valid_person_name(name):
-            logger.info(f"Skipping invalid person name: '{name}'")
+            logger.debug(f"Skipping invalid person name: '{name}'")
             return None
 
         # Clean optional parameters - filter out empty strings and literal "None"
@@ -3245,7 +3269,7 @@ class LinkedInCompanyLookup:
         # If we found a profile for this person before (regardless of org), reuse it
         cached_by_name = self._linkedin_cache.get_person_by_name(name_norm)
         if cached_by_name:
-            logger.info(f"Person found in name-only cache: {name} -> {cached_by_name}")
+            logger.debug(f"Person found in name-only cache: {name} -> {cached_by_name}")
             return cached_by_name
 
         # === Use company canonical name for consistent cache keys ===
@@ -3275,9 +3299,9 @@ class LinkedInCompanyLookup:
                 else cached_result
             )
             if cached_url:
-                logger.info(f"Person cache hit: {name} at {company} -> {cached_url}")
+                logger.debug(f"Person cache hit: {name} at {company} -> {cached_url}")
             else:
-                logger.info(
+                logger.debug(
                     f"Person cache hit (not found previously): {name} at {company} - skipping re-search"
                 )
             return cached_url
@@ -3287,7 +3311,7 @@ class LinkedInCompanyLookup:
         # Expand organization abbreviation for search (e.g., "UChicago" -> "University of Chicago")
         search_company = self._expand_org_for_search(company)
         if search_company != company:
-            logger.info(f"Expanded org for search: '{company}' -> '{search_company}'")
+            logger.debug(f"Expanded org for search: '{company}' -> '{search_company}'")
 
         # Build enhanced context for logging
         context_parts = [f"{name} at {search_company}"]
@@ -3346,11 +3370,11 @@ class LinkedInCompanyLookup:
             self._linkedin_cache.set_person_by_name(name_norm, profile_url)
             return profile_url
 
-        # Fallback to Gemini search (skip if disabled due to low success rate)
-        if self._gemini_disabled:
+        # Fallback to Gemini search (skip if disabled or LLM_PROVIDER != gemini)
+        if self._gemini_disabled or not self._gemini_search_enabled:
             elapsed = time.time() - start_time
             self._timing_stats["person_search"].append(elapsed)
-            logger.debug(f"Skipping Gemini fallback (disabled) for {name}")
+            logger.debug(f"Skipping Gemini fallback for {name}")
             # Cache the negative result to avoid re-searching
             self._linkedin_cache.set_person(name_norm, company_cache_key, {"url": None})
             return None
@@ -3457,7 +3481,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
             result = response.text.strip()
 
             if "NOT_FOUND" in result.upper():
-                logger.info(f"Person profile not found: {name} at {company}")
+                logger.debug(f"Person profile not found: {name} at {company}")
                 self._check_gemini_disable()
                 return None
 
@@ -3474,7 +3498,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
             return None
 
         except Exception as e:
-            logger.error(f"Error searching for person {name}: {e}")
+            logger.error(f"Error searching for person {name}: {_truncate_error(e)}")
             self._check_gemini_disable()
             return None
 
@@ -3529,7 +3553,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
             company_words = [w for w in company_lower.split() if len(w) > 2]
 
             result_items = driver.find_elements(By.CSS_SELECTOR, ".b_algo")
-            logger.info(
+            logger.debug(
                 f"Company search: Found {len(result_items)} Bing results for '{company_name}'"
             )
             for item in result_items:
@@ -3556,7 +3580,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                     except Exception:
                         continue
 
-                    logger.info(f"Company search: Decoded URL = {decoded_url[:80]}")
+                    logger.debug(f"Company search: Decoded URL = {decoded_url[:80]}")
 
                     # Check if it's a LinkedIn company or school page
                     if (
@@ -3575,7 +3599,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                         for word in company_words
                         if word in title or word in url_lower
                     )
-                    logger.info(
+                    logger.debug(
                         f"Company search: '{title[:40]}' matches={matches}/{len(company_words)} (need {len(company_words) * 0.5:.0f})"
                     )
                     if matches < len(company_words) * 0.5:
@@ -3643,7 +3667,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                             if (
                                 word_matches >= len(company_words) * 0.3
                             ):  # Looser threshold for fallback
-                                logger.info(
+                                logger.debug(
                                     f"Found company via fallback extraction: {result_url}"
                                 )
                                 return result_url
@@ -3662,12 +3686,12 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                 slug_lower = slug.lower()
                 word_matches = sum(1 for w in company_words if w in slug_lower)
                 if word_matches >= 1:  # At least one word matches
-                    logger.info(
+                    logger.debug(
                         f"Found company via direct URL extraction: {result_url}"
                     )
                     return result_url
 
-            logger.info(
+            logger.debug(
                 f"No matching LinkedIn company found via UC Chrome for '{company_name}'"
             )
 
@@ -3752,11 +3776,11 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
             name_text = profile_name if profile_name else page_title
 
             if not name_text:
-                logger.info(f"Could not extract name from profile page: {profile_url}")
+                logger.debug(f"Could not extract name from profile page: {profile_url}")
                 return False
 
-            # Log what we're comparing at INFO level for visibility
-            logger.info(
+            # Log what we're comparing at DEBUG level
+            logger.debug(
                 f"Profile name on page: '{name_text[:60]}' | Looking for: '{first_name} {last_name}'"
             )
 
@@ -3829,32 +3853,48 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                     # If company validation requested, also check it
                     if company:
                         # Include short company names (like AGC) - use len > 2 instead of > 3
+                        # Exclude generic terms that appear on many profiles
+                        _generic_company_words = {
+                            "inc", "llc", "ltd", "corp", "plc", "the",
+                            "engineering", "technology", "technologies",
+                            "solutions", "services", "systems", "group",
+                            "international", "global", "national",
+                            "research", "institute", "consulting",
+                        }
                         company_words = [
                             w.lower()
                             for w in company.split()
                             if len(w) > 2
-                            and w.lower()
-                            not in ("inc", "llc", "ltd", "corp", "plc", "the")
+                            and w.lower() not in _generic_company_words
                         ]
-                        # Check both page text AND experience section for company match
-                        # This handles people who previously worked at the company
-                        company_match = any(word in page_text for word in company_words)
+                        # If all company words were filtered out (e.g. company is just "Engineering"),
+                        # require the full company name as a phrase instead
+                        if not company_words and company.strip():
+                            company_match = company.strip().lower() in page_text
+                        else:
+                            # Check both page text AND experience section for company match
+                            # This handles people who previously worked at the company
+                            company_match = any(word in page_text for word in company_words)
 
                         # Also explicitly check Experience section for past employment
                         if not company_match:
                             experience_text = self._extract_experience_section(driver)
                             if experience_text:
-                                company_match = any(
-                                    word in experience_text.lower()
-                                    for word in company_words
-                                )
+                                exp_lower = experience_text.lower()
+                                if not company_words and company.strip():
+                                    company_match = company.strip().lower() in exp_lower
+                                else:
+                                    company_match = any(
+                                        word in exp_lower
+                                        for word in company_words
+                                    )
                                 if company_match:
                                     logger.debug(
                                         f"Company '{company}' found in Experience section (past employment)"
                                     )
 
                         if not company_match:
-                            logger.info(
+                            logger.debug(
                                 f"  -> Company mismatch: '{company}' (words: {company_words}) not found on profile"
                             )
                             return False
@@ -3862,15 +3902,15 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                 else:
                     # Log which name part failed - use INFO for visibility
                     if not first_match and not last_match:
-                        logger.info(
+                        logger.debug(
                             f"  -> Name mismatch: neither '{first_name}' nor '{last_name}' found in '{name_text[:60]}'"
                         )
                     elif not first_match:
-                        logger.info(
+                        logger.debug(
                             f"  -> Name mismatch: first '{first_name}' not in '{name_text[:60]}' (last matched)"
                         )
                     else:
-                        logger.info(
+                        logger.debug(
                             f"  -> Name mismatch: last '{last_name}' not in '{name_text[:60]}' (first matched)"
                         )
                     return False
@@ -3917,7 +3957,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                 return True
 
         except Exception as e:
-            logger.info(f"  -> Validation error for {profile_url}: {e}")
+            logger.debug(f"  -> Validation error for {profile_url}: {e}")
             return False
 
     def _extract_experience_section(self, driver: Any) -> str:
@@ -4028,7 +4068,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
             f"https://www.linkedin.com/search/results/people/?keywords={encoded_query}"
         )
 
-        logger.info(f"LinkedIn direct search URL: {linkedin_search_url}")
+        logger.debug(f"LinkedIn direct search URL: {linkedin_search_url}")
 
         try:
             logger.debug("LinkedIn direct: Navigating to search page...")
@@ -4040,7 +4080,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
             current_url = driver.current_url.lower()
             logger.debug(f"LinkedIn direct: Current URL = {current_url[:100]}...")
             if "/login" in current_url or "/authwall" in current_url:
-                logger.info("LinkedIn login required for direct search")
+                logger.debug("LinkedIn login required for direct search")
                 if not self._ensure_linkedin_login(driver):
                     return None
                 # Retry the search after login
@@ -4055,7 +4095,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                 pass
 
             page_source = driver.page_source
-            logger.info(f"LinkedIn direct: Got page source, length={len(page_source)}")
+            logger.debug(f"LinkedIn direct: Got page source, length={len(page_source)}")
 
             # Extract profile URLs from LinkedIn search results
             # LinkedIn search results have links like /in/username in the result cards
@@ -4081,7 +4121,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
             for pattern, pattern_name in patterns:
                 matches = re.findall(pattern, page_source)
                 if matches:
-                    logger.info(
+                    logger.debug(
                         f"LinkedIn direct: Pattern '{pattern_name}' found {len(matches)} matches"
                     )
                 for match in matches:
@@ -4094,7 +4134,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                     if url not in profile_urls:
                         profile_urls.append(url)
                         slug = url.split("/in/")[-1] if "/in/" in url else url
-                        logger.info(f"    -> {slug[:50]}")
+                        logger.debug(f"    -> {slug[:50]}")
 
             # Also try to find profile links via data attributes or other patterns
             # LinkedIn may use data-control-id or other attributes
@@ -4119,15 +4159,15 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                         if url not in profile_urls:
                             profile_urls.append(url)
                 if profile_urls:
-                    logger.info(
+                    logger.debug(
                         f"LinkedIn direct: Broad pattern found {len(profile_urls)} profiles"
                     )
                     for url in profile_urls[:5]:
                         slug = url.split("/in/")[-1]
-                        logger.info(f"    -> {slug[:50]}")
+                        logger.debug(f"    -> {slug[:50]}")
 
             if not profile_urls:
-                logger.info(
+                logger.debug(
                     f"LinkedIn direct search: no profile URLs found for '{name}'"
                 )
                 # Log a sample of the page source to help debug
@@ -4136,7 +4176,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                 )
                 return None
 
-            logger.info(
+            logger.debug(
                 f"LinkedIn direct search: found {len(profile_urls)} unique profile URLs"
             )
 
@@ -4290,7 +4330,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
         # Only use for full name searches (not surname-only fallback)
         # Can be disabled via SKIP_LINKEDIN_DIRECT_SEARCH to avoid LinkedIn rate limits
         if not Config.SKIP_LINKEDIN_DIRECT_SEARCH and not is_single_name and company:
-            logger.info(
+            logger.debug(
                 f"LinkedIn direct search for '{normalized_name or name}' at '{company}'"
             )
             linkedin_result = self._search_person_linkedin_direct(
@@ -4309,9 +4349,9 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
 
         # === FALLBACK: Google/Bing Search ===
         # Build search queries - try quoted first (more precise), then unquoted (more lenient)
-        # This helps find profiles where Google doesn't honor exact phrase matching
+        # Format: site:linkedin.com/in "name" "organization"
 
-        # Build quoted query (primary - more precise)
+        # Build quoted query (primary - most precise, no location to avoid over-restricting)
         parts_quoted = []
         # Use normalized name in search queries to avoid noise from suffixes/credentials
         query_name = normalized_name if normalized_name else name.strip()
@@ -4322,10 +4362,6 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
             parts_quoted.append(
                 f'"{company.strip()}"'
             )  # Quote organization name for exact match
-        if location and location.strip():
-            location_parts = location.split(",")
-            if location_parts and location_parts[0].strip():
-                parts_quoted.append(location_parts[0].strip())
         parts_quoted.append("site:linkedin.com/in")
         quoted_query = " ".join(parts_quoted)
 
@@ -4358,8 +4394,22 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
         # "gregory stephanopoulos" "MIT Department of Chemical Engineering" fails
         simple_query = f'"{query_name}" site:linkedin.com/in' if query_name else ""
 
+        # Build natural language query for DuckDuckGo
+        # DDG's semantic search handles "find the linkedin profile of X at Y" well
+        # and can surface profiles that site: operator misses
+        nl_parts = [f'"{query_name}"']
+        if company and company.strip():
+            nl_parts.append(company.strip())
+        if location and location.strip():
+            location_parts_nl = location.split(",")
+            if location_parts_nl and location_parts_nl[0].strip():
+                nl_parts.append(location_parts_nl[0].strip())
+        nl_parts.append("LinkedIn profile")
+        natural_query = " ".join(nl_parts) if query_name else ""
+
         # Try multiple query strategies in order of specificity
         search_queries = [
+            ("natural", natural_query),  # Natural language (DDG-friendly, best results)
             ("quoted", quoted_query),
             ("unquoted", unquoted_query),
             ("location", location_query),  # Name + location (no org)
@@ -4403,7 +4453,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                     extra_delay = (
                         12 + random.random() * 8
                     )  # 12-20 seconds extra (was 8-15)
-                    logger.info(
+                    logger.debug(
                         f"Taking {extra_delay:.0f}s break after {self._consecutive_searches} searches"
                     )
                     time.sleep(extra_delay)
@@ -4570,14 +4620,14 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                 )
                 linkedin_urls.extend(direct_urls)
                 if direct_urls:
-                    logger.info(
+                    logger.debug(
                         f"{used_engine}: Pattern 1 (direct URLs) found {len(direct_urls)} URLs"
                     )
                     for url in direct_urls[:3]:
                         slug = (
                             url.split("/in/")[-1].rstrip("/") if "/in/" in url else url
                         )
-                        logger.info(f"    -> {slug}")
+                        logger.debug(f"    -> {slug}")
 
                 # Pattern 2: URL-encoded redirects (for Bing click-tracking)
                 encoded_urls = re.findall(
@@ -4589,11 +4639,11 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                     if url not in linkedin_urls:
                         linkedin_urls.append(url)
                 if encoded_urls:
-                    logger.info(
+                    logger.debug(
                         f"{used_engine}: Pattern 2 (encoded URLs) found {len(encoded_urls)} slugs"
                     )
                     for slug in encoded_urls[:3]:
-                        logger.info(f"    -> {slug}")
+                        logger.debug(f"    -> {slug}")
 
                 # Pattern 3: Bing wraps URLs in their redirect format
                 # e.g., href="https://www.bing.com/ck/a?...&u=a1aHR0cHM6Ly93d3cubGlua2VkaW4uY29tL2luL3VzZXJuYW1l..."
@@ -4620,12 +4670,12 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                     except Exception:
                         pass
                 if bing_found:
-                    logger.info(
+                    logger.debug(
                         f"{used_engine}: Pattern 3 (Bing base64) found {len(bing_found)} URLs"
                     )
                     for url in bing_found[:3]:
                         slug = url.split("/in/")[-1] if "/in/" in url else url
-                        logger.info(f"    -> {slug}")
+                        logger.debug(f"    -> {slug}")
 
                 # Pattern 4: DuckDuckGo wraps URLs in redirect format
                 # e.g., uddg=https%3A%2F%2Fwww.linkedin.com%2Fin%2Fphillip-savage-131a8184
@@ -4645,21 +4695,21 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                     except Exception:
                         pass
                 if ddg_found:
-                    logger.info(
+                    logger.debug(
                         f"{used_engine}: Pattern 4 (DDG uddg) found {len(ddg_found)} URLs"
                     )
                     for url in ddg_found[:3]:
                         slug = url.split("/in/")[-1] if "/in/" in url else url
-                        logger.info(f"    -> {slug}")
+                        logger.debug(f"    -> {slug}")
 
                 # Log summary of all patterns
-                logger.info(
+                logger.debug(
                     f"{used_engine}: Total URLs found: {len(linkedin_urls)} (P1:{len(direct_urls)} P2:{len(encoded_urls)} P3:{len(bing_found) if 'bing_found' in dir() else 0} P4:{len(ddg_found) if 'ddg_found' in dir() else 0})"
                 )
 
                 # Log how many URLs found (INFO level for visibility)
                 if not linkedin_urls:
-                    logger.info(
+                    logger.debug(
                         f"No LinkedIn URLs found in search results for '{name}'"
                     )
                     # Check if page has any content
@@ -4670,13 +4720,12 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                     # Log a snippet of the page source for debugging
                     logger.debug(f"Page source snippet: {page_source[:500]}...")
                 else:
-                    # Log at INFO level to see what profiles are found
-                    logger.info(
+                    logger.debug(
                         f"Found {len(linkedin_urls)} LinkedIn URLs in search results for '{name}'"
                     )
                     for idx, url in enumerate(linkedin_urls[:5], 1):
                         slug = url.split("/in/")[-1] if "/in/" in url else url
-                        logger.info(f"  [{idx}] {slug}")
+                        logger.debug(f"  [{idx}] {slug}")
 
                 # Deduplicate while preserving order
                 seen = set()
@@ -4789,7 +4838,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                                     if "/in/" in linkedin_url
                                     else linkedin_url
                                 )
-                                logger.info(
+                                logger.debug(
                                     f"Skipping {slug} - last name '{last_name}' missing in URL ({url_text}) and text"
                                 )
                                 continue
@@ -4801,7 +4850,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                                     if "/in/" in linkedin_url
                                     else linkedin_url
                                 )
-                                logger.info(
+                                logger.debug(
                                     f"Skipping {slug} - first name '{first_name}' missing in URL ({url_text}) and text"
                                 )
                                 continue
@@ -5075,11 +5124,11 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                             if "/in/" in url
                             else url
                         )
-                        logger.info(
+                        logger.debug(
                             f"  [{i + 1}] {slug} (score={score}, matched: {kws})"
                         )
                 else:
-                    logger.info(
+                    logger.debug(
                         f"No candidates passed filtering for '{name}' ({query_type} query)"
                     )
 
@@ -5129,12 +5178,10 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                     seen_urls.add(candidate_url)
 
                     # FINAL VALIDATION: Visit the profile page and verify the name
-                    # For lower-confidence matches, also verify company appears on profile
-                    # This catches false positives from lowered thresholds
-                    # For single-name searches, always require company validation
-                    validation_company = (
-                        company if is_single_name or candidate_score < 4 else None
-                    )
+                    # Always verify company appears on profile when company is known.
+                    # This catches false positives, especially for common names
+                    # or when org matching was relaxed on retry.
+                    validation_company = company
                     # Log validation attempt at INFO level
                     slug = (
                         candidate_url.split("/in/")[-1].split("/")[0]
@@ -5333,8 +5380,8 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                     )
                     return (url, candidate_slug)
 
-        # Strategy 2: Fall back to Gemini search
-        if not self.client:
+        # Strategy 2: Fall back to Gemini search (only when Gemini is the chosen LLM)
+        if not self._gemini_search_enabled:
             return (None, None)
 
         parent_slug_line = f"Parent LinkedIn slug: {parent_slug}" if parent_slug else ""
@@ -5390,7 +5437,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
         except Exception as e:
             elapsed = time.time() - start_time
             self._timing_stats["department_search"].append(elapsed)
-            logger.error(f"Error searching for department {department}: {e}")
+            logger.error(f"Error searching for department {department}: {_truncate_error(e)}")
             return (None, None)
 
     def populate_company_profiles(
@@ -5426,7 +5473,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                 companies.add(company)
 
         if not companies:
-            logger.info("No companies found in people list")
+            logger.debug("No companies found in people list")
             return (0, 0, {})
 
         companies_found = 0
@@ -5442,7 +5489,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
             cached = self._linkedin_cache.get_company(cache_key)
             if cached is not None:
                 if cached[0]:  # Has URL
-                    logger.info(f"Company cache hit: {company} -> {cached[0]}")
+                    logger.debug(f"Company cache hit: {company} -> {cached[0]}")
                     company_data[company] = cached
                     companies_found += 1
                 else:
@@ -5454,7 +5501,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
             cached = self._linkedin_cache.get_company(company)
             if cached is not None:
                 if cached[0]:  # Has URL
-                    logger.info(f"Company cache hit: {company} -> {cached[0]}")
+                    logger.debug(f"Company cache hit: {company} -> {cached[0]}")
                     company_data[company] = cached
                     companies_found += 1
                 else:
@@ -5533,7 +5580,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                         else cached_result
                     )
                     if cached_url:
-                        logger.info(
+                        logger.debug(
                             f"Level 1: Cache hit for {name} at {company} -> {cached_url}"
                         )
                         person["linkedin_profile"] = cached_url
@@ -5550,7 +5597,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                         )
                         continue  # Skip - we already know this person can't be found
 
-                logger.info(
+                logger.debug(
                     f"Level 1: Searching for personal profile: {name} at {company}"
                 )
                 person_url = self.search_person(
@@ -5592,7 +5639,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                     # Cache hit
                     cached_dept = department_cache[dept_cache_key]
                     if cached_dept[0]:
-                        logger.info(
+                        logger.debug(
                             f"Level 2: Cache hit for {dept_for_lookup}@{company} -> {cached_dept[0]}"
                         )
                     else:
@@ -5606,7 +5653,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
                     if company in company_data:
                         parent_slug = company_data[company][1]
 
-                    logger.info(
+                    logger.debug(
                         f"Level 2: Looking for department page: {dept_for_lookup} at {company}"
                     )
                     dept_url, dept_slug = self.search_department(
@@ -5645,7 +5692,7 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
             # ============================================================
             if company in company_data:
                 url, slug, urn = company_data[company]
-                logger.info(
+                logger.debug(
                     f"Level 3: Using organization fallback for {name}: {company}"
                 )
                 if not person.get("linkedin_profile", "").strip():

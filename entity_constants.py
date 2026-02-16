@@ -99,6 +99,57 @@ INVALID_ORG_NAMES: set[str] = {
     "freelance",
     "self-employed",
     "retired",
+    # Generic industry terms / categories (not organizations)
+    "diy",
+    "esg",
+    # Common abbreviations that aren't organizations
+    "sec",  # Size-Exclusion Chromatography
+    "gpc",  # Gel Permeation Chromatography
+    "hplc",
+    "gc",
+    "ms",
+    "nmr",
+    "xrd",
+    "sem",
+    "tem",
+    "ftir",
+    "uv",
+    "ir",
+    # Countries (not organizations)
+    "china",
+    "usa",
+    "uk",
+    "india",
+    "japan",
+    "germany",
+    "france",
+    "brazil",
+    "australia",
+    "canada",
+    "russia",
+    "korea",
+    "europe",
+    "asia",
+    "africa",
+    # Newspaper / media outlets (lookups usually find wrong people)
+    # Include both "the X" and "X" forms since clean_org_name strips leading "the "
+    "the tennessean",
+    "tennessean",
+    "the oklahoman",
+    "oklahoman",
+    "azcentral",
+    "the guardian",
+    "guardian",
+    "the times",
+    "times",
+    "reuters",
+    "bbc",
+    "cnn",
+    "fox news",
+    # Industry publications
+    "c&en",
+    "chemical & engineering news",
+    "chemical and engineering news",
 }
 
 # =============================================================================
@@ -139,6 +190,27 @@ INVALID_ORG_PATTERNS: list[str] = [
     r"^japan\s+",  # "Japan Creates"
     r"\bnot\s+applicable\b",  # AI explanation text
     r"^not\s+",  # "Not applicable", "Not specified"
+    # Product / market / technology names (not real organizations)
+    r"\bmarket\b",  # "Wear-Resistant Coatings Market", "Water Treatment Market"
+    r"\btechnology$",  # "Foam Sealant Technology" but not "Massachusetts Institute of Technology"
+    r"\btechnologies$",  # "Advanced Technologies" (standalone, not company suffix)
+    r"\brisk\b",  # "Corrosion Risk"
+    r"\btrend",  # "Market Trends"
+    r"\bgrowth\b",  # "Market Growth"
+    r"\bforecast\b",  # "Market Forecast"
+    r"\banalysis\b",  # "Market Analysis"
+    r"\boutlook\b",  # "Industry Outlook"
+    r"\badvancements?\b",  # "Advancements in ..."
+    r"\binnovation",  # "Innovation", "Innovations"
+    r"\bsolution",  # "Solutions" (standalone topic)
+    r"\bchalleng",  # "Challenges"
+    # Event names (not orgs — we want the organizing body, not the event)
+    r"\bfair\b",  # "China International Chemical Technology & Equipment Fair"
+    r"\bsymposium\b",  # "Global Solutions Symposium"
+    r"\bconference\b",  # "International Conference on ..."
+    r"\bexpo\b",  # "World Expo"
+    r"\bsummit\b",  # "Global Summit"
+    r"\bwebinar\b",  # "Industry Webinar"
 ]
 
 # =============================================================================
@@ -211,9 +283,45 @@ VALID_SINGLE_WORD_ORGS: set[str] = {
 }
 
 
+def clean_org_name(name: str) -> str:
+    """Normalize an organization name by stripping common noise.
+
+    - Strips leading/trailing whitespace
+    - Removes leading "the " (case-insensitive)
+    - Removes trailing possessive 's
+    - Collapses repeated whitespace
+
+    Args:
+        name: Raw organization name from LLM
+
+    Returns:
+        Cleaned name, or empty string if input is empty
+    """
+    import re as _re
+
+    if not name:
+        return ""
+
+    cleaned = name.strip()
+
+    # Remove trailing possessive ('s or \u2019s)
+    cleaned = _re.sub(r"[\u2019']s$", "", cleaned)
+
+    # Remove leading "the " (case-insensitive)
+    if cleaned.lower().startswith("the "):
+        cleaned = cleaned[4:]
+
+    # Collapse whitespace
+    cleaned = _re.sub(r"\s+", " ", cleaned).strip()
+
+    return cleaned
+
+
 def is_invalid_org_name(name: str) -> bool:
     """
     Check if a name is an invalid organization name.
+
+    Applies cleaning first, then checks against known-bad names and patterns.
 
     Args:
         name: Organization name to check
@@ -226,7 +334,18 @@ def is_invalid_org_name(name: str) -> bool:
     if not name:
         return True
 
-    normalized = name.lower().strip()
+    normalized = clean_org_name(name).lower()
+
+    if not normalized:
+        return True
+
+    # Reject very long names — likely headline fragments, not org names
+    if len(normalized) > 60:
+        return True
+
+    # Reject single-character names
+    if len(normalized) <= 1:
+        return True
 
     # Check against invalid names set
     if normalized in INVALID_ORG_NAMES:

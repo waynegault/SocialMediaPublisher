@@ -21,7 +21,7 @@ import random
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import requests
 
@@ -71,24 +71,19 @@ class LinkedInVoyagerClient:
     # API endpoints
     API_BASE_URL = "https://www.linkedin.com/voyager/api"
 
-    # Default headers to mimic browser - must match real Chrome headers closely
+    # Minimal headers — matches the proven open-linkedin-api approach.
+    # Extra browser-fingerprinting headers (Sec-*, X-Li-Track, X-Li-Page-Instance,
+    # Referer, Origin) actually trigger LinkedIn's anti-bot detection for search
+    # endpoints because the static values don't match a real browser's dynamic state.
     DEFAULT_HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Accept": "application/vnd.linkedin.normalized+json+2.1",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "X-Li-Lang": "en_US",
-        "X-Li-Page-Instance": "urn:li:page:d_flagship3_search_srp_people;",
-        "X-Li-Track": '{"clientVersion":"1.13.0","mpVersion":"1.13.0","osName":"web","timezoneOffset":-5,"deviceFormFactor":"DESKTOP","mpName":"voyager-web"}',
-        "X-Restli-Protocol-Version": "2.0.0",
-        "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin",
-        "Referer": "https://www.linkedin.com/search/results/people/",
-        "Origin": "https://www.linkedin.com",
+        "user-agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/133.0.0.0 Safari/537.36"
+        ),
+        "accept-language": "en-US,en;q=0.9",
+        "x-li-lang": "en_US",
+        "x-restli-protocol-version": "2.0.0",
     }
 
     def __init__(
@@ -205,9 +200,16 @@ class LinkedInVoyagerClient:
         """
         Make an authenticated request to LinkedIn Voyager API.
 
+        LinkedIn's Voyager API uses Rest.li format for query parameters,
+        which includes literal ``()``, ``:``, and ``,`` characters. The
+        ``requests`` library percent-encodes these, causing 400 errors.
+
+        This method builds the URL manually with ``urlencode(safe="(),:")``
+        and then overrides the prepared request URL to prevent re-encoding.
+
         Args:
             endpoint: API endpoint (relative to API_BASE_URL)
-            params: Query parameters
+            params: Query parameters (for GET, encoded with restli-safe chars)
             method: HTTP method
 
         Returns:
@@ -222,13 +224,48 @@ class LinkedInVoyagerClient:
 
         self._rate_limit()
 
-        url = f"{self.API_BASE_URL}{endpoint}"
+        base_url = f"{self.API_BASE_URL}{endpoint}"
 
         try:
             if method == "GET":
-                response = self._session.get(url, params=params, timeout=30)
+                if params:
+                    # Build URL manually to preserve restli-format characters.
+                    # urlencode with safe="(),:" keeps (key:value,List(...))
+                    # intact while still encoding spaces → %20, etc.
+                    # quote_via=quote gives %20 for spaces (not +).
+                    qs = urlencode(params, safe="(),:", quote_via=quote)
+                    raw_url = f"{base_url}?{qs}"
+                else:
+                    raw_url = base_url
+
+                # Use PreparedRequest so session cookies/headers are attached,
+                # then override .url to prevent requests from re-encoding it.
+                req = requests.Request("GET", raw_url)
+                prepared = self._session.prepare_request(req)
+                prepared.url = raw_url
+                response = self._session.send(
+                    prepared, timeout=30, allow_redirects=False
+                )
             else:
-                response = self._session.post(url, json=params, timeout=30)
+                response = self._session.post(
+                    base_url, json=params, timeout=30, allow_redirects=False
+                )
+
+            # 302 with cookie deletion = expired authentication
+            if response.status_code in (301, 302):
+                location = response.headers.get("Location", "")
+                set_cookie = response.headers.get("Set-Cookie", "")
+                request_url = response.request.url or ""
+                if "delete me" in set_cookie or location == request_url:
+                    logger.error(
+                        "LinkedIn cookies expired — re-enter them via "
+                        "action 7 in the menu"
+                    )
+                else:
+                    logger.debug(
+                        f"LinkedIn API {endpoint} redirected to {location[:120]}"
+                    )
+                return None
 
             # Check for challenge/auth issues
             if response.status_code == 401:
@@ -257,44 +294,69 @@ class LinkedInVoyagerClient:
             api_client.linkedin_limiter.on_success(endpoint="voyager")
             return response.json()
 
+        except requests.exceptions.TooManyRedirects:
+            logger.error(
+                "LinkedIn redirect loop — cookies likely expired. "
+                "Re-enter them via action 7 in the menu."
+            )
+            return None
         except requests.exceptions.RequestException as e:
             logger.error(f"Request failed: {e}")
             return None
 
     def is_authenticated(self) -> bool:
-        """Check if the client is properly authenticated."""
+        """Check if the client is properly authenticated.
+
+        Uses ``allow_redirects=False`` so that a 302 with cookie deletion
+        is detected as expired auth instead of causing a redirect loop.
+        """
         if not self._session or not self.li_at:
             return False
 
-        # Try multiple endpoints as LinkedIn may deprecate them
-        test_endpoints = [
-            "/me",
-            "/identity/dash/profiles",
-            "/voyagerIdentityDashProfiles",
-            "/voyagerRelationshipsDashMemberRelationships",  # New endpoint
-        ]
+        # /me is the most reliable lightweight auth check
+        try:
+            url = f"{self.API_BASE_URL}/me"
+            response = self._session.get(
+                url, timeout=10, allow_redirects=False
+            )
+            if response.status_code == 200:
+                logger.info("Authentication verified via /me")
+                return True
 
-        for endpoint in test_endpoints:
-            try:
-                url = f"{self.API_BASE_URL}{endpoint}"
-                response = self._session.get(url, timeout=10)
-                if response.status_code == 200:
-                    logger.info(f"Authentication verified via {endpoint}")
-                    return True
-                elif response.status_code in (401, 403):
-                    # 403 on some endpoints doesn't mean not authenticated
-                    logger.debug(f"Endpoint {endpoint}: {response.status_code}")
-                    continue
-                # 410 means endpoint deprecated, try next
-            except Exception:
-                continue
+            # 302 with "delete me" cookie = expired session
+            if response.status_code in (301, 302):
+                set_cookie = response.headers.get("Set-Cookie", "")
+                if "delete me" in set_cookie:
+                    logger.warning(
+                        "LinkedIn cookies expired (server deleted li_at)"
+                    )
+                    return False
+                logger.debug(f"/me returned {response.status_code} redirect")
 
-        # If all endpoints failed with non-auth errors, assume cookies are valid
-        # and let actual API calls determine if auth works
-        logger.info(
-            "Could not verify auth via test endpoints, will try actual requests"
-        )
-        return True
+            if response.status_code in (401, 403):
+                logger.warning(f"/me returned {response.status_code} — not authenticated")
+                return False
+
+        except requests.exceptions.TooManyRedirects:
+            logger.warning("LinkedIn redirect loop — cookies expired")
+            return False
+        except Exception as e:
+            logger.debug(f"Auth check failed: {e}")
+
+        # Fallback: try another endpoint
+        try:
+            url = f"{self.API_BASE_URL}/identity/dash/profiles"
+            response = self._session.get(
+                url, timeout=10, allow_redirects=False
+            )
+            if response.status_code == 200:
+                logger.info("Authentication verified via /identity/dash/profiles")
+                return True
+        except Exception:
+            pass
+
+        logger.warning("Could not verify authentication — cookies may be expired")
+        return False
 
     def search_people(
         self,
@@ -343,41 +405,52 @@ class LinkedInVoyagerClient:
 
         query_string = " ".join(keyword_parts) if keyword_parts else ""
 
-        # Try multiple search endpoints
+        # Build filter list (matches open-linkedin-api format)
+        filters = ["(key:resultType,value:List(PEOPLE))"]
+        if current_company:
+            stringify = ",".join(current_company)
+            filters.append(f"(key:currentCompany,value:List({stringify}))")
+        if regions:
+            stringify = ",".join(regions)
+            filters.append(f"(key:geoUrn,value:List({stringify}))")
+
+        filter_str = f"List({','.join(filters)})"
+
+        keywords_part = f"keywords:{query_string}," if query_string else ""
+
+        # Try graphql first (proven approach from open-linkedin-api), then
+        # dash/clusters as fallback.
+        count = min(limit, 49)  # LinkedIn max is 49 per page
         endpoints_to_try = [
-            # Current LinkedIn search endpoint
+            # GraphQL — the approach used by open-linkedin-api
+            (
+                "/graphql",
+                {
+                    "variables": (
+                        f"(start:0,origin:GLOBAL_SEARCH_HEADER,"
+                        f"query:({keywords_part}"
+                        f"flagshipSearchIntent:SEARCH_SRP,"
+                        f"queryParameters:{filter_str},"
+                        f"includeFiltersInResponse:false))"
+                    ),
+                    "queryId": "voyagerSearchDashClusters.b0928897b71bd00a5a7291755dcd64f0",
+                },
+            ),
+            # Dash clusters fallback
             (
                 "/search/dash/clusters",
                 {
                     "decorationId": "com.linkedin.voyager.dash.deco.search.SearchClusterCollection-175",
                     "origin": "GLOBAL_SEARCH_HEADER",
                     "q": "all",
-                    "query": f"(keywords:{quote(query_string)},flagshipSearchIntent:SEARCH_SRP,queryParameters:(resultType:List(PEOPLE)))",
+                    "query": (
+                        f"({keywords_part}"
+                        f"flagshipSearchIntent:SEARCH_SRP,"
+                        f"queryParameters:{filter_str},"
+                        f"includeFiltersInResponse:false)"
+                    ),
                     "start": 0,
-                    "count": min(limit, 25),
-                },
-            ),
-            # Alternative blended search
-            (
-                "/search/blended",
-                {
-                    "keywords": query_string,
-                    "origin": "GLOBAL_SEARCH_HEADER",
-                    "q": "all",
-                    "filters": "List(resultType->PEOPLE)",
-                    "start": 0,
-                    "count": min(limit, 25),
-                },
-            ),
-            # Legacy typeahead
-            (
-                "/typeahead/hitsV2",
-                {
-                    "keywords": query_string,
-                    "origin": "GLOBAL_SEARCH_HEADER",
-                    "q": "type",
-                    "type": "PEOPLE",
-                    "count": min(limit, 10),
+                    "count": count,
                 },
             ),
         ]
@@ -393,35 +466,38 @@ class LinkedInVoyagerClient:
         return []
 
     def _parse_people_results(self, data: dict) -> list[LinkedInProfile]:
-        """Parse people search results from Voyager API response."""
+        """Parse people search results from Voyager API response.
+
+        Handles two response formats:
+        1. ``included`` array (dash/clusters endpoint) — items typed as
+           ``SearchNormalizedPerson`` or ``EntityResult``.
+        2. ``data.searchDashClustersByAll`` (graphql endpoint) — items
+           nested under ``elements[].items[].item.entityResult``.
+        """
         people: list[LinkedInProfile] = []
 
         try:
-            # Navigate the GraphQL response structure
+            # --- Format 1: included array (dash/clusters) ---
             included = data.get("included", [])
 
             for item in included:
-                if (
-                    item.get("$type")
-                    == "com.linkedin.voyager.dash.search.SearchNormalizedPerson"
-                ):
-                    # Extract person data
+                item_type = item.get("$type", "")
+
+                # Original format: SearchNormalizedPerson
+                if "SearchNormalizedPerson" in item_type:
                     person_data = item.get("person", {})
 
                     urn_id = ""
                     public_id = ""
 
-                    # Extract URN from entityUrn
                     entity_urn = item.get("entityUrn", "")
                     if "fsd_profile:" in entity_urn:
                         public_id = entity_urn.split("fsd_profile:")[-1]
 
-                    # Try to get full URN ID
                     object_urn = item.get("objectUrn", "")
                     if "urn:li:member:" in object_urn:
                         urn_id = object_urn.split("urn:li:member:")[-1]
 
-                    # Get name components
                     first_name = person_data.get("firstName", "")
                     last_name = person_data.get("lastName", "")
                     full_name = f"{first_name} {last_name}".strip()
@@ -429,10 +505,7 @@ class LinkedInVoyagerClient:
                     if not full_name:
                         full_name = item.get("title", {}).get("text", "")
 
-                    # Get headline (current position)
                     headline = item.get("primarySubtitle", {}).get("text", "")
-
-                    # Get location
                     location = item.get("secondarySubtitle", {}).get("text", "")
 
                     if public_id or full_name:
@@ -447,6 +520,98 @@ class LinkedInVoyagerClient:
                                 location=location,
                             )
                         )
+
+                # Newer format: EntityResult in included array
+                elif "EntityResult" in item_type:
+                    title_obj = item.get("title", {})
+                    full_name = title_obj.get("text", "") if isinstance(title_obj, dict) else ""
+                    headline = ""
+                    location = ""
+                    sub = item.get("primarySubtitle", {})
+                    if isinstance(sub, dict):
+                        headline = sub.get("text", "")
+                    sec_sub = item.get("secondarySubtitle", {})
+                    if isinstance(sec_sub, dict):
+                        location = sec_sub.get("text", "")
+
+                    public_id = ""
+                    urn_id = ""
+                    nav_url = item.get("navigationUrl", "")
+                    if "/in/" in nav_url:
+                        public_id = nav_url.split("/in/")[-1].split("?")[0].strip("/")
+                    entity_urn = item.get("entityUrn", "")
+                    if "fsd_profile:" in entity_urn:
+                        public_id = public_id or entity_urn.split("fsd_profile:")[-1]
+
+                    if full_name:
+                        people.append(
+                            LinkedInProfile(
+                                urn_id=urn_id,
+                                public_id=public_id,
+                                full_name=full_name,
+                                first_name="",
+                                last_name="",
+                                headline=headline,
+                                location=location,
+                            )
+                        )
+
+            # --- Format 2: graphql structured data ---
+            if not people:
+                clusters = (
+                    data.get("data", {})
+                    .get("searchDashClustersByAll", {})
+                )
+                if clusters and isinstance(clusters, dict):
+                    for element in clusters.get("elements", []):
+                        for item_wrapper in element.get("items", []):
+                            entity = (
+                                item_wrapper.get("item", {})
+                                .get("entityResult", {})
+                            )
+                            if not entity:
+                                continue
+
+                            title_obj = entity.get("title", {})
+                            full_name = (
+                                title_obj.get("text", "")
+                                if isinstance(title_obj, dict) else ""
+                            )
+                            headline = ""
+                            location = ""
+                            sub = entity.get("primarySubtitle", {})
+                            if isinstance(sub, dict):
+                                headline = sub.get("text", "")
+                            sec_sub = entity.get("secondarySubtitle", {})
+                            if isinstance(sec_sub, dict):
+                                location = sec_sub.get("text", "")
+
+                            public_id = ""
+                            nav_url = entity.get("navigationUrl", "")
+                            if "/in/" in nav_url:
+                                public_id = (
+                                    nav_url.split("/in/")[-1]
+                                    .split("?")[0]
+                                    .strip("/")
+                                )
+                            entity_urn = entity.get("entityUrn", "")
+                            if "fsd_profile:" in entity_urn:
+                                public_id = public_id or entity_urn.split(
+                                    "fsd_profile:"
+                                )[-1]
+
+                            if full_name:
+                                people.append(
+                                    LinkedInProfile(
+                                        urn_id="",
+                                        public_id=public_id,
+                                        full_name=full_name,
+                                        first_name="",
+                                        last_name="",
+                                        headline=headline,
+                                        location=location,
+                                    )
+                                )
 
         except Exception as e:
             logger.error(f"Error parsing people results: {e}")
@@ -473,68 +638,142 @@ class LinkedInVoyagerClient:
             logger.info("LinkedIn search disabled (LINKEDIN_SEARCH_ENABLED=false)")
             return []
 
-        params = {
-            "decorationId": "com.linkedin.voyager.dash.deco.search.SearchClusterCollection-175",
-            "origin": "FACETED_SEARCH",
-            "q": "all",
-            "query": f"(keywords:{quote(keywords)},flagshipSearchIntent:SEARCH_SRP,queryParameters:(resultType:List(COMPANIES)))",
-            "start": 0,
-            "count": min(limit, 25),
-        }
+        filter_str = "List((key:resultType,value:List(COMPANIES)))"
+        keywords_part = f"keywords:{keywords}," if keywords else ""
 
-        result = self._make_request("/graphql", params)
+        # Try graphql first (proven), then dash/clusters
+        endpoints_to_try = [
+            (
+                "/graphql",
+                {
+                    "variables": (
+                        f"(start:0,origin:FACETED_SEARCH,"
+                        f"query:({keywords_part}"
+                        f"flagshipSearchIntent:SEARCH_SRP,"
+                        f"queryParameters:{filter_str},"
+                        f"includeFiltersInResponse:false))"
+                    ),
+                    "queryId": "voyagerSearchDashClusters.b0928897b71bd00a5a7291755dcd64f0",
+                },
+            ),
+            (
+                "/search/dash/clusters",
+                {
+                    "decorationId": "com.linkedin.voyager.dash.deco.search.SearchClusterCollection-175",
+                    "origin": "FACETED_SEARCH",
+                    "q": "all",
+                    "query": (
+                        f"({keywords_part}"
+                        f"flagshipSearchIntent:SEARCH_SRP,"
+                        f"queryParameters:{filter_str},"
+                        f"includeFiltersInResponse:false)"
+                    ),
+                    "start": 0,
+                    "count": min(limit, 25),
+                },
+            ),
+        ]
 
-        if not result:
-            return []
-
-        return self._parse_company_results(result)
+        for endpoint, params in endpoints_to_try:
+            result = self._make_request(endpoint, params)
+            if result:
+                companies = self._parse_company_results(result)
+                if companies:
+                    logger.info(f"Company search succeeded via {endpoint}")
+                    return companies
 
     def _parse_company_results(self, data: dict) -> list[LinkedInOrganization]:
-        """Parse company search results from Voyager API response."""
+        """Parse company search results from Voyager API response.
+
+        Handles two formats (same pattern as ``_parse_people_results``):
+        1. ``included`` array — items typed as ``EntityResult`` or
+           ``SearchNormalizedCompany``.
+        2. ``data.searchDashClustersByAll`` (graphql) — nested
+           ``elements[].items[].item.entityResult``.
+        """
         companies: list[LinkedInOrganization] = []
 
-        try:
-            included = data.get("included", [])
+        def _extract_company(entity: dict) -> LinkedInOrganization | None:
+            """Extract a company from an entity-result-like dict."""
+            title_obj = entity.get("title", {})
+            name = title_obj.get("text", "") if isinstance(title_obj, dict) else ""
+            if not name:
+                name = entity.get("name", "")
 
+            public_id = ""
+            urn_id = ""
+
+            entity_urn = entity.get("entityUrn", "")
+            if "fsd_company:" in entity_urn:
+                public_id = entity_urn.split("fsd_company:")[-1]
+
+            object_urn = entity.get("objectUrn", "")
+            if "urn:li:company:" in object_urn:
+                urn_id = object_urn.split("urn:li:company:")[-1]
+
+            # Try trackingUrn (open-linkedin-api style)
+            tracking_urn = entity.get("trackingUrn", "")
+            if not urn_id and "company:" in tracking_urn:
+                urn_id = tracking_urn.split("company:")[-1]
+
+            nav_url = entity.get("navigationUrl", "")
+            if not public_id and "/company/" in nav_url:
+                public_id = nav_url.split("/company/")[-1].split("?")[0].strip("/")
+
+            item_type = entity.get("$type", "")
+            page_type = "school" if "school" in item_type.lower() else "company"
+
+            sub = entity.get("primarySubtitle", {})
+            industry = sub.get("text", "") if isinstance(sub, dict) else ""
+            sec_sub = entity.get("secondarySubtitle", {})
+            location = sec_sub.get("text", "") if isinstance(sec_sub, dict) else ""
+
+            if public_id or name:
+                return LinkedInOrganization(
+                    urn_id=urn_id,
+                    public_id=public_id,
+                    name=name,
+                    page_type=page_type,
+                    industry=industry,
+                    location=location,
+                )
+            return None
+
+        try:
+            # --- Format 1: included array ---
+            included = data.get("included", [])
             for item in included:
                 item_type = item.get("$type", "")
-
-                if "SearchNormalizedCompany" in item_type or "Company" in item_type:
+                if any(
+                    t in item_type
+                    for t in ("SearchNormalizedCompany", "Company", "EntityResult")
+                ):
+                    # Skip people EntityResults
+                    if "EntityResult" in item_type:
+                        tracking = item.get("trackingUrn", "")
+                        if "company" not in tracking and "fsd_company" not in item.get(
+                            "entityUrn", ""
+                        ):
+                            continue
                     company_data = item.get("company", item)
+                    org = _extract_company(company_data)
+                    if org:
+                        companies.append(org)
 
-                    urn_id = ""
-                    public_id = ""
-
-                    # Extract URN
-                    entity_urn = item.get("entityUrn", "")
-                    if "fsd_company:" in entity_urn:
-                        public_id = entity_urn.split("fsd_company:")[-1]
-
-                    object_urn = item.get("objectUrn", "")
-                    if "urn:li:company:" in object_urn:
-                        urn_id = object_urn.split("urn:li:company:")[-1]
-
-                    name = company_data.get("name", "") or item.get("title", {}).get(
-                        "text", ""
-                    )
-
-                    # Determine if school or company
-                    page_type = "school" if "school" in item_type.lower() else "company"
-
-                    industry = item.get("primarySubtitle", {}).get("text", "")
-                    location = item.get("secondarySubtitle", {}).get("text", "")
-
-                    if public_id or name:
-                        companies.append(
-                            LinkedInOrganization(
-                                urn_id=urn_id,
-                                public_id=public_id,
-                                name=name,
-                                page_type=page_type,
-                                industry=industry,
-                                location=location,
+            # --- Format 2: graphql structured data ---
+            if not companies:
+                clusters = data.get("data", {}).get("searchDashClustersByAll", {})
+                if clusters and isinstance(clusters, dict):
+                    for element in clusters.get("elements", []):
+                        for item_wrapper in element.get("items", []):
+                            entity = (
+                                item_wrapper.get("item", {}).get("entityResult", {})
                             )
-                        )
+                            if not entity:
+                                continue
+                            org = _extract_company(entity)
+                            if org:
+                                companies.append(org)
 
         except Exception as e:
             logger.error(f"Error parsing company results: {e}")
@@ -813,55 +1052,33 @@ class LinkedInVoyagerClient:
 class HybridLinkedInLookup:
     """
     Hybrid LinkedIn lookup that tries multiple sources in priority order:
-    1. RapidAPI Fresh LinkedIn Data API (most reliable, paid)
-    2. Voyager API (deprecated, usually blocked)
-    3. Browser-based search (slowest but always works)
+    1. Voyager API (uses your LinkedIn session cookies, fast & free)
+    2. Browser-based search (Playwright/Bing, slower but always works)
 
-    This achieves 90%+ success rate by using RapidAPI as the primary method.
+    Configure Voyager cookies via Action 7 in the main menu.
     """
 
     # Class-level flag to track if Voyager API is known to be blocked
-    _voyager_api_blocked: bool = (
-        True  # Default to blocked (LinkedIn blocked it in 2025)
-    )
-
-    # Class-level RapidAPI client (shared across instances for connection pooling)
-    _rapidapi_client = None
+    _voyager_api_blocked: bool = False
 
     def __init__(self) -> None:
         """Initialize the hybrid lookup."""
         self.voyager_client: LinkedInVoyagerClient | None = None
         self.browser_lookup = None  # Will be imported lazily
 
-        # Initialize RapidAPI client if not already done
-        if HybridLinkedInLookup._rapidapi_client is None:
-            try:
-                from linkedin_rapidapi_client import FreshLinkedInAPIClient
-
-                if getattr(Config, "RAPIDAPI_KEY", ""):
-                    HybridLinkedInLookup._rapidapi_client = FreshLinkedInAPIClient()
-                    logger.info("RapidAPI client initialized for LinkedIn lookups")
-                else:
-                    logger.debug("RAPIDAPI_KEY not set, will use browser fallback")
-            except ImportError:
-                logger.debug("RapidAPI client not available")
-            except Exception as e:
-                logger.warning(f"Failed to initialize RapidAPI client: {e}")
-
-        # Skip Voyager API if known to be blocked (which is the default now)
-        if HybridLinkedInLookup._voyager_api_blocked:
-            logger.debug("Voyager API blocked, using RapidAPI + browser fallback")
-        elif Config.LINKEDIN_LI_AT:
+        # Initialize Voyager client if cookies are configured
+        if not HybridLinkedInLookup._voyager_api_blocked and Config.LINKEDIN_LI_AT:
             try:
                 self.voyager_client = LinkedInVoyagerClient()
-                # Don't bother with auth check - it uses deprecated endpoints
-                # We'll detect failures on first actual use
-                logger.debug("Voyager client initialized (will test on first use)")
+                logger.debug("Voyager client initialized for LinkedIn lookups")
             except Exception as e:
                 logger.warning(f"Failed to initialize Voyager client: {e}")
                 self.voyager_client = None
-        else:
-            logger.debug("LINKEDIN_LI_AT not set, using browser-based lookup only")
+        elif not Config.LINKEDIN_LI_AT:
+            logger.debug(
+                "LINKEDIN_LI_AT not set — using browser-based lookup only. "
+                "Use Action 7 to configure Voyager cookies for faster lookups."
+            )
 
     def find_person(
         self,
@@ -891,25 +1108,7 @@ class HybridLinkedInLookup:
             logger.info("LinkedIn search disabled (LINKEDIN_SEARCH_ENABLED=false)")
             return (None, None, "disabled")
 
-        # 1. Try RapidAPI Fresh LinkedIn Data API first (most reliable)
-        if HybridLinkedInLookup._rapidapi_client is not None:
-            try:
-                result = HybridLinkedInLookup._rapidapi_client.search_person(
-                    name, company
-                )
-
-                if result and result.linkedin_url:
-                    confidence = "high" if result.match_score >= 0.7 else "medium"
-                    logger.info(
-                        f"RapidAPI found: {result.full_name} at {result.company} (score: {result.match_score:.2f})"
-                    )
-                    # RapidAPI doesn't return URN, but we have the URL
-                    return (result.linkedin_url, None, confidence)
-
-            except Exception as e:
-                logger.warning(f"RapidAPI lookup failed for {name}: {e}")
-
-        # 2. Try Voyager API (if not known to be blocked - usually is)
+        # 1. Try Voyager API first (fast, free, uses your session cookies)
         if self.voyager_client and not HybridLinkedInLookup._voyager_api_blocked:
             try:
                 person = self.voyager_client.find_person(
@@ -923,20 +1122,24 @@ class HybridLinkedInLookup:
                     confidence = "high" if person.match_score >= 5.0 else "medium"
                     return (person.profile_url, person.mention_urn, confidence)
 
-                # If we get here with no results, Voyager API might be blocked
-                # Mark it as blocked to avoid wasting time on future calls
-                logger.info(
-                    "Voyager API returned no results, switching to browser fallback"
+                # No results this time doesn't mean blocked
+                logger.debug(
+                    f"Voyager found no match for {name}, trying browser fallback"
                 )
-                HybridLinkedInLookup._voyager_api_blocked = True
-                self.voyager_client = None
 
             except Exception as e:
-                logger.warning(f"Voyager API lookup failed: {e}, switching to browser")
-                HybridLinkedInLookup._voyager_api_blocked = True
-                self.voyager_client = None
+                error_msg = str(e).lower()
+                if "302" in error_msg or "redirect" in error_msg or "auth" in error_msg:
+                    logger.warning(
+                        f"Voyager API auth failed: {e} — cookies may be expired. "
+                        f"Use Action 7 to refresh them."
+                    )
+                    HybridLinkedInLookup._voyager_api_blocked = True
+                    self.voyager_client = None
+                else:
+                    logger.warning(f"Voyager lookup failed for {name}: {e}")
 
-        # 3. Fall back to browser-based lookup (slowest but always works)
+        # 2. Fall back to browser-based lookup (slower but always works)
         return self._browser_fallback(
             name, company, title, location, department, role_type
         )
@@ -1170,50 +1373,286 @@ class HybridLinkedInLookup:
 
 def extract_linkedin_cookies_from_browser() -> tuple[str, str]:
     """
-    Extract LinkedIn session cookies from Chrome browser.
+    Extract LinkedIn session cookies by opening a Playwright browser window
+    where the user can log in to LinkedIn. Cookies are captured automatically
+    once the login completes.
+
+    Falls back to reading Chrome/Edge cookie databases directly if the browser
+    is closed (no file-lock).
 
     Returns:
-        Tuple of (li_at, jsessionid) cookies
+        Tuple of (li_at, jsessionid) cookies, or ("", "") on failure.
+    """
+    # --- Method 1: Try reading cookie DB directly (works if browser is closed) ---
+    li_at, jsessionid = _try_read_cookie_db()
+    if li_at:
+        return li_at, jsessionid
+
+    # --- Method 2: Playwright interactive login ---
+    return _extract_via_playwright()
+
+
+def _try_read_cookie_db() -> tuple[str, str]:
+    """Try to read LinkedIn cookies from Chrome/Edge SQLite databases.
+
+    Only works when the browser is *not* running (file not locked).
+    Handles AES-256-GCM decryption via Windows DPAPI.
+    """
+    import os
+    import json
+    import base64
+    import sqlite3
+    import shutil
+    import tempfile
+
+    try:
+        import ctypes
+        import ctypes.wintypes
+    except Exception:
+        return ("", "")
+
+    browser_paths: list[tuple[str, str]] = [
+        (
+            "Chrome",
+            os.path.expandvars(
+                r"%LOCALAPPDATA%\Google\Chrome\User Data"
+            ),
+        ),
+        (
+            "Edge",
+            os.path.expandvars(
+                r"%LOCALAPPDATA%\Microsoft\Edge\User Data"
+            ),
+        ),
+    ]
+
+    for browser_name, user_data_dir in browser_paths:
+        cookies_path = os.path.join(
+            user_data_dir, "Default", "Network", "Cookies"
+        )
+        local_state_path = os.path.join(user_data_dir, "Local State")
+        if not os.path.exists(cookies_path) or not os.path.exists(local_state_path):
+            continue
+
+        tmp_db = os.path.join(tempfile.gettempdir(), "smp_cookies.db")
+        try:
+            shutil.copy2(cookies_path, tmp_db)
+        except (PermissionError, OSError):
+            # Browser is running — file locked
+            continue
+
+        try:
+            # Read the encryption key from Local State
+            with open(local_state_path, "r", encoding="utf-8") as f:
+                local_state = json.load(f)
+            encrypted_key_b64 = local_state["os_crypt"]["encrypted_key"]
+            encrypted_key = base64.b64decode(encrypted_key_b64)
+            # Strip the "DPAPI" prefix (first 5 bytes)
+            encrypted_key = encrypted_key[5:]
+
+            # Decrypt with Windows DPAPI
+            class DATA_BLOB(ctypes.Structure):
+                _fields_ = [
+                    ("cbData", ctypes.wintypes.DWORD),
+                    ("pbData", ctypes.POINTER(ctypes.c_char)),
+                ]
+
+            key_blob_in = DATA_BLOB(
+                len(encrypted_key),
+                ctypes.cast(
+                    ctypes.create_string_buffer(encrypted_key, len(encrypted_key)),
+                    ctypes.POINTER(ctypes.c_char),
+                ),
+            )
+            key_blob_out = DATA_BLOB()
+            if not ctypes.windll.crypt32.CryptUnprotectData(
+                ctypes.byref(key_blob_in),
+                None, None, None, None, 0,
+                ctypes.byref(key_blob_out),
+            ):
+                logger.debug(f"DPAPI decryption failed for {browser_name}")
+                continue
+
+            aes_key = ctypes.string_at(
+                key_blob_out.pbData, key_blob_out.cbData
+            )
+
+            # Read cookies from SQLite
+            conn = sqlite3.connect(tmp_db)
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT name, encrypted_value FROM cookies "
+                "WHERE host_key LIKE '%.linkedin.com%' "
+                "AND name IN ('li_at', 'JSESSIONID')"
+            )
+            rows = cur.fetchall()
+            conn.close()
+
+            li_at = ""
+            jsessionid = ""
+            for name, enc_val in rows:
+                if not enc_val:
+                    continue
+                # Chrome v80+ uses AES-256-GCM: v10 + 12-byte nonce + ciphertext + 16-byte tag
+                if enc_val[:3] == b"v10" or enc_val[:3] == b"v20":
+                    nonce = enc_val[3:15]
+                    ciphertext_tag = enc_val[15:]
+                    try:
+                        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                        aes_gcm = AESGCM(aes_key)
+                        decrypted = aes_gcm.decrypt(nonce, ciphertext_tag, None)
+                        value = decrypted.decode("utf-8", errors="replace")
+                    except ImportError:
+                        logger.debug(
+                            "cryptography package needed for cookie decryption"
+                        )
+                        break
+                    except Exception as e:
+                        logger.debug(f"AES decryption failed for {name}: {e}")
+                        continue
+                else:
+                    # Fallback: old-style DPAPI-only encryption
+                    blob_in = DATA_BLOB(
+                        len(enc_val),
+                        ctypes.cast(
+                            ctypes.create_string_buffer(enc_val, len(enc_val)),
+                            ctypes.POINTER(ctypes.c_char),
+                        ),
+                    )
+                    blob_out = DATA_BLOB()
+                    if ctypes.windll.crypt32.CryptUnprotectData(
+                        ctypes.byref(blob_in),
+                        None, None, None, None, 0,
+                        ctypes.byref(blob_out),
+                    ):
+                        value = ctypes.string_at(
+                            blob_out.pbData, blob_out.cbData
+                        ).decode("utf-8", errors="replace")
+                    else:
+                        continue
+
+                if name == "li_at":
+                    li_at = value
+                elif name == "JSESSIONID":
+                    jsessionid = value.strip('"')
+
+            if li_at:
+                logger.info(
+                    f"Extracted LinkedIn cookies from {browser_name} database"
+                )
+                return li_at, jsessionid
+
+        except Exception as e:
+            logger.debug(f"Cookie DB read failed for {browser_name}: {e}")
+        finally:
+            try:
+                os.remove(tmp_db)
+            except OSError:
+                pass
+
+    return ("", "")
+
+
+def _extract_via_playwright() -> tuple[str, str]:
+    """Open the user's real Chrome or Edge browser for LinkedIn login.
+
+    Uses the installed browser (not Playwright's bundled Chromium) so LinkedIn
+    doesn't block the login as bot/automation.  Waits up to 3 minutes for the
+    ``li_at`` cookie to appear after login (including any 2FA prompts).
+
+    Returns:
+        Tuple of (li_at, jsessionid) or ("", "") on failure/cancel.
     """
     try:
-        import browser_cookie3  # type: ignore[import-not-found]
-
-        cookies = browser_cookie3.chrome(domain_name=".linkedin.com")
-
-        li_at = ""
-        jsessionid = ""
-
-        for cookie in cookies:
-            if cookie.name == "li_at":
-                li_at = cookie.value or ""
-            elif cookie.name == "JSESSIONID":
-                jsessionid = cookie.value or ""
-
-        if li_at:
-            logger.info("Successfully extracted LinkedIn cookies from Chrome")
-            return (li_at, jsessionid)
-        else:
-            logger.warning("No LinkedIn session found in Chrome")
-            return ("", "")
-
+        from playwright.sync_api import sync_playwright
     except ImportError:
-        logger.warning("browser_cookie3 not installed - pip install browser-cookie3")
+        logger.warning("Playwright not installed — pip install playwright")
         return ("", "")
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "admin" in error_msg:
-            logger.warning(
-                "Cookie extraction requires admin privileges. "
-                "Run as Administrator or use manual entry."
-            )
-        elif "key" in error_msg or "decrypt" in error_msg:
-            logger.warning(
-                "Cookie decryption failed. This can happen when Chrome is running "
-                "or due to Windows security settings. Please use manual entry instead."
-            )
+
+    import os
+    import time as _time
+
+    # Use a dedicated profile so it doesn't interfere with the user's
+    # main browser profile, but persists across runs so LinkedIn remembers
+    # the device and avoids extra verification on repeat logins.
+    profile_dir = os.path.join(
+        os.path.expandvars(r"%LOCALAPPDATA%"),
+        "SocialMediaPublisher",
+        "playwright_profile",
+    )
+    os.makedirs(profile_dir, exist_ok=True)
+
+    # Try Chrome first, then Edge — both are real browsers that bypass
+    # LinkedIn's automation detection.
+    channels = ["chrome", "msedge"]
+
+    print("\n  Opening your browser — please log in to LinkedIn.")
+    print("  (The window will close automatically once login is detected.)")
+    print("  You have up to 3 minutes to complete login + any 2FA.\n")
+
+    li_at = ""
+    jsessionid = ""
+    last_error = ""
+
+    for channel in channels:
+        try:
+            with sync_playwright() as pw:
+                context = pw.chromium.launch_persistent_context(
+                    user_data_dir=profile_dir,
+                    channel=channel,
+                    headless=False,
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                    ],
+                    ignore_default_args=["--enable-automation"],
+                    viewport={"width": 1280, "height": 900},
+                )
+
+                # Navigate the first tab (persistent context opens one)
+                page = context.pages[0] if context.pages else context.new_page()
+                page.goto(
+                    "https://www.linkedin.com/login",
+                    wait_until="domcontentloaded",
+                )
+
+                # Poll for the li_at cookie (set after successful login)
+                deadline = _time.time() + 180  # 3 minutes
+                while _time.time() < deadline:
+                    try:
+                        cookies = context.cookies("https://www.linkedin.com")
+                    except Exception:
+                        # Browser was closed by user
+                        break
+                    for c in cookies:
+                        if c["name"] == "li_at" and c["value"]:
+                            li_at = c["value"]
+                        elif c["name"] == "JSESSIONID" and c["value"]:
+                            jsessionid = c["value"].strip('"')
+                    if li_at:
+                        break
+                    _time.sleep(1.5)
+
+                context.close()
+
+            if li_at:
+                break
+
+        except Exception as e:
+            last_error = str(e)
+            logger.debug(f"Playwright with {channel} failed: {e}")
+            continue
+
+    if li_at:
+        logger.info("Extracted LinkedIn cookies via browser login")
+    else:
+        if last_error:
+            logger.warning(f"Browser cookie extraction failed: {last_error}")
         else:
-            logger.warning(f"Failed to extract browser cookies: {e}")
-        return ("", "")
+            logger.warning(
+                "Login not completed within 3 minutes — no cookies captured"
+            )
+
+    return li_at, jsessionid
 
 
 # ============================================================================

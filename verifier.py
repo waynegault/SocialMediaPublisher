@@ -40,7 +40,7 @@ class ContentVerifier:
     def verify_pending_content(
         self,
         linkedin_lookup_callback: Callable[[list[Story]], None] | None = None,
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, int]:
         """
         Verify all pending content.
 
@@ -48,13 +48,13 @@ class ContentVerifier:
             linkedin_lookup_callback: Optional callback function to run LinkedIn profile
                 lookup when coverage is insufficient. Takes a list of stories to process.
 
-        Returns tuple of (approved_count, rejected_count).
+        Returns tuple of (approved_count, rejected_count, skipped_count).
         """
         stories = self.db.get_stories_needing_verification()
 
         if not stories:
             logger.info("No stories pending verification")
-            return (0, 0)
+            return (0, 0, 0)
 
         total = len(stories)
         logger.info(f"Verifying {total} stories...")
@@ -161,7 +161,7 @@ class ContentVerifier:
         logger.info(
             f"Verification complete: {approved} approved, {rejected} rejected, {skipped} skipped"
         )
-        return (approved, rejected)
+        return (approved, rejected, skipped)
 
     def _verify_story(self, story: Story) -> tuple[bool, str]:
         """
@@ -207,7 +207,7 @@ class ContentVerifier:
 
         # Check summary length (must be at least 80% of target)
         summary_word_count = len(story.summary.split())
-        min_summary_words = int(Config.SUMMARY_WORD_COUNT * 0.8)
+        min_summary_words = int(Config.SUMMARY_WORD_COUNT * 0.6)
         if summary_word_count < min_summary_words:
             reason = (
                 f"Summary too short: {summary_word_count} words "
@@ -304,13 +304,10 @@ class ContentVerifier:
                         return self._parse_verification_response(content)
                 except Exception as e:
                     logger.warning(
-                        f"Local image verification failed: {e}. Trying Groq..."
+                        f"Local image verification failed: {e}. Trying Gemini..."
                     )
 
-            # Try Groq as fallback (can't do vision, so fall through to Gemini for images)
-            # Groq doesn't support vision yet, so we skip directly to Gemini for image verification
-
-            # Fallback to Gemini (required for image verification)
+            # Gemini for image verification (multimodal)
             image = Image.open(str(image_path))
             response = api_client.gemini_generate(
                 client=self.client,
@@ -324,61 +321,36 @@ class ContentVerifier:
             return self._parse_verification_response(response.text)
 
         except Exception as e:
-            logger.warning(f"Image verification failed, falling back to text: {e}")
+            error_brief = str(e).split("\\n")[0][:120]
+            logger.warning(f"Image verification failed, falling back to text-only: {error_brief}")
             return self._verify_text_only(prompt)
 
     def _verify_text_only(self, prompt: str) -> tuple[bool, str]:
-        """Verify story content without image.
+        """Verify story content without image using the configured LLM provider.
         Returns tuple of (is_approved, reason).
         """
-        # Use local LLM if available
-        if self.local_client:
-            try:
-                logger.info("Using local LLM for text verification...")
-                content = api_client.local_llm_generate(
-                    client=self.local_client,
-                    messages=[{"role": "user", "content": prompt}],
-                    endpoint="text_verify",
-                )
-                if content:
-                    return self._parse_verification_response(content)
-            except Exception as e:
-                logger.warning(f"Local text verification failed: {e}. Trying Groq...")
+        provider = getattr(Config, "LLM_PROVIDER", "gemini").lower()
+        logger.info(f"Using {provider} for text verification...")
 
-        # Try Groq as fallback (free, fast)
-        groq_client = api_client.get_groq_client()
-        if groq_client:
-            try:
-                logger.info("Using Groq for text verification...")
-                content = api_client.groq_generate(
-                    client=groq_client,
-                    messages=[{"role": "user", "content": prompt}],
-                    endpoint="text_verify",
-                )
-                if content:
-                    return self._parse_verification_response(content)
-            except Exception as e:
-                logger.warning(
-                    f"Groq text verification failed: {e}. Falling back to Gemini."
-                )
-
-        # Final fallback to Gemini
-        response = api_client.gemini_generate(
-            client=self.client,
-            model=Config.MODEL_VERIFICATION,
-            contents=prompt,
-            endpoint="text_verify",
-        )
-        if not response.text:
-            logger.warning("Empty response from Gemini during text verification")
+        try:
+            content = api_client.generate_text(
+                prompt=prompt,
+                endpoint="text_verify",
+                gemini_client=self.client,
+                gemini_model=Config.MODEL_VERIFICATION,
+            )
+            if content:
+                return self._parse_verification_response(content)
             return (False, "Empty response from API")
-        return self._parse_verification_response(response.text)
+        except Exception as e:
+            logger.error(f"Text verification failed: {e}")
+            return (False, f"Verification error: {e}")
 
     def _build_verification_prompt(self, story: Story) -> str:
         """Build the verification prompt for a story."""
         summary_word_count = len(story.summary.split())
         min_summary_words = int(Config.SUMMARY_WORD_COUNT * 0.8)
-        max_summary_words = int(Config.SUMMARY_WORD_COUNT * 1.3)
+        max_summary_words = int(Config.SUMMARY_WORD_COUNT * 2.0)
 
         return Config.VERIFICATION_PROMPT.format(
             search_prompt=Config.SEARCH_PROMPT,
@@ -441,13 +413,22 @@ class ContentVerifier:
         """Parse the verification response to determine approval status.
         Returns tuple of (is_approved, reason).
         """
-        lines = response_text.strip().split("\n")
+        text = response_text.strip()
+
+        # Strip markdown code fences if the LLM wrapped its response
+        if text.startswith("```"):
+            parts = text.split("```")
+            text = parts[1] if len(parts) > 1 else text
+            if text.startswith("json") or text.startswith("text"):
+                text = text.split("\n", 1)[-1]
+            text = text.strip()
+
+        lines = text.split("\n")
         first_line = lines[0].strip().upper()
 
-        # Extract reason from second line only (prompt requests single-line reason)
-        reason = ""
-        if len(lines) > 1:
-            reason = lines[1].strip()
+        # Collect all reason lines (not just line 2)
+        reason_lines = [line.strip() for line in lines[1:] if line.strip()]
+        reason = " ".join(reason_lines) if reason_lines else ""
 
         if "APPROVED" in first_line:
             return (True, reason)

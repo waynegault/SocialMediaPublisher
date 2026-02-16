@@ -180,7 +180,7 @@ class AdaptiveRateLimiter:
             if cooldown > 0:
                 state.penalty_until = time.monotonic() + cooldown
 
-            logger.warning(
+            logger.debug(
                 f"429 on '{effective_endpoint}': rate {old_rate:.3f} -> "
                 f"{state.current_rate:.3f} req/s"
             )

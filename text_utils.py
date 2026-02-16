@@ -616,7 +616,15 @@ def calculate_similarity(
     text1: str, text2: str, remove_stopwords: bool = True
 ) -> float:
     """
-    Calculate Jaccard similarity between two texts using word sets.
+    Calculate similarity between two texts using the best of Jaccard and
+    SequenceMatcher scores.
+
+    Jaccard (word-set overlap) catches topically identical titles with different
+    word order.  SequenceMatcher (character-level) catches titles that share a
+    long common prefix/suffix but differ in a few words — e.g.
+    "Advancements in Water Treatment Chemicals and Global Market Trends" vs
+    "Advancements in Water Treatment Chemicals: A Growing Market" (Jaccard 0.63,
+    SeqMatch 0.85).
 
     Args:
         text1: First text to compare.
@@ -629,22 +637,26 @@ def calculate_similarity(
     if not text1 or not text2:
         return 0.0
 
-    # Normalize: lowercase, remove punctuation, split into words
+    # --- Jaccard similarity (word-set) ---
     words1 = set(re.sub(r"[^\w\s]", "", text1.lower()).split())
     words2 = set(re.sub(r"[^\w\s]", "", text2.lower()).split())
 
-    # Remove stopwords if requested
     if remove_stopwords:
         words1 -= SIMILARITY_STOPWORDS
         words2 -= SIMILARITY_STOPWORDS
 
-    if not words1 or not words2:
-        return 0.0
+    jaccard = 0.0
+    if words1 and words2:
+        intersection = words1 & words2
+        union = words1 | words2
+        jaccard = len(intersection) / len(union) if union else 0.0
 
-    intersection = words1 & words2
-    union = words1 | words2
+    # --- SequenceMatcher similarity (character-level) ---
+    from difflib import SequenceMatcher
 
-    return len(intersection) / len(union) if union else 0.0
+    seq_ratio = SequenceMatcher(None, text1.lower(), text2.lower()).ratio()
+
+    return max(jaccard, seq_ratio)
 
 
 # =============================================================================

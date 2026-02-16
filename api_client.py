@@ -83,6 +83,42 @@ class RateLimitedAPIClient:
             rate_limiter_429_backoff=0.5,
         )
 
+        # OpenAI API - generous limits for paid tier
+        self.openai_limiter = AdaptiveRateLimiter(
+            initial_fill_rate=1.0,
+            min_fill_rate=0.1,
+            max_fill_rate=2.0,
+            success_threshold=5,
+            rate_limiter_429_backoff=0.5,
+        )
+
+        # Anthropic (Claude) API
+        self.anthropic_limiter = AdaptiveRateLimiter(
+            initial_fill_rate=0.5,
+            min_fill_rate=0.1,
+            max_fill_rate=1.0,
+            success_threshold=5,
+            rate_limiter_429_backoff=0.5,
+        )
+
+        # DeepSeek API
+        self.deepseek_limiter = AdaptiveRateLimiter(
+            initial_fill_rate=0.5,
+            min_fill_rate=0.1,
+            max_fill_rate=1.0,
+            success_threshold=5,
+            rate_limiter_429_backoff=0.5,
+        )
+
+        # Moonshot (Kimi) API
+        self.moonshot_limiter = AdaptiveRateLimiter(
+            initial_fill_rate=0.5,
+            min_fill_rate=0.1,
+            max_fill_rate=1.0,
+            success_threshold=5,
+            rate_limiter_429_backoff=0.5,
+        )
+
         # Browser-based searches - very conservative (CAPTCHA prevention)
         # Used by linkedin_profile_lookup for browser-based searches
         self.browser_limiter = AdaptiveRateLimiter(
@@ -96,8 +132,12 @@ class RateLimitedAPIClient:
         # Session pool for connection reuse
         self._sessions: dict[str, requests.Session] = {}
 
-        # Groq client singleton (lazy-initialized)
+        # Client singletons (lazy-initialized)
         self._groq_client: Any = None
+        self._openai_client: Any = None
+        self._anthropic_client: Any = None
+        self._deepseek_client: Any = None
+        self._moonshot_client: Any = None
 
     def get_groq_client(self) -> Any:
         """Get or create a Groq client singleton."""
@@ -116,6 +156,84 @@ class RateLimitedAPIClient:
                     logger.warning(f"Failed to initialize Groq client: {e}")
         return self._groq_client
 
+    def get_openai_client(self) -> Any:
+        """Get or create an OpenAI client singleton (for text generation)."""
+        if self._openai_client is None:
+            from config import Config
+
+            if Config.OPENAI_API_KEY:
+                try:
+                    from openai import OpenAI
+
+                    self._openai_client = OpenAI(api_key=Config.OPENAI_API_KEY)
+                    logger.debug("OpenAI client initialized")
+                except ImportError:
+                    logger.warning("openai package not installed")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize OpenAI client: {e}")
+        return self._openai_client
+
+    def get_anthropic_client(self) -> Any:
+        """Get or create an Anthropic (Claude) client singleton."""
+        if self._anthropic_client is None:
+            from config import Config
+
+            if Config.ANTHROPIC_API_KEY:
+                try:
+                    from anthropic import Anthropic
+
+                    self._anthropic_client = Anthropic(
+                        api_key=Config.ANTHROPIC_API_KEY
+                    )
+                    logger.debug("Anthropic client initialized")
+                except ImportError:
+                    logger.warning(
+                        "anthropic package not installed (pip install anthropic)"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to initialize Anthropic client: {e}")
+        return self._anthropic_client
+
+    def get_deepseek_client(self) -> Any:
+        """Get or create a DeepSeek client singleton (OpenAI-compatible)."""
+        if self._deepseek_client is None:
+            from config import Config
+
+            if Config.DEEPSEEK_API_KEY:
+                try:
+                    from openai import OpenAI
+
+                    self._deepseek_client = OpenAI(
+                        api_key=Config.DEEPSEEK_API_KEY,
+                        base_url="https://api.deepseek.com",
+                    )
+                    logger.debug("DeepSeek client initialized")
+                except ImportError:
+                    logger.warning("openai package not installed")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize DeepSeek client: {e}")
+        return self._deepseek_client
+
+    def get_moonshot_client(self) -> Any:
+        """Get or create a Moonshot (Kimi) client singleton (OpenAI-compatible)."""
+        if self._moonshot_client is None:
+            from config import Config
+
+            if Config.MOONSHOT_API_KEY:
+                try:
+                    from openai import OpenAI
+
+                    self._moonshot_client = OpenAI(
+                        api_key=Config.MOONSHOT_API_KEY,
+                        base_url="https://api.moonshot.cn/v1",
+                    )
+                    logger.debug("Moonshot client initialized")
+                except ImportError:
+                    logger.warning("openai package not installed")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize Moonshot client: {e}")
+        return self._moonshot_client
+
     def generate_text(
         self,
         prompt: str,
@@ -125,22 +243,25 @@ class RateLimitedAPIClient:
         gemini_client: Any = None,
         gemini_model: Optional[str] = None,
         gemini_config: Optional[Any] = None,
+        system_prompt: Optional[str] = None,
     ) -> str:
         """
-        Unified text generation that prefers Groq over Gemini.
+        Unified text generation using the configured LLM_PROVIDER.
 
-        Priority order:
-        1. Groq (if GROQ_API_KEY configured) - free, fast
-        2. Gemini (fallback)
+        Uses Config.LLM_PROVIDER to select the primary provider, with
+        Gemini as the final fallback.
+
+        Supported providers: gemini, groq, local, openai, claude, deepseek, kimi
 
         Args:
             prompt: The text prompt
             max_tokens: Maximum tokens in response
             temperature: Sampling temperature
             endpoint: Endpoint name for rate limiting/logging
-            gemini_client: Gemini client (for fallback)
-            gemini_model: Gemini model name (for fallback)
-            gemini_config: Gemini config (for fallback)
+            gemini_client: Gemini client (for Gemini provider / fallback)
+            gemini_model: Gemini model name (for Gemini provider / fallback)
+            gemini_config: Gemini config (for Gemini provider / fallback)
+            system_prompt: Optional system-level instruction prepended to messages
 
         Returns:
             Generated text content
@@ -150,38 +271,155 @@ class RateLimitedAPIClient:
         """
         from config import Config
 
-        # Try Groq first if configured
-        if Config.GROQ_API_KEY:
-            groq_client = self.get_groq_client()
-            if groq_client:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        # For Gemini, prepend system prompt to the user prompt since Gemini
+        # uses a different API that doesn't have a system message role
+        gemini_prompt = prompt
+        if system_prompt:
+            gemini_prompt = f"{system_prompt}\n\n{prompt}"
+
+        # Determine primary provider from LLM_PROVIDER (with legacy flag compat)
+        provider = getattr(Config, "LLM_PROVIDER", "").lower()
+        if not provider:
+            if Config.PREFER_LOCAL_LLM:
+                provider = "local"
+            elif Config.PREFER_GROQ:
+                provider = "groq"
+            else:
+                provider = "gemini"
+
+        errors: list[str] = []
+
+        # --- Try the selected provider first ---
+        if provider == "openai":
+            client = self.get_openai_client()
+            if client:
                 try:
-                    messages = [{"role": "user", "content": prompt}]
-                    return self.groq_generate(
-                        client=groq_client,
-                        messages=messages,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
+                    return self.openai_generate(
+                        client=client, messages=messages,
+                        max_tokens=max_tokens, temperature=temperature,
                         endpoint=endpoint,
                     )
                 except Exception as e:
-                    logger.warning(
-                        f"Groq generation failed, falling back to Gemini: {e}"
+                    errors.append(f"OpenAI: {e}")
+                    logger.warning(f"OpenAI failed, trying fallback: {e}")
+
+        elif provider == "claude":
+            client = self.get_anthropic_client()
+            if client:
+                try:
+                    return self.anthropic_generate(
+                        client=client, messages=messages,
+                        max_tokens=max_tokens, temperature=temperature,
+                        endpoint=endpoint,
                     )
+                except Exception as e:
+                    errors.append(f"Anthropic: {e}")
+                    logger.warning(f"Anthropic (Claude) failed, trying fallback: {e}")
 
-        # Fallback to Gemini
-        if gemini_client:
-            response = self.gemini_generate(
-                client=gemini_client,
-                model=gemini_model or Config.MODEL_TEXT,
-                contents=prompt,
-                config=gemini_config,
-                endpoint=endpoint,
-            )
-            return response.text if hasattr(response, "text") else str(response)
+        elif provider == "deepseek":
+            client = self.get_deepseek_client()
+            if client:
+                try:
+                    return self.deepseek_generate(
+                        client=client, messages=messages,
+                        max_tokens=max_tokens, temperature=temperature,
+                        endpoint=endpoint,
+                    )
+                except Exception as e:
+                    errors.append(f"DeepSeek: {e}")
+                    logger.warning(f"DeepSeek failed, trying fallback: {e}")
 
-        raise RuntimeError(
-            "No LLM provider available (Groq not configured, Gemini client not provided)"
-        )
+        elif provider == "kimi":
+            client = self.get_moonshot_client()
+            if client:
+                try:
+                    return self.moonshot_generate(
+                        client=client, messages=messages,
+                        max_tokens=max_tokens, temperature=temperature,
+                        endpoint=endpoint,
+                    )
+                except Exception as e:
+                    errors.append(f"Moonshot (Kimi): {e}")
+                    logger.warning(f"Moonshot (Kimi) failed, trying fallback: {e}")
+
+        elif provider == "groq":
+            groq_client = self.get_groq_client()
+            if groq_client:
+                try:
+                    return self.groq_generate(
+                        client=groq_client, messages=messages,
+                        max_tokens=max_tokens, temperature=temperature,
+                        endpoint=endpoint,
+                    )
+                except Exception as e:
+                    errors.append(f"Groq: {e}")
+                    logger.warning(f"Groq failed, trying fallback: {e}")
+
+        elif provider == "local":
+            try:
+                from openai import OpenAI as _OAI
+
+                local_client = _OAI(
+                    base_url=Config.LM_STUDIO_BASE_URL,
+                    api_key="lm-studio",
+                )
+                return self.local_llm_generate(
+                    client=local_client, messages=messages,
+                    max_tokens=max_tokens, temperature=temperature,
+                    endpoint=endpoint,
+                )
+            except Exception as e:
+                errors.append(f"Local LLM: {e}")
+                logger.warning(f"Local LLM failed, trying fallback: {e}")
+
+        elif provider == "gemini":
+            if gemini_client:
+                try:
+                    response = self.gemini_generate(
+                        client=gemini_client,
+                        model=gemini_model or Config.MODEL_TEXT,
+                        contents=gemini_prompt,
+                        config=gemini_config,
+                        endpoint=endpoint,
+                    )
+                    return response.text if hasattr(response, "text") else str(response)
+                except Exception as e:
+                    errors.append(f"Gemini: {e}")
+                    logger.warning(f"Gemini failed: {e}")
+
+        # --- Fallback chain: Groq → Gemini ---
+        if provider != "groq" and Config.GROQ_API_KEY:
+            groq_client = self.get_groq_client()
+            if groq_client:
+                try:
+                    return self.groq_generate(
+                        client=groq_client, messages=messages,
+                        max_tokens=max_tokens, temperature=temperature,
+                        endpoint=endpoint,
+                    )
+                except Exception as e:
+                    errors.append(f"Groq (fallback): {e}")
+
+        if provider != "gemini" and gemini_client:
+            try:
+                response = self.gemini_generate(
+                    client=gemini_client,
+                    model=gemini_model or Config.MODEL_TEXT,
+                    contents=gemini_prompt,
+                    config=gemini_config,
+                    endpoint=endpoint,
+                )
+                return response.text if hasattr(response, "text") else str(response)
+            except Exception as e:
+                errors.append(f"Gemini (fallback): {e}")
+
+        error_details = "; ".join(errors) if errors else "no provider configured"
+        raise RuntimeError(f"All LLM providers failed: {error_details}")
 
     # =========================================================================
     # Session Factory
@@ -434,6 +672,238 @@ class RateLimitedAPIClient:
                 logger.debug(f"Local LLM has no model [{endpoint}]: using fallback")
             else:
                 logger.warning(f"Local LLM request failed [{endpoint}]: {e}")
+            raise
+
+    # =========================================================================
+    # OpenAI API (text generation)
+    # =========================================================================
+
+    def openai_generate(
+        self,
+        client: Any,
+        messages: list[dict[str, Any]],
+        model: Optional[str] = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+        endpoint: str = "default",
+    ) -> str:
+        """Rate-limited OpenAI chat completion call.
+
+        Args:
+            client: OpenAI client instance
+            messages: List of message dicts with 'role' and 'content' keys
+            model: Model name (defaults to Config.OPENAI_TEXT_MODEL)
+            max_tokens: Maximum tokens in response
+            temperature: Sampling temperature
+            endpoint: Endpoint name for rate limiting
+
+        Returns:
+            The text content from the response
+        """
+        from config import Config
+
+        model_name = model or Config.OPENAI_TEXT_MODEL
+        full_endpoint = f"openai_{endpoint}"
+
+        wait_time = self.openai_limiter.wait(endpoint=full_endpoint)
+        if wait_time > 0.5:
+            logger.debug(f"OpenAI rate limiter ({endpoint}): waited {wait_time:.1f}s")
+
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+
+            content = response.choices[0].message.content or ""
+            self.openai_limiter.on_success(endpoint=full_endpoint)
+            logger.debug(f"OpenAI response [{endpoint}]: {len(content)} chars")
+            return content
+
+        except Exception as e:
+            if self._is_rate_limit_error(e):
+                retry_after = self._parse_retry_after(str(e))
+                self.openai_limiter.on_429_error(
+                    endpoint=full_endpoint, retry_after=retry_after
+                )
+            raise
+
+    # =========================================================================
+    # Anthropic (Claude) API
+    # =========================================================================
+
+    def anthropic_generate(
+        self,
+        client: Any,
+        messages: list[dict[str, Any]],
+        model: Optional[str] = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+        endpoint: str = "default",
+    ) -> str:
+        """Rate-limited Anthropic (Claude) API call.
+
+        Uses the Anthropic SDK messages API (not OpenAI-compatible).
+
+        Args:
+            client: Anthropic client instance
+            messages: List of message dicts with 'role' and 'content' keys
+            model: Model name (defaults to Config.ANTHROPIC_MODEL)
+            max_tokens: Maximum tokens in response
+            temperature: Sampling temperature
+            endpoint: Endpoint name for rate limiting
+
+        Returns:
+            The text content from the response
+        """
+        from config import Config
+
+        model_name = model or Config.ANTHROPIC_MODEL
+        full_endpoint = f"anthropic_{endpoint}"
+
+        wait_time = self.anthropic_limiter.wait(endpoint=full_endpoint)
+        if wait_time > 0.5:
+            logger.debug(
+                f"Anthropic rate limiter ({endpoint}): waited {wait_time:.1f}s"
+            )
+
+        try:
+            response = client.messages.create(
+                model=model_name,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+
+            content = response.content[0].text if response.content else ""
+            self.anthropic_limiter.on_success(endpoint=full_endpoint)
+            logger.debug(f"Anthropic response [{endpoint}]: {len(content)} chars")
+            return content
+
+        except Exception as e:
+            if self._is_rate_limit_error(e):
+                retry_after = self._parse_retry_after(str(e))
+                self.anthropic_limiter.on_429_error(
+                    endpoint=full_endpoint, retry_after=retry_after
+                )
+            raise
+
+    # =========================================================================
+    # DeepSeek API (OpenAI-compatible)
+    # =========================================================================
+
+    def deepseek_generate(
+        self,
+        client: Any,
+        messages: list[dict[str, Any]],
+        model: Optional[str] = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+        endpoint: str = "default",
+    ) -> str:
+        """Rate-limited DeepSeek API call (OpenAI-compatible).
+
+        Args:
+            client: OpenAI-compatible client pointing to DeepSeek API
+            messages: List of message dicts with 'role' and 'content' keys
+            model: Model name (defaults to Config.DEEPSEEK_MODEL)
+            max_tokens: Maximum tokens in response
+            temperature: Sampling temperature
+            endpoint: Endpoint name for rate limiting
+
+        Returns:
+            The text content from the response
+        """
+        from config import Config
+
+        model_name = model or Config.DEEPSEEK_MODEL
+        full_endpoint = f"deepseek_{endpoint}"
+
+        wait_time = self.deepseek_limiter.wait(endpoint=full_endpoint)
+        if wait_time > 0.5:
+            logger.debug(
+                f"DeepSeek rate limiter ({endpoint}): waited {wait_time:.1f}s"
+            )
+
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+
+            content = response.choices[0].message.content or ""
+            self.deepseek_limiter.on_success(endpoint=full_endpoint)
+            logger.debug(f"DeepSeek response [{endpoint}]: {len(content)} chars")
+            return content
+
+        except Exception as e:
+            if self._is_rate_limit_error(e):
+                retry_after = self._parse_retry_after(str(e))
+                self.deepseek_limiter.on_429_error(
+                    endpoint=full_endpoint, retry_after=retry_after
+                )
+            raise
+
+    # =========================================================================
+    # Moonshot (Kimi K2) API (OpenAI-compatible)
+    # =========================================================================
+
+    def moonshot_generate(
+        self,
+        client: Any,
+        messages: list[dict[str, Any]],
+        model: Optional[str] = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+        endpoint: str = "default",
+    ) -> str:
+        """Rate-limited Moonshot (Kimi) API call (OpenAI-compatible).
+
+        Args:
+            client: OpenAI-compatible client pointing to Moonshot API
+            messages: List of message dicts with 'role' and 'content' keys
+            model: Model name (defaults to Config.MOONSHOT_MODEL)
+            max_tokens: Maximum tokens in response
+            temperature: Sampling temperature
+            endpoint: Endpoint name for rate limiting
+
+        Returns:
+            The text content from the response
+        """
+        from config import Config
+
+        model_name = model or Config.MOONSHOT_MODEL
+        full_endpoint = f"moonshot_{endpoint}"
+
+        wait_time = self.moonshot_limiter.wait(endpoint=full_endpoint)
+        if wait_time > 0.5:
+            logger.debug(
+                f"Moonshot rate limiter ({endpoint}): waited {wait_time:.1f}s"
+            )
+
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+
+            content = response.choices[0].message.content or ""
+            self.moonshot_limiter.on_success(endpoint=full_endpoint)
+            logger.debug(f"Moonshot response [{endpoint}]: {len(content)} chars")
+            return content
+
+        except Exception as e:
+            if self._is_rate_limit_error(e):
+                retry_after = self._parse_retry_after(str(e))
+                self.moonshot_limiter.on_429_error(
+                    endpoint=full_endpoint, retry_after=retry_after
+                )
             raise
 
     # =========================================================================

@@ -23,7 +23,7 @@ import requests
 import re
 
 from api_client import api_client
-from text_utils import strip_markdown_code_block
+from text_utils import calculate_similarity, strip_markdown_code_block
 from config import Config
 from database import Database, Story
 from url_utils import validate_linkedin_url
@@ -35,6 +35,7 @@ from entity_constants import (
     INVALID_PERSON_NAMES,
     is_invalid_org_name,
     is_invalid_person_name,
+    clean_org_name,
 )
 
 # Batch processor integration (optional)
@@ -1236,7 +1237,7 @@ class CompanyMentionEnricher:
     def log_metrics_summary(self) -> None:
         """Log a summary of enrichment metrics."""
         metrics = self._metrics.to_dict()
-        logger.info(f"Enrichment metrics: {json.dumps(metrics, indent=2)}")
+        logger.debug(f"Enrichment metrics: {json.dumps(metrics, indent=2)}")
 
     # ---------------------------------------------------------------------
     # Helpers for direct/indirect people extraction
@@ -1359,15 +1360,11 @@ class CompanyMentionEnricher:
 
         # Single word names need special handling
         if len(words) == 1:
-            # Single word - likely a surname only or org abbreviation
-            # Allow if it has title case and doesn't match org patterns
-            if name_lower in INVALID_ORG_NAMES:
-                logger.debug(f"Filtering single-word org name: '{name}'")
-                return False
-            # Very short single words are suspicious
-            if len(name_lower) < 3:
-                logger.debug(f"Filtering too-short name: '{name}'")
-                return False
+            # In professional/LinkedIn contexts, single-word names are never useful.
+            # They're either: org names, abbreviations, or incomplete names where
+            # the full "First Last" version is also extracted.
+            logger.debug(f"Filtering single-word person name: '{name}'")
+            return False
 
         # Names with "Srinivasan Srinivasan" pattern (duplicate first/last)
         if len(words) == 2 and words[0].lower() == words[1].lower():
@@ -1376,22 +1373,39 @@ class CompanyMentionEnricher:
 
         return True
 
-    def _filter_valid_people(self, people: list[dict]) -> list[dict]:
+    def _filter_valid_people(self, people: list[dict], orgs: set[str] | None = None) -> list[dict]:
         """Filter people list to remove invalid/organization names.
 
         Args:
             people: List of person dictionaries
+            orgs: Optional set of known organization names for cross-referencing
 
         Returns:
             Filtered list with only valid person names
         """
+        # Build a lowercase set of org names for cross-referencing
+        org_names_lower: set[str] = set()
+        if orgs:
+            org_names_lower = {o.lower().strip() for o in orgs if o}
+
         valid = []
         for person in people:
             name = person.get("name", "")
-            if self._is_valid_person_name(name):
-                valid.append(person)
-            else:
+            if not self._is_valid_person_name(name):
                 logger.debug(f"Filtered invalid person name: '{name}'")
+                continue
+
+            # Cross-reference: reject single-word names that match an organization name
+            name_lower = name.lower().strip()
+            words = name_lower.split()
+            if len(words) == 1 and org_names_lower:
+                if name_lower in org_names_lower:
+                    logger.info(
+                        f"  Filtered single-word person '{name}' — matches org name"
+                    )
+                    continue
+
+            valid.append(person)
         if len(valid) < len(people):
             logger.info(
                 f"Filtered people: {len(people)} -> {len(valid)} "
@@ -1668,6 +1682,17 @@ class CompanyMentionEnricher:
             sources_str=sources_str,
         )
 
+        # Fetch source article text to give the LLM actual content to extract from
+        # (The summary alone often lacks named individuals)
+        provider = (Config.LLM_PROVIDER or "").lower()
+        if provider != "gemini":
+            source_text = self._fetch_source_article_text(story.source_links or [])
+            if source_text:
+                logger.debug(
+                    f"  Including {len(source_text)} chars of source article text in extraction prompt"
+                )
+                prompt += f"\n\nSOURCE ARTICLE CONTENT:\n{source_text}"
+
         try:
             response_text = self._get_ai_response(prompt)
             if not response_text:
@@ -1768,31 +1793,37 @@ class CompanyMentionEnricher:
     def _filter_valid_organizations(self, organizations: set[str]) -> set[str]:
         """Pre-filter organizations to skip invalid/generic names before LinkedIn lookups.
 
-        This avoids wasted API calls on names like 'Government', 'Aldi', 'Asda' that will
-        fail validation in the LinkedIn lookup anyway.
+        Uses centralized validation from entity_constants (handles patterns, names,
+        possessives, and other noise).  Also applies name cleaning so that lookups
+        use the canonical form.
 
         Args:
             organizations: Set of organization names to filter
 
         Returns:
-            Filtered set containing only valid organization names
+            Filtered set containing only valid, cleaned organization names
         """
         valid_orgs: set[str] = set()
         for org in organizations:
             if not org:
                 continue
 
+            # Clean the name first (strip possessives, leading 'the', etc.)
+            cleaned = clean_org_name(org)
+            if not cleaned:
+                continue
+
             # Use centralized validation (handles patterns, length, AI explanations)
-            if is_invalid_org_name(org):
+            if is_invalid_org_name(cleaned):
                 logger.debug(
-                    f"Pre-filtering invalid org (centralized check): '{org[:50]}'"
+                    f"Pre-filtering invalid org: '{org[:50]}'"
                 )
                 continue
 
-            norm = org.lower().strip()
+            norm = cleaned.lower()
 
             # Skip if org name is too long (likely an AI explanation)
-            if len(org) > 100:
+            if len(cleaned) > 100:
                 logger.debug(f"Pre-filtering overly long org: '{org[:50]}...'")
                 continue
 
@@ -1804,34 +1835,21 @@ class CompanyMentionEnricher:
                 )
                 continue
 
-            # Skip single generic words (unless they're known companies)
+            # Skip single generic words:
+            # - Allow known abbreviations (VALID_SINGLE_WORD_ORGS)
+            # - Allow 3+ char words that pass centralized validation
+            #   (is_invalid_org_name already blocks generic terms like "engineering")
+            # - Block 1-2 char single words (too ambiguous)
             words = norm.split()
-            if len(words) == 1 and norm not in VALID_SINGLE_WORD_ORGS:
-                logger.debug(f"Pre-filtering single-word org: '{org}'")
-                continue
+            if len(words) == 1:
+                if norm in VALID_SINGLE_WORD_ORGS:
+                    pass  # Always allow known orgs
+                elif len(norm) < 3:
+                    logger.debug(f"Pre-filtering short single-word org: '{org}'")
+                    continue
+                # else: 3+ char single-word orgs that passed is_invalid_org_name are allowed
 
-            # Skip patterns that indicate AI explanation rather than org name
-            ai_explanation_patterns = [
-                "not applicable",
-                "this is not",
-                "no organization",
-                "none mentioned",
-                "not specified",
-                "generalized",
-                "generic",
-                "various companies",
-                "multiple ",  # "multiple companies"
-                "several ",  # "several organizations"
-                "unspecified",
-                "headline",
-                "actual research",
-                " - ",  # Dash with spaces often indicates explanation
-            ]
-            if any(pattern in norm for pattern in ai_explanation_patterns):
-                logger.debug(f"Pre-filtering AI explanation org: '{org[:50]}'")
-                continue
-
-            valid_orgs.add(org)
+            valid_orgs.add(cleaned)
 
         if len(valid_orgs) < len(organizations):
             logger.info(
@@ -2119,6 +2137,31 @@ class CompanyMentionEnricher:
             logger.info("No stories pending enrichment")
             return (0, 0)
 
+        # Deduplicate stories by title similarity before enriching
+        # Stories are already sorted by quality_score DESC, so we keep the first (best) of each group
+        dedup_threshold = Config.dedup_similarity_threshold
+        unique_stories: list = []
+        seen_titles: list[str] = []
+        for story in stories:
+            title = story.title or ""
+            is_dup = False
+            for prev_title in seen_titles:
+                if calculate_similarity(title, prev_title) >= dedup_threshold:
+                    is_dup = True
+                    logger.info(
+                        f"  Skipping duplicate story for enrichment: '{title}' "
+                        f"(similar to '{prev_title}')"
+                    )
+                    break
+            if not is_dup:
+                unique_stories.append(story)
+                seen_titles.append(title)
+        if len(unique_stories) < len(stories):
+            logger.info(
+                f"Deduped enrichment queue: {len(stories)} -> {len(unique_stories)} stories"
+            )
+        stories = unique_stories
+
         total = len(stories)
         logger.info(f"Enriching {total} stories...")
 
@@ -2203,8 +2246,28 @@ class CompanyMentionEnricher:
 
                     direct_people = self._dedupe_people(direct_people)
 
+                    # Cross-reference person employers against story organizations:
+                    # If a person's employer is a single generic word (e.g., "Engineering")
+                    # that's a suffix of a story org, use the full org name instead.
+                    # This fixes LLM misextraction like "Engineering" → "National Academy of Engineering"
+                    if direct_people and orgs:
+                        org_list = sorted(orgs)
+                        for person in direct_people:
+                            employer = (person.get("employer") or "").strip()
+                            if not employer or " " in employer:
+                                continue  # Only fix single-word employers
+                            employer_lower = employer.lower()
+                            # Check if this word is a suffix of any story org
+                            for org in org_list:
+                                if org.lower().endswith(employer_lower) and len(org) > len(employer):
+                                    logger.debug(
+                                        f"  Fixed person org: '{employer}' -> '{org}'"
+                                    )
+                                    person["employer"] = org
+                                    break
+
                     # Filter out invalid person names (org names, duplicates, etc.)
-                    direct_people = self._filter_valid_people(direct_people)
+                    direct_people = self._filter_valid_people(direct_people, orgs=orgs)
 
                     # Filter out entries whose name matches the story title
                     title_lower = (story.title or "").lower().strip()
@@ -2257,8 +2320,22 @@ class CompanyMentionEnricher:
                         p for p in all_people if p.get("source") != "direct"
                     ]
 
-                    # 6) Persist + validate
-                    story.organizations = sorted(org for org in orgs if org)
+                    # 6) Clean and persist + validate
+                    # Apply name cleaning and re-filter after all extraction is done
+                    cleaned_orgs: set[str] = set()
+                    for org in orgs:
+                        if not org:
+                            continue
+                        c = clean_org_name(org)
+                        if c and not is_invalid_org_name(c):
+                            cleaned_orgs.add(c)
+                        else:
+                            logger.debug(f"Filtered org during persist: '{org}'")
+                    if len(cleaned_orgs) < len(orgs):
+                        logger.info(
+                            f"  Cleaned orgs: {len(orgs)} -> {len(cleaned_orgs)}"
+                        )
+                    story.organizations = sorted(cleaned_orgs)
                     story.direct_people = direct_people
                     story.indirect_people = indirect_people
 
@@ -2318,11 +2395,83 @@ class CompanyMentionEnricher:
         self.log_metrics_summary()
         return (enriched, skipped)
 
-    def _extract_orgs_and_people(self, story: Story) -> dict | None:
-        """Extract organizations and people from a story using AI with Google Search grounding.
+    def _fetch_source_article_text(self, source_links: list[str], max_chars: int = 4000) -> str:
+        """Fetch text content from source URLs via HTTP for LLM extraction.
 
-        Uses Google Search to fetch the actual source article content for more thorough
-        extraction of people mentioned in the story.
+        Returns concatenated plain text from source articles, stripped of HTML.
+        Used when Gemini Google Search grounding is not available.
+        """
+        if not source_links:
+            logger.info("  No source URLs available for article fetching")
+            return ""
+
+        logger.info(f"  Fetching source articles ({len(source_links[:3])} URLs)...")
+        collected_text: list[str] = []
+        total_chars = 0
+
+        for url in source_links[:3]:  # Limit to 3 sources
+            if total_chars >= max_chars:
+                break
+            try:
+                response = requests.get(
+                    url,
+                    timeout=10,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Accept": "text/html,application/xhtml+xml",
+                    },
+                    allow_redirects=True,
+                )
+                if response.status_code != 200:
+                    logger.debug(f"Source fetch returned {response.status_code}: {url}")
+                    continue
+
+                content_type = response.headers.get("content-type", "")
+                if "text/html" not in content_type and "text/plain" not in content_type:
+                    logger.debug(f"Non-text content type ({content_type}): {url}")
+                    continue
+
+                html_text = response.text
+
+                # Strip HTML tags to get plain text
+                # Remove script and style blocks first
+                clean = re.sub(r"<script[^>]*>.*?</script>", "", html_text, flags=re.DOTALL | re.IGNORECASE)
+                clean = re.sub(r"<style[^>]*>.*?</style>", "", clean, flags=re.DOTALL | re.IGNORECASE)
+                # Remove all remaining HTML tags
+                clean = re.sub(r"<[^>]+>", " ", clean)
+                # Collapse whitespace
+                clean = re.sub(r"\s+", " ", clean).strip()
+
+                if len(clean) < 100:
+                    logger.debug(f"Too little text extracted from {url} ({len(clean)} chars)")
+                    continue
+
+                remaining = max_chars - total_chars
+                chunk = clean[:remaining]
+                collected_text.append(chunk)
+                total_chars += len(chunk)
+                logger.debug(f"Fetched {len(chunk)} chars from source: {url}")
+
+            except requests.exceptions.Timeout:
+                logger.debug(f"Timeout fetching source: {url}")
+            except requests.exceptions.RequestException as e:
+                logger.debug(f"Failed to fetch source ({type(e).__name__}): {url}")
+            except Exception as e:
+                logger.debug(f"Unexpected error fetching source: {e}")
+
+        if collected_text:
+            logger.info(f"  Fetched {total_chars} chars from {len(collected_text)} source article(s)")
+        else:
+            logger.info("  Could not fetch usable text from source URLs")
+
+        return "\n\n".join(collected_text)
+
+    def _extract_orgs_and_people(self, story: Story) -> dict | None:
+        """Extract organizations and people from a story using AI.
+
+        When LLM_PROVIDER is gemini, uses Google Search grounding to fetch source content.
+        For other providers, fetches source URLs directly via HTTP and includes the
+        article text in the extraction prompt.
         """
         sources_str = (
             ", ".join(story.source_links[:5])
@@ -2337,11 +2486,20 @@ class CompanyMentionEnricher:
             sources_str=sources_str,
         )
 
-        # If PREFER_GROQ is set, skip Gemini Google Search grounding and use fallback directly
-        # This avoids 429 rate limit errors when Gemini quota is exhausted
-        if Config.get_settings().prefer_groq:
-            logger.debug("Skipping Gemini Google Search grounding (PREFER_GROQ=true)")
-            return self._extract_orgs_and_people_fallback(story)
+        # Determine whether to use Gemini Google Search grounding
+        provider = (Config.LLM_PROVIDER or "").lower()
+        use_gemini_grounding = (
+            provider == "gemini"
+            and not Config.get_settings().prefer_groq
+        )
+
+        if not use_gemini_grounding:
+            # Fetch source article text via HTTP and enrich the prompt
+            source_text = self._fetch_source_article_text(story.source_links or [])
+            if source_text:
+                logger.debug(f"Fetched {len(source_text)} chars from source articles for extraction")
+                search_prompt += f"\n\nSOURCE ARTICLE CONTENT:\n{source_text}"
+            return self._extract_orgs_and_people_with_llm(search_prompt, story)
 
         try:
             # Use Gemini with Google Search grounding to fetch source content
@@ -2395,6 +2553,68 @@ class CompanyMentionEnricher:
                 logger.debug("Gemini rate-limited, using fallback extraction")
             else:
                 logger.warning(f"Error extracting orgs/people with search: {e}")
+            return self._extract_orgs_and_people_fallback(story)
+
+    def _extract_orgs_and_people_with_llm(self, prompt: str, story: Story) -> dict | None:
+        """Extract organizations and people using the configured LLM provider.
+
+        This is used when Gemini Google Search grounding is not available.
+        The prompt should already include any fetched source article content.
+        """
+        try:
+            response_text = self._get_ai_response(prompt)
+            if not response_text:
+                logger.debug("Empty response from LLM for source extraction")
+                return self._extract_orgs_and_people_fallback(story)
+
+            response_text = strip_markdown_code_block(response_text)
+
+            # Try to extract JSON from verbose responses
+            if not response_text.strip().startswith("{"):
+                json_match = re.search(
+                    r'\{[^{}]*"(?:organizations|direct_people)"[^{}]*\}',
+                    response_text,
+                    re.DOTALL,
+                )
+                if json_match:
+                    response_text = json_match.group(0)
+
+            data = json.loads(response_text)
+
+            if not isinstance(data, dict):
+                logger.debug(f"Expected dict, got {type(data).__name__}, falling back")
+                return self._extract_orgs_and_people_fallback(story)
+
+            orgs = data.get("organizations", [])
+            people = data.get("direct_people", [])
+
+            # Normalize types
+            if isinstance(orgs, str):
+                orgs = [orgs] if orgs.strip() else []
+            elif not isinstance(orgs, list):
+                orgs = []
+            if not isinstance(people, list):
+                people = []
+
+            if orgs or people:
+                logger.info(
+                    f"  Extracted from source: {len(orgs)} orgs, {len(people)} people"
+                )
+                for person in people:
+                    logger.info(
+                        f"    → {person.get('name', 'Unknown')} ({person.get('title', '')})"
+                    )
+
+            return {
+                "organizations": orgs,
+                "direct_people": people,
+            }
+
+        except json.JSONDecodeError as e:
+            logger.debug(f"Failed to parse source extraction JSON: {e}")
+            return self._extract_orgs_and_people_fallback(story)
+        except Exception as e:
+            logger.debug(f"Source extraction with LLM failed: {e}")
             return self._extract_orgs_and_people_fallback(story)
 
     def _extract_orgs_and_people_fallback(self, story: Story) -> dict | None:
@@ -2684,12 +2904,23 @@ class CompanyMentionEnricher:
 
         response_text: str | None = None
         try:
-            response_text = self._get_ai_response(prompt)
+            # Use api_client directly with system_prompt for better JSON compliance
+            response_text = api_client.generate_text(
+                prompt=prompt,
+                endpoint="indirect_people",
+                gemini_client=self.client,
+                system_prompt=(
+                    "You are a JSON API that returns information about organization leaders. "
+                    "Return ONLY valid JSON with no markdown formatting, no explanation, "
+                    "no code blocks. If you don't know the leaders, return {\"leaders\": []}."
+                ),
+            )
             if not response_text:
                 logger.debug(
                     f"Empty response for indirect people lookup: {organization_name}"
                 )
                 return []
+            response_text = response_text.strip()
 
             # Clean up response
             response_text = strip_markdown_code_block(response_text)
@@ -3420,69 +3651,28 @@ class CompanyMentionEnricher:
         return stories
 
     def _get_ai_response(self, prompt: str) -> str | None:
-        """Get response from AI (local LLM -> Groq -> Gemini).
+        """Get response from AI using the configured LLM provider.
 
-        Stops at Groq if successful to avoid Gemini rate limits.
-        Only falls back to Gemini if both Local LLM and Groq fail.
+        Uses api_client.generate_text() which respects Config.LLM_PROVIDER
+        and has its own fallback chain.
         """
         # Validate prompt is not empty
         if not prompt or not prompt.strip():
             logger.warning("Empty prompt passed to _get_ai_response")
             return None
 
-        # Try local LLM first
-        if self.local_client:
-            try:
-                content = api_client.local_llm_generate(
-                    client=self.local_client,
-                    messages=[{"role": "user", "content": prompt}],
-                    endpoint="ai_response",
-                )
-                if content:
-                    return content.strip()
-            except Exception as e:
-                if "No models loaded" in str(e):
-                    logger.debug("Local LLM has no model loaded, using Groq...")
-                else:
-                    logger.warning(f"Local AI failed: {e}. Trying Groq...")
-
-        # Try Groq as preferred fallback (free, fast) - STOP HERE if successful
-        groq_client = api_client.get_groq_client()
-        if groq_client:
-            try:
-                content = api_client.groq_generate(
-                    client=groq_client,
-                    messages=[{"role": "user", "content": prompt}],
-                    endpoint="ai_response",
-                )
-                if content:
-                    return content.strip()
-                else:
-                    logger.debug("Groq returned empty response")
-            except Exception as e:
-                logger.warning(f"Groq failed: {e}")
-
-        # Only fall back to Gemini if both Local LLM and Groq failed
-        # Check if Gemini is rate-limited before trying
-        if Config.get_settings().prefer_groq:
-            logger.debug(
-                "Skipping Gemini fallback (PREFER_GROQ=true and Groq available)"
-            )
-            return None
-
         try:
-            response = api_client.gemini_generate(
-                client=self.client,
-                model=Config.MODEL_TEXT,
-                contents=prompt,
+            content = api_client.generate_text(
+                prompt=prompt,
                 endpoint="ai_response",
+                gemini_client=self.client,
             )
-            return response.text.strip() if response.text else None
+            return content.strip() if content else None
         except Exception as e:
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                logger.debug("Gemini rate-limited, returning None")
+                logger.debug("LLM rate-limited, returning None")
             else:
-                logger.warning(f"Gemini fallback failed: {e}")
+                logger.warning(f"AI response failed: {e}")
             return None
 
     def _enrich_story(self, story: Story) -> tuple[str, str]:
@@ -3516,60 +3706,20 @@ class CompanyMentionEnricher:
         """Get company mention from AI model.
         Returns the mention text or NO_COMPANY_MENTION.
 
-        Stops at Groq if successful to avoid Gemini rate limits.
+        Uses api_client.generate_text() which respects Config.LLM_PROVIDER.
         """
-        # Use local LLM if available
-        if self.local_client:
-            try:
-                logger.debug("Using local LLM for company mention enrichment...")
-                content = api_client.local_llm_generate(
-                    client=self.local_client,
-                    messages=[{"role": "user", "content": prompt}],
-                    endpoint="company_mention",
-                )
-                if content:
-                    return content.strip()
-            except Exception as e:
-                if "No models loaded" in str(e):
-                    logger.debug("Local LLM has no model loaded, using Groq...")
-                else:
-                    logger.warning(f"Local enrichment failed: {e}. Trying Groq...")
-
-        # Try Groq as preferred fallback (free, fast) - STOP HERE if successful
-        groq_client = api_client.get_groq_client()
-        if groq_client:
-            try:
-                logger.debug("Using Groq for company mention enrichment...")
-                content = api_client.groq_generate(
-                    client=groq_client,
-                    messages=[{"role": "user", "content": prompt}],
-                    endpoint="company_mention",
-                )
-                if content:
-                    return content.strip()
-            except Exception as e:
-                logger.warning(f"Groq enrichment failed: {e}")
-
-        # Only fall back to Gemini if both Local LLM and Groq failed
-        if Config.get_settings().prefer_groq:
-            logger.debug("Skipping Gemini fallback for company mention")
-            return NO_COMPANY_MENTION
-
         try:
-            response = api_client.gemini_generate(
-                client=self.client,
-                model=Config.MODEL_TEXT,
-                contents=prompt,
+            content = api_client.generate_text(
+                prompt=prompt,
                 endpoint="company_mention",
+                gemini_client=self.client,
             )
-            if not response.text:
-                return NO_COMPANY_MENTION
-            return response.text.strip()
+            return content.strip() if content else NO_COMPANY_MENTION
         except Exception as e:
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                logger.debug("Gemini rate-limited for company mention")
+                logger.debug("LLM rate-limited for company mention")
             else:
-                logger.warning(f"Gemini enrichment failed: {e}")
+                logger.warning(f"Company mention generation failed: {e}")
             return NO_COMPANY_MENTION
 
     def _build_enrichment_prompt(self, story: Story) -> str:

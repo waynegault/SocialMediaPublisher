@@ -362,7 +362,7 @@ class NEREngine:
             try:
                 self.nlp = spacy.load(model_name)
                 self._add_custom_patterns()
-                logger.info(f"NER engine initialized with spaCy model: {model_name}")
+                logger.debug(f"NER engine initialized with spaCy model: {model_name}")
             except OSError:
                 logger.warning(
                     f"spaCy model '{model_name}' not found. "
