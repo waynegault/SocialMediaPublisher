@@ -1249,9 +1249,9 @@ def _test_verification(engine: ContentEngine) -> None:
     print(f"  - {low_quality} low quality without images (will be auto-rejected)")
     print()
     for story in stories[:5]:  # Show first 5
-        img_status = "✓" if story.image_path else f"✗ (score={story.quality_score})"
+        img_icon = "✓" if story.image_path else "✗"
         print(f"  [{story.id}] {story.title}")
-        print(f"       Image: {img_status}")
+        print(f"       Quality: {story.quality_score}/10 | Image: {img_icon}")
 
     # Create a LinkedIn lookup callback for auto-retry on insufficient coverage
     def linkedin_lookup_callback(stories_to_process: list) -> None:
@@ -1984,7 +1984,7 @@ def log_story_details(
         if direct_people:
             for person in direct_people:
                 name = person.get("name", "Unknown")
-                title = (
+                person_title = (
                     person.get("job_title", "")
                     or person.get("title", "")
                     or person.get("position", "")
@@ -2007,8 +2007,8 @@ def log_story_details(
                 validation_signals = person.get("validation_signals", [])
 
                 print(f"  • {name}")
-                if title:
-                    print(f"      Title: {title}")
+                if person_title:
+                    print(f"      Title: {person_title}")
                 if org:
                     print(f"      Organization: {org}")
                 if location:
@@ -2053,7 +2053,7 @@ def log_story_details(
         if indirect_people:
             for person in indirect_people:
                 name = person.get("name", "Unknown")
-                title = person.get("title", "") or person.get("job_title", "")
+                person_title = person.get("title", "") or person.get("job_title", "")
                 org = (
                     person.get("organization", "")
                     or person.get("company", "")
@@ -2073,8 +2073,8 @@ def log_story_details(
                 validation_signals = person.get("validation_signals", [])
 
                 print(f"  • {name}")
-                if title:
-                    print(f"      Title: {title}")
+                if person_title:
+                    print(f"      Title: {person_title}")
                 if org:
                     print(f"      Organization: {org}")
                 if role_type:
@@ -2108,7 +2108,9 @@ def log_story_details(
         else:
             print("  None")
 
-        # Log to file as well
+        # Log to file as well - flush stdout first to prevent interleaving
+        import sys
+        sys.stdout.flush()
         total_people = len(direct_people) + len(indirect_people)
         with_linkedin = sum(
             1 for p in direct_people + indirect_people if p.get("linkedin_profile")
@@ -2495,7 +2497,7 @@ def _test_scheduling(engine: ContentEngine) -> None:
     if available == 0:
         print("\nNo approved stories available to schedule.")
         print(
-            "Use option 1 (Full Pipeline) or option 16 (Search) to generate content first."
+            "Use option 1 (Full Pipeline) or option 20 (Search & Enrich) to generate content first."
         )
         return
 
@@ -4359,6 +4361,20 @@ def _analyze_intent_classification(engine: ContentEngine) -> None:
         intent_counts: dict[str, int] = {}
         career_aligned = 0
         results = []
+
+        # Intent type descriptions for legend
+        intent_descriptions = {
+            "skill_showcase": "Demonstrates technical expertise",
+            "network_building": "Encourages professional connections",
+            "thought_leadership": "Establishes authority in field",
+            "industry_awareness": "Shows knowledge of market trends",
+            "innovation": "Highlights innovative thinking",
+            "problem_solving": "Demonstrates analytical skills",
+            "collaboration": "Shows teamwork abilities",
+            "neutral": "General industry news",
+            "negative": "Could harm professional image",
+            "irrelevant": "Not career-relevant",
+        }
         
         # Process stories (batched if available)
         if BATCH_AVAILABLE and hasattr(classifier, 'classify_batch'):
@@ -4375,20 +4391,19 @@ def _analyze_intent_classification(engine: ContentEngine) -> None:
             for row, result in zip(rows, batch_results):
                 results.append((row, result))
                 
-                # Track intents
-                for intent in result.top_intents:
-                    intent_name = intent.value if hasattr(intent, 'value') else str(intent)
-                    intent_counts[intent_name] = intent_counts.get(intent_name, 0) + 1
+                # Track primary intent only (avoids inflated counts)
+                primary = result.primary_intent.value if hasattr(result.primary_intent, 'value') else str(result.primary_intent)
+                intent_counts[primary] = intent_counts.get(primary, 0) + 1
                 
                 # Display
                 title = row["title"] or ""
-                title_short = title[:45] if title else "Untitled"
-                top_intent = batch_results[0].top_intents[0].value if batch_results[0].top_intents else "unknown"
-                confidence = max((s.score for s in result.all_scores), default=0)
+                title_short = title[:50] if title else "Untitled"
+                career_pct = result.career_alignment_score
+                career_icon = "✓" if career_pct >= 0.7 else "✗"
                 
-                print(f"[{row['id']}] {title_short}...")
+                print(f"[{row['id']}] {title_short}")
                 print(
-                    f"    Intent: {top_intent} ({confidence:.0%}) | Career Score: {result.career_alignment_score:.0%}"
+                    f"    {career_icon} Primary intent: {primary.replace('_', ' ')} | Career alignment: {career_pct:.0%}"
                 )
         else:
             # Single processing (fallback)
@@ -4399,47 +4414,48 @@ def _analyze_intent_classification(engine: ContentEngine) -> None:
                 result = classifier.classify(title, summary)
                 results.append((row, result))
 
-                # Track intents
-                for intent in result.top_intents:
-                    intent_name = intent.value
-                    intent_counts[intent_name] = intent_counts.get(intent_name, 0) + 1
+                # Track primary intent only
+                primary = result.primary_intent.value
+                intent_counts[primary] = intent_counts.get(primary, 0) + 1
 
                 # Track career alignment
-                if classifier.is_career_aligned(title, summary):
+                is_aligned = classifier.is_career_aligned(title, summary)
+                if is_aligned:
                     career_aligned += 1
 
                 # Display
-                title_short = title[:45] if title else "Untitled"
-                top_intent = (
-                    result.top_intents[0].value if result.top_intents else "unknown"
-                )
-                confidence = max((s.score for s in result.all_scores), default=0)
-                aligned_icon = "✓" if classifier.is_career_aligned(title, summary) else " "
+                title_short = title[:50] if title else "Untitled"
+                career_pct = result.career_alignment_score
+                career_icon = "✓" if is_aligned else "✗"
 
-                print(f"[{row['id']}] {title_short}...")
+                print(f"[{row['id']}] {title_short}")
                 print(
-                    f"    {aligned_icon} Intent: {top_intent} ({confidence:.0%}) | Career Score: {result.career_alignment_score:.0%}"
+                    f"    {career_icon} Primary intent: {primary.replace('_', ' ')} | Career alignment: {career_pct:.0%}"
                 )
 
         # Summary
         print("\n" + "=" * 60)
-        print("Intent Distribution:")
+        print("Primary Intent Distribution:")
         for intent, count in sorted(
             intent_counts.items(), key=lambda x: x[1], reverse=True
         ):
             bar = "█" * count
-            print(f"  {intent:<20} {bar} ({count})")
+            pct = 100 * count // len(rows)
+            print(f"  {intent.replace('_', ' '):<20} {bar} {count}/{len(rows)} ({pct}%)")
 
         print(
             f"\nCareer Aligned: {career_aligned}/{len(rows)} ({100 * career_aligned // len(rows)}%)"
         )
+        print("  (✓ = career-aligned, ✗ = not aligned)")
 
-        # Show intent legend
-        print("\nIntent Types:")
-        print("  • skill_showcase: Demonstrates expertise")
-        print("  • network_building: Encourages connections")
-        print("  • thought_leadership: Establishes authority")
-        print("  • industry_awareness: Shows market knowledge")
+        # Show legend only for intents that appeared
+        seen_intents = set(intent_counts.keys())
+        if seen_intents:
+            print("\nIntent Legend:")
+            for intent_name in sorted(seen_intents):
+                desc = intent_descriptions.get(intent_name, "")
+                if desc:
+                    print(f"  • {intent_name.replace('_', ' ')}: {desc}")
         
         if BATCH_AVAILABLE:
             print("\n⚡ GPU-batched processing enabled")

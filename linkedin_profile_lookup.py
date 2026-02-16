@@ -167,6 +167,21 @@ class NodriverWrapper:
         self._run_async(_navigate())
 
     @property
+    def title(self) -> str:
+        """Get the page title (Selenium-compatible interface)."""
+
+        async def _get_title():
+            if self._tab is None:
+                return ""
+            try:
+                result = await self._tab.evaluate("document.title")
+                return result or ""
+            except Exception:
+                return ""
+
+        return self._run_async(_get_title())
+
+    @property
     def current_url(self) -> str:
         """Get the current URL (Selenium-compatible interface)."""
         if self._tab is None:

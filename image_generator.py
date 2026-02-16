@@ -619,13 +619,11 @@ class ImageGenerator:
                 logger.warning(f"⚠️ Fallback {fallback_provider} failed: {e}")
                 continue
 
-        # All providers failed
-        print("\n" + "=" * 60)
-        print("IMAGE GENERATION: All providers unavailable")
-        print("=" * 60)
-        print("Note: Pollinations.ai should always work (it's free).")
-        print("If it failed, check your internet connection.")
-        print("=" * 60 + "\n")
+        # All providers failed for this story
+        story_label = f"[{story.id}] {story.title[:50]}" if story else "current story"
+        print(f"\n⚠ Could not generate image for {story_label}")
+        print("  All configured providers failed (rate-limited or unavailable).")
+        print("  Tip: Pollinations.ai is free — check your internet connection if it failed.")
         return None
 
     def _generate_huggingface_image(
@@ -1574,6 +1572,8 @@ Do NOT include: close-up portraits, waist-up shots of individuals, or any person
 
     def _clean_image_prompt(self, prompt: str) -> str:
         """Clean and validate the image prompt for optimal Imagen generation."""
+        import re as _re
+
         # Remove markdown formatting (quotes, backticks, etc.)
         prompt = prompt.strip().strip('"').strip("'").strip("`")
         # Remove markdown code blocks if present
@@ -1582,6 +1582,48 @@ Do NOT include: close-up portraits, waist-up shots of individuals, or any person
             prompt = "\n".join(
                 line for line in lines if not line.startswith("```")
             ).strip()
+
+        # Strip common LLM preamble/meta-text before the actual prompt
+        # Matches patterns like "Here is a ...: ", "Sure! Here's ...: ", etc.
+        preamble_patterns = [
+            # "Here is a specific image prompt based on..." (with optional colon/newline)
+            r"^(?:sure[!.,]?\s*)?(?:here(?:'s| is) (?:a |an |the )?(?:specific |detailed |revised |updated )?(?:image )?prompt[^:\n]*?[:]\s*)",
+            # "I'm happy to create/help..." prefix
+            r"^(?:I'?m happy to|I'd be happy to|I can)[^:\n]*?[:]\s*",
+            # "Based on the description/context/story..." prefix
+            r"^(?:based on (?:the |this )?(?:description|context|story|article|summary)[^:\n]*?[:]\s*)",
+            # "Certainly! " or "Of course! " openers
+            r"^(?:certainly|of course|absolutely)[!.,]?\s*",
+            # "Assuming you'd like..." prefix
+            r"^(?:assuming (?:you(?:'d| would) (?:like|want|prefer))[^:\n]*?[,:]\s*(?:here (?:is|it is)[,:]?\s*)?)",
+            # "Create an image of" / "Generate an image of" meta-instruction
+            r"^(?:create|generate|produce|make) (?:a |an )?(?:image|picture|photo|photograph) (?:of|depicting|showing)\s+",
+            # Leading "image:" prefix (from LLM formatting)
+            r"^image\s*:\s*",
+        ]
+        for pattern in preamble_patterns:
+            prompt = _re.sub(pattern, "", prompt, count=1, flags=_re.IGNORECASE).strip()
+
+        # If prompt has multiple lines, the actual prompt may follow a preamble line
+        # Check if the first line looks like meta-text and the rest is the real prompt
+        lines = prompt.split("\n")
+        if len(lines) > 1:
+            first_lower = lines[0].lower().strip()
+            meta_indicators = [
+                "here is", "here's", "i've created", "i have created",
+                "image prompt", "i'm happy", "i'd be happy", "based on",
+                "sure!", "certainly", "of course", "assuming you",
+                "i'd like", "you'd like", "you would like",
+                "create an image", "generate an image",
+            ]
+            if any(indicator in first_lower for indicator in meta_indicators):
+                # Drop the preamble line and use the rest
+                remaining = "\n".join(lines[1:]).strip()
+                if remaining:
+                    prompt = remaining
+
+        # Strip surrounding quotes again (LLM may have wrapped the prompt in quotes)
+        prompt = prompt.strip().strip('"').strip("'").strip("`")
 
         # Ensure prompt starts with "A photo of" for photorealistic output
         lower_prompt = prompt.lower()

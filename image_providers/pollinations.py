@@ -98,7 +98,7 @@ class PollinationsProvider(ImageProvider):
                 f"Pollinations error {resp.status_code}",
                 provider=self.name,
                 status_code=resp.status_code,
-                retryable=resp.status_code in (429, 500, 502, 503, 504),
+                retryable=resp.status_code in (429, 500, 502, 503, 504, 530),
             )
 
         if len(resp.content) < 1000:
