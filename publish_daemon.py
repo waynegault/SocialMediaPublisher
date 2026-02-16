@@ -28,15 +28,9 @@ from config import Config
 from database import Database
 from linkedin_publisher import LinkedInPublisher
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("publish_daemon.log"),
-    ],
-)
+# Module-level logger; logging.basicConfig is called in main() so that
+# importing this module for tests does NOT pollute the root logger or
+# create publish_daemon.log in the working directory.
 logger = logging.getLogger(__name__)
 
 
@@ -225,6 +219,16 @@ def print_status(daemon: PublishDaemon):
 
 def main():
     """Main entry point for the publish daemon."""
+    # Configure logging only when running as a standalone daemon
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler("publish_daemon.log"),
+        ],
+    )
+
     parser = argparse.ArgumentParser(
         description="Background daemon for scheduled LinkedIn publishing",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -303,13 +307,20 @@ def _create_module_tests():
 
     def _make_mock_daemon(check_interval: int = 300) -> PublishDaemon:
         """Create a PublishDaemon with mocked Database and LinkedInPublisher."""
-        with patch("publish_daemon.Database") as mock_db_cls, \
-             patch("publish_daemon.LinkedInPublisher") as mock_pub_cls:
-            mock_db = MagicMock()
-            mock_pub = MagicMock()
-            mock_db_cls.return_value = mock_db
-            mock_pub_cls.return_value = mock_pub
-            daemon = PublishDaemon(check_interval=check_interval, db_path=":memory:")
+        old_sigint = signal.getsignal(signal.SIGINT)
+        old_sigterm = signal.getsignal(signal.SIGTERM)
+        try:
+            with patch("publish_daemon.Database") as mock_db_cls, \
+                 patch("publish_daemon.LinkedInPublisher") as mock_pub_cls:
+                mock_db = MagicMock()
+                mock_pub = MagicMock()
+                mock_db_cls.return_value = mock_db
+                mock_pub_cls.return_value = mock_pub
+                daemon = PublishDaemon(check_interval=check_interval, db_path=":memory:")
+        finally:
+            # Restore original signal handlers so tests don't swallow Ctrl+C
+            signal.signal(signal.SIGINT, old_sigint)
+            signal.signal(signal.SIGTERM, old_sigterm)
         return daemon
 
     def test_daemon_init_stores_interval():

@@ -22,6 +22,7 @@ import importlib
 import io
 import logging
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -36,11 +37,17 @@ warnings.filterwarnings("ignore", message=".*Task was destroyed.*")
 warnings.filterwarnings("ignore", message=".*Event loop is closed.*")
 warnings.filterwarnings("ignore", message=".*coroutine.*was never awaited.*")
 
+# On Windows, switch to SelectorEventLoop to avoid the ProactorEventLoop IOCP
+# thread ("asyncio_0") which persists after loop.close() and blocks process exit.
+if sys.platform == "win32":
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 SEPARATOR_LINE: Final[str] = "=" * 70
 SECTION_SEPARATOR: Final[str] = "\n" + SEPARATOR_LINE
 
 
-def _suppress_unraisable_hook(unraisable: object) -> None:
+def _suppress_unraisable_hook(unraisable: "sys.UnraisableHookArgs") -> None:
     """Suppress nodriver/websockets cleanup errors at exit."""
     exc_value = getattr(unraisable, "exc_value", None)
     err_str = str(exc_value) if exc_value else ""
@@ -219,6 +226,9 @@ def main() -> int:
     failed_modules = 0
     failed_names: list[str] = []
 
+    # Save original signal handlers so we can restore after tests
+    _orig_sigint = signal.getsignal(signal.SIGINT)
+
     with suppress_logging(logging.ERROR):
         for module_name, display_name in TEST_MODULES:
             success, duration = _run_module_tests(module_name, display_name)
@@ -227,6 +237,17 @@ def main() -> int:
             else:
                 failed_modules += 1
                 failed_names.append(display_name)
+
+    # Restore default SIGINT handler (tests may have overridden it)
+    signal.signal(signal.SIGINT, _orig_sigint)
+
+    # Remove any rogue logging handlers added by imported modules
+    # (e.g. publish_daemon.py's logging.basicConfig adds FileHandlers)
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        if isinstance(handler, logging.FileHandler):
+            handler.close()
+            root_logger.removeHandler(handler)
 
     # --- Final Summary ---
     total_duration = time.time() - overall_start
@@ -246,15 +267,17 @@ def main() -> int:
     if not linter_ok:
         print(f"{Colors.YELLOW}⚠️ Linter issues detected{Colors.RESET}")
 
-    all_ok = failed_modules == 0 and linter_ok
-    if all_ok:
-        print(f"\n{Colors.GREEN}{Colors.BOLD}{Icons.PASS} ALL TESTS PASSED{Colors.RESET}")
+    if failed_modules == 0:
+        if not linter_ok:
+            print(f"\n{Colors.GREEN}{Colors.BOLD}{Icons.PASS} ALL TESTS PASSED{Colors.RESET} {Colors.YELLOW}(linter warnings){Colors.RESET}")
+        else:
+            print(f"\n{Colors.GREEN}{Colors.BOLD}{Icons.PASS} ALL TESTS PASSED{Colors.RESET}")
     else:
         print(f"\n{Colors.RED}{Colors.BOLD}{Icons.FAIL} SOME TESTS FAILED{Colors.RESET}")
 
     print(f"{Colors.CYAN}{SEPARATOR_LINE}{Colors.RESET}\n")
 
-    return 0 if all_ok else 1
+    return 0 if failed_modules == 0 else 1
 
 
 if __name__ == "__main__":

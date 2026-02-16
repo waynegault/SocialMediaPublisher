@@ -1,7 +1,6 @@
 """LinkedIn publishing functionality."""
 
 import logging
-import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime

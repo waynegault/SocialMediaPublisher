@@ -316,9 +316,16 @@ class StorySearcher:
         self._cached_start_date = lookback
         return lookback
 
+    def _is_rate_limit_error(self, error: Exception) -> bool:
+        """Check if an exception indicates a rate limit / quota error."""
+        msg = str(error).lower()
+        return "429" in msg or "resource_exhausted" in msg or "quota" in msg
+
     def search_and_process(self) -> int:
         """
         Search for stories and save new ones to the database.
+        Retries automatically on 429 / RESOURCE_EXHAUSTED errors using
+        exponential backoff (API_RETRY_COUNT / API_RETRY_DELAY from config).
         Returns the number of new stories saved.
         """
         since_date = self.get_search_start_date()
@@ -330,22 +337,54 @@ class StorySearcher:
             f"Searching for stories matching: '{search_prompt}' since {since_date.date()}"
         )
 
-        try:
-            if self.local_client:
-                return self._search_local(search_prompt, since_date, summary_words)
-            else:
-                return self._search_gemini(search_prompt, since_date, summary_words)
+        max_attempts = Config.API_RETRY_COUNT + 1  # e.g. 3 retries = 4 attempts
+        base_delay = max(Config.API_RETRY_DELAY, 2.0)  # at least 2s for quota errors
+        last_error: Exception | None = None
 
-        except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                logger.error(
-                    "Search failed: API quota exceeded (429 RESOURCE_EXHAUSTED)"
-                )
-                raise RuntimeError(
-                    "API quota exceeded. Please try again later or check your Google Cloud billing/quota settings."
-                ) from e
-            logger.error(f"Search failed: {e}")
-            return 0
+        use_duckduckgo = Config.SEARCH_PROVIDER.lower() == "duckduckgo"
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                if use_duckduckgo:
+                    return self._search_local(search_prompt, since_date, summary_words)
+                else:
+                    return self._search_gemini(search_prompt, since_date, summary_words)
+
+            except Exception as e:
+                if self._is_rate_limit_error(e):
+                    last_error = e
+                    if attempt < max_attempts:
+                        delay = base_delay * (2 ** (attempt - 1))  # exponential backoff
+                        logger.warning(
+                            "Search hit rate limit (attempt %d/%d). "
+                            "Retrying in %.0fs...",
+                            attempt,
+                            max_attempts,
+                            delay,
+                        )
+                        time.sleep(delay)
+                        continue
+                    # All retries exhausted
+                    logger.error(
+                        "Search failed after %d attempts: API quota exceeded "
+                        "(429 RESOURCE_EXHAUSTED)",
+                        max_attempts,
+                    )
+                    raise RuntimeError(
+                        "API quota exceeded after retries. Please try again later "
+                        "or check your Google Cloud billing/quota settings."
+                    ) from e
+
+                # Non-rate-limit error — don't retry
+                logger.error(f"Search failed: {e}")
+                return 0
+
+        # Should not be reached, but safety net
+        if last_error:
+            raise RuntimeError(
+                "API quota exceeded after retries."
+            ) from last_error
+        return 0
 
     def _search_gemini(
         self, search_prompt: str, since_date: datetime, summary_words: int
@@ -1462,8 +1501,10 @@ class StorySearcher:
 
         self._report_progress(f"Searching for preview: '{search_prompt[:50]}...'")
 
+        use_duckduckgo = Config.SEARCH_PROVIDER.lower() == "duckduckgo"
+
         try:
-            if self.local_client:
+            if use_duckduckgo:
                 # Use DuckDuckGo search
                 search_query = self._get_search_query(search_prompt)
                 days_diff = (datetime.now() - since_date).days
@@ -1602,10 +1643,7 @@ class StorySearcher:
     def _process_with_local_llm(
         self, search_results: list[dict], search_prompt: str, summary_words: int
     ) -> list[dict]:
-        """Process search results with local LLM."""
-        if not self.local_client:
-            return []
-
+        """Process search results with Local LLM → Groq fallback chain."""
         max_stories = Config.MAX_STORIES_PER_SEARCH
         author_name = Config.LINKEDIN_AUTHOR_NAME or "the LinkedIn profile owner"
         prompt = Config.LOCAL_LLM_SEARCH_PROMPT.format(
@@ -1617,20 +1655,42 @@ class StorySearcher:
             discipline=Config.DISCIPLINE,
         )
 
-        try:
-            content = api_client.local_llm_generate(
-                client=self.local_client,
-                messages=[{"role": "user", "content": prompt}],
-                timeout=Config.LLM_LOCAL_TIMEOUT,
-                endpoint="local_search_process",
-            )
-            if content:
-                stories_data = self._parse_response(content)
-                # Validate and fix URLs - LLM may hallucinate or mismatch URLs
-                stories_data = self._validate_story_urls(stories_data, search_results)
-                return stories_data
-        except Exception as e:
-            logger.error(f"Local LLM processing failed: {e}")
+        content = None
+
+        # Try Local LLM first
+        if self.local_client:
+            try:
+                content = api_client.local_llm_generate(
+                    client=self.local_client,
+                    messages=[{"role": "user", "content": prompt}],
+                    timeout=Config.LLM_LOCAL_TIMEOUT,
+                    endpoint="local_search_process",
+                )
+            except Exception as e:
+                if "No models loaded" in str(e):
+                    logger.debug("Local LLM has no model loaded, trying Groq...")
+                else:
+                    logger.warning(f"Local LLM processing failed: {e}. Trying Groq...")
+
+        # Fallback to Groq
+        if not content:
+            groq_client = api_client.get_groq_client()
+            if groq_client:
+                try:
+                    content = api_client.groq_generate(
+                        client=groq_client,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=2048,
+                        endpoint="local_search_process",
+                    )
+                except Exception as e:
+                    logger.error(f"Groq processing failed: {e}")
+
+        if content:
+            stories_data = self._parse_response(content)
+            # Validate and fix URLs - LLM may hallucinate or mismatch URLs
+            stories_data = self._validate_story_urls(stories_data, search_results)
+            return stories_data
 
         return []
 

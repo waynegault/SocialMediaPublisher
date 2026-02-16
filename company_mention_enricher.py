@@ -45,7 +45,7 @@ try:
     BATCH_NER_AVAILABLE = True
     logger_batch = logging.getLogger(__name__)
     logger_batch.debug("Batch processor NER available")
-except ImportError as e:
+except ImportError:
     BATCH_NER_AVAILABLE = False
 
 # Patterns that look like organization names rather than person names
@@ -1351,8 +1351,13 @@ class CompanyMentionEnricher:
                 )
                 return False
 
-        # Single word names need special handling
+        # Names with too many words are likely titles/sentences, not person names
         words = name.split()
+        if len(words) > 5:
+            logger.debug(f"Filtering name with too many words ({len(words)}): '{name}'")
+            return False
+
+        # Single word names need special handling
         if len(words) == 1:
             # Single word - likely a surname only or org abbreviation
             # Allow if it has title case and doesn't match org patterns
@@ -1511,7 +1516,43 @@ class CompanyMentionEnricher:
         people: list[dict] = []
         organizations: set[str] = set()
 
+        # Build combined text for context checks
+        combined_text = f"{story.title or ''} {story.summary or ''}".lower()
+
+        # Patterns that indicate a "person" entity is actually a company
+        _company_context_patterns = [
+            "companies like ",
+            "companies such as ",
+            "manufacturers like ",
+            "manufacturers such as ",
+            "firms like ",
+            "firms such as ",
+            "corporations like ",
+            "corporations such as ",
+            "brands like ",
+            "brands such as ",
+            "providers like ",
+            "providers such as ",
+            "suppliers like ",
+            "suppliers such as ",
+        ]
+
         for person in result.persons:
+            name = person.text
+            name_lower = name.lower()
+
+            # Check if this "person" appears in a company-like context
+            is_company_context = any(
+                f"{pat}{name_lower}" in combined_text
+                for pat in _company_context_patterns
+            )
+            if is_company_context:
+                logger.debug(
+                    f"NER reclassified '{name}' from PERSON to ORG (company context)"
+                )
+                organizations.add(name)
+                continue
+
             metadata = getattr(person, "metadata", {}) or {}
             people.append(
                 {
@@ -1647,20 +1688,22 @@ Return STRICT JSON with this shape:
 }}
 
 EXTRACTION RULES:
-1. Include ONLY people explicitly named in the story content
-2. Use FULL official organization names (e.g., "Massachusetts Institute of Technology" not "MIT")
-3. Extract department/lab names when available (e.g., "Department of Chemical Engineering")
-4. Include location details for disambiguation (multiple people may share names)
-5. Capture credentials like "Dr.", "Professor", "PhD" when present
-6. For "role_in_story":
+1. Include ONLY people explicitly named BY NAME in the story content. If no individuals are named, return an EMPTY "direct_people" list
+2. NEVER use the article title, headline, or topic as a person's name
+3. Use FULL official organization names (e.g., "Massachusetts Institute of Technology" not "MIT")
+4. Extract department/lab names when available (e.g., "Department of Chemical Engineering")
+5. Include location details for disambiguation (multiple people may share names)
+6. Capture credentials like "Dr.", "Professor", "PhD" when present
+7. For "role_in_story":
    - "primary": Main subject of the story or lead researcher
    - "quoted": Directly quoted in the story
    - "mentioned": Referenced but not quoted
-7. Keep strings concise; no markdown, no additional text beyond the JSON
-8. If any field is not available, use empty string ""
-9. NEVER use the same word for first AND last name (e.g., don't create "Srinivasan Srinivasan")
-10. For single-name mentions, try to find the full name from context, or use the single name only
-11. Do NOT include organization names (universities, companies, institutes) as person names
+8. Keep strings concise; no markdown, no additional text beyond the JSON
+9. If any field is not available, use empty string ""
+10. NEVER use the same word for first AND last name (e.g., don't create "Srinivasan Srinivasan")
+11. For single-name mentions, try to find the full name from context, or use the single name only
+12. Do NOT include organization names (universities, companies, institutes) as person names
+13. Do NOT include article titles, topics, or technology names as person names
 """
 
         try:
@@ -2058,6 +2101,39 @@ EXTRACTION RULES:
             if owns_lookup and lookup is not None:
                 lookup.close()
 
+    def _sanitize_title_as_person(self) -> None:
+        """Remove direct_people entries whose name matches the story title (data-fix for older enrichments)."""
+        import json as _json
+        try:
+            with self.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT id, title, direct_people FROM stories "
+                    "WHERE enrichment_status = 'enriched' AND direct_people != '[]'"
+                )
+                for row in cursor.fetchall():
+                    title_lower = (row["title"] or "").lower().strip()
+                    if not title_lower:
+                        continue
+                    people = _json.loads(row["direct_people"]) if row["direct_people"] else []
+                    cleaned = [
+                        p for p in people
+                        if p.get("name", "").lower().strip() != title_lower
+                        and len(p.get("name", "").split()) <= 5
+                    ]
+                    if len(cleaned) < len(people):
+                        logger.info(
+                            f"Sanitized story {row['id']}: removed "
+                            f"{len(people) - len(cleaned)} invalid person(s)"
+                        )
+                        cursor.execute(
+                            "UPDATE stories SET direct_people = ? WHERE id = ?",
+                            (_json.dumps(cleaned), row["id"]),
+                        )
+                conn.commit()
+        except Exception as e:
+            logger.debug(f"Title-as-person sanitization skipped: {e}")
+
     def enrich_pending_stories(self) -> tuple[int, int]:
         """
         Enrich all pending stories with direct and indirect people + LinkedIn profiles.
@@ -2073,6 +2149,9 @@ EXTRACTION RULES:
         from linkedin_profile_lookup import LinkedInCompanyLookup
 
         stories = self.db.get_stories_needing_enrichment()
+
+        # Sanitize already-enriched stories: remove people whose name matches the story title
+        self._sanitize_title_as_person()
 
         if not stories:
             logger.info("No stories pending enrichment")
@@ -2164,6 +2243,20 @@ EXTRACTION RULES:
 
                     # Filter out invalid person names (org names, duplicates, etc.)
                     direct_people = self._filter_valid_people(direct_people)
+
+                    # Filter out entries whose name matches the story title
+                    title_lower = (story.title or "").lower().strip()
+                    if title_lower:
+                        before_count = len(direct_people)
+                        direct_people = [
+                            p for p in direct_people
+                            if p.get("name", "").lower().strip() != title_lower
+                        ]
+                        if len(direct_people) < before_count:
+                            logger.info(
+                                f"  Filtered {before_count - len(direct_people)} "
+                                f"person(s) matching story title"
+                            )
 
                     # 2) Indirect people from organizations/leaders
                     indirect_people = self._build_indirect_people(

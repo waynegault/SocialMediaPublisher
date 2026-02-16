@@ -948,7 +948,8 @@ def _test_image_generation(engine: ContentEngine) -> None:
     print("\n--- Testing Image Generation ---")
 
     # Show which image provider will be used
-    if Config.HUGGINGFACE_API_TOKEN and Config.HF_PREFER_IF_CONFIGURED:
+    hf_token = Config.get_settings().effective_huggingface_token
+    if hf_token and Config.HF_PREFER_IF_CONFIGURED:
         provider = f"HuggingFace ({Config.HF_TTI_MODEL}) with Imagen fallback"
     else:
         provider = f"Google Imagen ({Config.MODEL_IMAGE})"
@@ -1957,6 +1958,13 @@ def log_story_details(
         direct_people = (
             json_module.loads(row["direct_people"]) if row["direct_people"] else []
         )
+        # Sanitize: remove entries where name matches the story title
+        title_lower = (row["title"] or "").lower().strip()
+        if title_lower and direct_people:
+            direct_people = [
+                p for p in direct_people
+                if p.get("name", "").lower().strip() != title_lower
+            ]
         indirect_people = (
             json_module.loads(row["indirect_people"]) if row["indirect_people"] else []
         )
@@ -3802,16 +3810,14 @@ def _run_unit_tests() -> None:
 
     try:
         # Import and run tests from run_tests module
-        from run_tests import main_with_failures
+        from run_tests import main as run_tests_main
 
-        exit_code, failed_tests = main_with_failures()
+        exit_code = run_tests_main()
 
         if exit_code == 0:
             print("\n✓ All tests passed!")
         else:
-            print("\n✗ Some tests failed:")
-            for suite_name, test_name in failed_tests:
-                print(f"    - [{suite_name}] {test_name}")
+            print("\n✗ Some tests failed (see details above).")
     except ImportError as e:
         print(f"\nError importing test module: {e}")
         print("Make sure run_tests.py and test_framework.py are present.")
@@ -4314,10 +4320,11 @@ def _analyze_intent_classification(engine: ContentEngine) -> None:
     print("\n--- Intent Classification Analysis ---")
     
     # Try to use batched classifier first
+    BatchedIntent = None
     try:
         import sys
         sys.path.insert(0, r"C:\Users\wayne\.openclaw\workspace")
-        from skills.batch_processor.integrate_smp import BatchedIntent
+        from skills.batch_processor.integrate_smp import BatchedIntent  # type: ignore[import-not-found]
         BATCH_AVAILABLE = True
     except ImportError:
         BATCH_AVAILABLE = False
@@ -4326,7 +4333,7 @@ def _analyze_intent_classification(engine: ContentEngine) -> None:
         from intent_classifier import IntentClassifier
         
         # Use batched classifier if available
-        if BATCH_AVAILABLE:
+        if BATCH_AVAILABLE and BatchedIntent is not None:
             print("Using GPU-batched intent classification...")
             classifier = BatchedIntent()
         else:
@@ -4363,7 +4370,7 @@ def _analyze_intent_classification(engine: ContentEngine) -> None:
                 texts.append(f"{title}\n\n{summary}")
             
             # Batch classify
-            batch_results = classifier.classify_batch(texts)
+            batch_results = classifier.classify_batch(texts)  # type: ignore[attr-defined]
             
             for row, result in zip(rows, batch_results):
                 results.append((row, result))
@@ -5483,10 +5490,11 @@ def _test_api_keys(engine: ContentEngine) -> None:
 
     # 3. Test Hugging Face API (if configured)
     print("  Testing Hugging Face API...", end=" ", flush=True)
-    if Config.HUGGINGFACE_API_TOKEN:
+    hf_token = Config.get_settings().effective_huggingface_token
+    if hf_token:
         try:
             # Test with the whoami-v2 endpoint (v1 is deprecated)
-            headers = {"Authorization": f"Bearer {Config.HUGGINGFACE_API_TOKEN}"}
+            headers = {"Authorization": f"Bearer {hf_token}"}
             response = api_client.http_get(
                 url="https://huggingface.co/api/whoami-v2",
                 headers=headers,
