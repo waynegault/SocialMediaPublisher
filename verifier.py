@@ -376,40 +376,20 @@ class ContentVerifier:
 
     def _build_verification_prompt(self, story: Story) -> str:
         """Build the verification prompt for a story."""
-        # Count people from direct_people and indirect_people
-        all_people = (story.direct_people or []) + (story.indirect_people or [])
-        people_count = len(all_people)
-        linkedin_profiles_found = 0
-
-        # Count LinkedIn profiles in direct_people and indirect_people
-        if all_people:
-            linkedin_profiles_found = sum(
-                1
-                for p in all_people
-                if (p.get("linkedin_urn") or p.get("linkedin_profile"))
-                and str(p.get("linkedin_urn") or p.get("linkedin_profile", "")).strip()
-            )
-
-        # Get promotion message (or placeholder if not set)
-        promotion_message = (
-            story.promotion if story.promotion else "(No promotion message assigned)"
-        )
-
         summary_word_count = len(story.summary.split())
         min_summary_words = int(Config.SUMMARY_WORD_COUNT * 0.8)
+        max_summary_words = int(Config.SUMMARY_WORD_COUNT * 1.3)
 
         return Config.VERIFICATION_PROMPT.format(
             search_prompt=Config.SEARCH_PROMPT,
             story_title=story.title,
             story_summary=story.summary,
             story_sources=", ".join(story.source_links[:3]),
-            people_count=people_count,
-            linkedin_profiles_found=linkedin_profiles_found,
             summary_word_limit=Config.SUMMARY_WORD_COUNT,
             summary_word_count=summary_word_count,
             min_summary_words=min_summary_words,
+            max_summary_words=max_summary_words,
             quality_justification=story.quality_justification or "(none provided)",
-            promotion_message=promotion_message,
             discipline=Config.DISCIPLINE,
         )
 

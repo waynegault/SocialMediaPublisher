@@ -196,13 +196,11 @@ class SettingsModel(BaseSettings):
 
     image_style: str = Field(
         default=(
-            "industrial engineering photography, technical documentation style, "
-            "female engineer or scientist performing hands-on technical work, "
-            "sharp focus on equipment and processes with worker in context, "
-            "authentic PPE and workwear - hard hats, safety glasses, lab coats, coveralls, "
-            "real industrial or laboratory environment with visible technical detail, "
-            "natural workplace lighting supplemented by equipment glow, "
-            "photorealistic, editorial quality for engineering trade publication"
+            "professional editorial photography for a trade publication, "
+            "sharp focus on equipment, processes, and technical detail, "
+            "authentic workplace setting with real tools, instruments, and materials, "
+            "appropriate safety gear and professional attire for the setting, "
+            "natural workplace lighting, photorealistic, high editorial quality"
         ),
         alias="IMAGE_STYLE",
     )
@@ -256,8 +254,8 @@ class SettingsModel(BaseSettings):
     browser_backend: str = Field(default="nodriver", alias="BROWSER_BACKEND")
     search_prompt: str = Field(
         default=(
-            "I'm a professional {discipline}. I'm looking for the latest professional {discipline} "
-            "stories I can summarise for publication on my LinkedIn profile"
+            "latest {discipline} news: breakthroughs, research findings, industry developments, "
+            "regulatory changes, and notable projects suitable for LinkedIn"
         ),
         alias="SEARCH_PROMPT",
     )
@@ -406,45 +404,76 @@ class SettingsModel(BaseSettings):
 
     # --- Prompt Templates (loaded separately for brevity) ---
     # These are loaded from env vars but validated as non-empty strings
-    image_refinement_prompt: str = Field(default="", alias="IMAGE_REFINEMENT_PROMPT")
+    image_refinement_prompt: str = Field(
+        default=(
+            "Create a single, detailed image-generation prompt for this story.\n\n"
+            "Story title: {story_title}\n"
+            "Story summary: {story_summary}\n\n"
+            "Style guidance: {image_style}\n\n"
+            "RULES:\n"
+            "1. Output ONLY the image prompt — no preamble, no commentary, no quotes.\n"
+            "2. Start the prompt with 'A photo of' for photorealistic output.\n"
+            "3. Describe a SPECIFIC scene that illustrates this particular story, not a generic workplace.\n"
+            "4. Include concrete visual details: specific equipment, materials, environment, and actions.\n"
+            "5. Include the central human character described in the MANDATORY APPEARANCE section above.\n"
+            "6. End with lighting and camera directions (e.g., 'shot with 85mm lens, natural light').\n"
+            "7. Keep the prompt under 120 words."
+        ),
+        alias="IMAGE_REFINEMENT_PROMPT",
+    )
     image_refinement_prompt_no_human: str = Field(
-        default="", alias="IMAGE_REFINEMENT_PROMPT_NO_HUMAN"
+        default=(
+            "Create a single, detailed image-generation prompt for this story.\n\n"
+            "Story title: {story_title}\n"
+            "Story summary: {story_summary}\n\n"
+            "Style guidance: {image_style}\n\n"
+            "RULES:\n"
+            "1. Output ONLY the image prompt — no preamble, no commentary, no quotes.\n"
+            "2. Start the prompt with 'A photo of' for photorealistic output.\n"
+            "3. Describe a SPECIFIC scene that illustrates this particular story, not a generic workplace.\n"
+            "4. Include concrete visual details: specific equipment, materials, environment, and actions.\n"
+            "5. Do NOT include any person as the central subject (see instructions above).\n"
+            "6. End with lighting and camera directions (e.g., 'wide-angle lens, natural light').\n"
+            "7. Keep the prompt under 120 words."
+        ),
+        alias="IMAGE_REFINEMENT_PROMPT_NO_HUMAN",
     )
     image_fallback_prompt: str = Field(
         default=(
-            "A photo of {appearance} {discipline} professional, framed from waist up in center-right of image, "
-            "actively working with the subject matter related to: {story_title}. "
-            "She occupies 45% of the frame with face clearly visible, confident warm expression. "
-            "Relevant tools, subjects, or setting visible behind her shoulder. "
-            "Authentic workplace setting appropriate to {discipline} (clinic, lab, field, office, facility). "
-            "Shot with 85mm lens, natural workplace lighting, editorial quality for a professional publication."
+            "A photo of {appearance} {discipline} professional in an authentic workplace "
+            "actively engaged with the subject matter of: {story_title}. "
+            "Face clearly visible with a confident, warm expression. "
+            "Relevant tools, equipment, or technical environment in the background. "
+            "Natural workplace lighting, photorealistic, editorial quality for a professional publication."
         ),
         alias="IMAGE_FALLBACK_PROMPT",
     )
     search_instruction_prompt: str = Field(
         default=(
-            "You are an expert {discipline_title} news curator with HIGH editorial standards.\n\n"
-            "TASK: Find up to {max_stories} groundbreaking stories matching: {search_prompt}\n\n"
-            "STRICT REQUIREMENTS:\n"
-            "1. Stories must be DIRECTLY relevant to {discipline} professional work\n"
+            "You are an expert {discipline_title} news curator with high editorial standards.\n\n"
+            "TASK: Find up to {max_stories} noteworthy stories matching: {search_prompt}\n\n"
+            "REQUIREMENTS:\n"
+            "1. Stories must be DIRECTLY relevant to {discipline} professional practice\n"
             "2. Must be from reputable sources (major publications, research institutions, industry news)\n"
             "3. Must have verifiable facts and specific technical details\n"
             "4. No speculation, opinion pieces, or tangentially related content\n"
-            "5. Must be published after {since_date}\n\n"
+            "5. Must be published after {since_date}\n"
+            "6. Each story must cover a DISTINCT topic — no overlapping or duplicate stories\n\n"
             "For EACH story, provide:\n"
-            "- title: Clear, engaging headline\n"
-            "- summary: EXACTLY {summary_words} words, first-person narrative starting with 'I', "
-            "providing professional insight and analysis (NOT just restating the headline)\n"
+            "- title: Clear, factual headline (do not editorialize or add hype)\n"
+            "- summary: Approximately {summary_words} words. Write as a LinkedIn post from a {discipline} "
+            "professional sharing their perspective: use first-person ('I'), provide professional "
+            "insight and analysis, explain why this matters to the field. Do NOT just restate the headline.\n"
             "- sources: Array of source article URLs\n"
-            "- quality_score: 1-10 rating (be harsh: 7=decent, 8=good, 9=excellent, 10=exceptional)\n"
-            "- quality_justification: 1-2 sentences explaining WHY this score and relevance (REQUIRED)\n"
+            "- quality_score: 1-10 rating (be strict: 7=solid relevance, 8=strong, 9=excellent, 10=exceptional)\n"
+            "- quality_justification: 1-2 sentences explaining WHY this score (REQUIRED)\n"
             "- category: One of [Research, Industry, Career, Technology, Policy]\n"
             "- direct_people: Array of people mentioned with name, position, company\n\n"
             "QUALITY STANDARDS:\n"
-            "- Only include stories you would score 7+\n"
-            "- A 9/10 story must have exceptional relevance and depth\n"
-            "- Reject tangentially related content (e.g., shipping for chemical engineering)\n\n"
-            "Return ONLY valid JSON array, no markdown or explanation."
+            "- Only include stories scoring 7+\n"
+            "- Reject content only tangentially related to {discipline}\n"
+            "- Prefer stories with real-world impact, technical depth, or professional significance\n\n"
+            "Return ONLY a valid JSON array. No markdown, no explanation, no wrapper text."
         ),
         alias="SEARCH_INSTRUCTION_PROMPT",
     )
@@ -455,29 +484,24 @@ class SettingsModel(BaseSettings):
             "Title: {story_title}\n"
             "Summary: {story_summary}\n"
             "Summary word count: {summary_word_count} (target: {summary_word_limit})\n"
-            "Quality justification provided: {quality_justification}\n"
+            "Quality justification: {quality_justification}\n"
             "Sources: {story_sources}\n"
             "Discipline: {discipline}\n"
-            "Promotion: {promotion_message}\n"
-            "People identified: {people_count}\n"
-            "LinkedIn profiles found: {linkedin_profiles_found}\n"
             "Search criteria: {search_prompt}\n\n"
-            "STRICT REJECTION CRITERIA (reject if ANY apply):\n"
-            "1. SUMMARY LENGTH: Summary must be 80%-130% of target word count ({min_summary_words}-{summary_word_limit}+ words). "
-            "Too short (<80%) = lacks depth. Slightly over target (up to 130%) is ACCEPTABLE.\n"
-            "2. RELEVANCE: Story must be DIRECTLY relevant to {discipline} work - not tangentially related. "
-            "A story about shipbuilding is NOT relevant to chemical engineering even if ships carry chemicals.\n"
-            "3. SUBSTANCE: Summary must provide insight, analysis, or professional value - not just restate the headline.\n"
-            "4. QUALITY JUSTIFICATION: If no quality justification was provided by the search, this indicates low-quality curation.\n\n"
-            "RESPONSE FORMAT:\n"
+            "REJECTION CRITERIA — reject if ANY apply:\n"
+            "1. SUMMARY LENGTH: Must be {min_summary_words}-{max_summary_words} words "
+            "(80%-130% of target). Too short = lacks depth; far over = needs tightening.\n"
+            "2. RELEVANCE: Must be DIRECTLY relevant to {discipline} professional practice. "
+            "Reject stories only tangentially connected to the discipline.\n"
+            "3. SUBSTANCE: Summary must provide professional insight or analysis, "
+            "not merely restate the headline.\n"
+            "4. QUALITY JUSTIFICATION: Missing justification signals poor curation — reject.\n"
+            "5. TONE: Summary should read as a credible LinkedIn post from a {discipline} "
+            "professional — no clickbait, no excessive hype, no promotional language.\n\n"
+            "RESPONSE FORMAT (exactly two lines):\n"
             "Line 1: APPROVED or REJECTED\n"
-            "Line 2: Brief reason (MAX 20 words) citing which criteria failed or why approved.\n\n"
-            "Example responses:\n"
-            "APPROVED\n"
-            "Strong technical content directly relevant to chemical engineering with good depth.\n\n"
-            "REJECTED\n"
-            "Summary only 30 words, needs 160+ words minimum.\n\n"
-            "Be STRICT on relevance and substance - but accept summaries within 80-130% of target."
+            "Line 2: Reason in ≤20 words citing the specific criterion.\n\n"
+            "Be strict on relevance and substance. Accept summaries within 80-130% of target length."
         ),
         alias="VERIFICATION_PROMPT",
     )
@@ -493,14 +517,15 @@ class SettingsModel(BaseSettings):
         default=(
             "You are a strict news curator for a {discipline} professional. Analyze these search results and extract ONLY highly relevant stories.\n\n"
             "SEARCH RESULTS:\n{search_results}\n\n"
-            "TASK: Select up to {max_stories} stories that are DIRECTLY relevant to {discipline} professional work for LinkedIn publication.\n\n"
+            "TASK: Select up to {max_stories} stories that are DIRECTLY relevant to {discipline} professional work for LinkedIn publication.\n"
+            "Each story must cover a DISTINCT topic — no overlapping or duplicate stories.\n\n"
             "RELEVANCE CRITERIA (be strict):\n"
             "- Story must be about {discipline} processes, techniques, research, or industry developments\n"
             "- Tangentially related stories (e.g., logistics, shipping, business deals) should be scored LOW or excluded\n"
             "- Prefer stories with technical depth, research findings, or professional insights\n\n"
             "For each story, provide:\n"
-            "- title: Clear, engaging headline\n"
-            "- summary: EXACTLY {summary_words} words, first-person narrative starting with 'I' providing professional insight and analysis, NOT just restating the headline\n"
+            "- title: Clear, factual headline (do not editorialize)\n"
+            "- summary: Approximately {summary_words} words, first-person narrative starting with 'I' providing professional insight and analysis, NOT just restating the headline\n"
             "- source_links: Array of source URLs\n"
             "- quality_score: 1-10 rating (be harsh: 7-8 = good, 9-10 = exceptional only)\n"
             "- quality_justification: 1-2 sentences explaining WHY this score (REQUIRED)\n"
