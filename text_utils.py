@@ -652,9 +652,20 @@ def calculate_similarity(
         jaccard = len(intersection) / len(union) if union else 0.0
 
     # --- SequenceMatcher similarity (character-level) ---
-    from difflib import SequenceMatcher
+    # Only use SequenceMatcher when Jaccard shows at least some word overlap.
+    # Without this gate, SequenceMatcher gives noisy non-zero scores for
+    # completely unrelated texts (e.g. "hello" vs "goodbye" → 0.17).
+    # Average both directions to guarantee symmetry (SequenceMatcher's
+    # internal junk heuristic can make ratio(a,b) != ratio(b,a)).
+    seq_ratio = 0.0
+    if jaccard > 0:
+        from difflib import SequenceMatcher
 
-    seq_ratio = SequenceMatcher(None, text1.lower(), text2.lower()).ratio()
+        t1, t2 = text1.lower(), text2.lower()
+        seq_ratio = (
+            SequenceMatcher(None, t1, t2).ratio()
+            + SequenceMatcher(None, t2, t1).ratio()
+        ) / 2.0
 
     return max(jaccard, seq_ratio)
 

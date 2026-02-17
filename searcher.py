@@ -1629,22 +1629,23 @@ class StorySearcher:
             retryable_exceptions=(Exception,),
         )
         def do_search():
+            region = Config.DUCKDUCKGO_REGION
             with DDGS() as ddgs:
                 # Try News search first
                 results = list(
                     ddgs.news(
-                        search_query, timelimit=timelimit, max_results=max_results
+                        search_query, region=region, timelimit=timelimit, max_results=max_results
                     )
                 )
                 if not results:
                     results = list(
                         ddgs.text(
-                            search_query, timelimit=timelimit, max_results=max_results
+                            search_query, region=region, timelimit=timelimit, max_results=max_results
                         )
                     )
                 if not results and timelimit:
                     results = list(
-                        ddgs.text(search_query, timelimit=None, max_results=max_results)
+                        ddgs.text(search_query, region=region, timelimit=None, max_results=max_results)
                     )
                 return results
 

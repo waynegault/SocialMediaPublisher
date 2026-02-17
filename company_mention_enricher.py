@@ -30,7 +30,6 @@ from url_utils import validate_linkedin_url
 
 # Import shared entity validation constants from entity_constants (no optional dependencies)
 from entity_constants import (
-    INVALID_ORG_NAMES,
     VALID_SINGLE_WORD_ORGS,
     INVALID_PERSON_NAMES,
     is_invalid_org_name,

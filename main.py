@@ -5113,7 +5113,6 @@ immediately.
         return
 
     selected_key = providers[idx][0]
-    selected_name = providers[idx][1]
 
     # Provider-specific configuration
     env_updates: dict[str, str] = {}
@@ -5644,7 +5643,7 @@ def _get_provider_model_options(provider: str) -> list[tuple[str, str]]:
 def _save_image_provider_to_env(provider: str, model: str) -> None:
     """Save image provider settings to .env file."""
     _save_env_values({"IMAGE_PROVIDER": provider, "IMAGE_MODEL": model})
-    print(f"\n✓ Saved image provider configuration to .env")
+    print("\n✓ Saved image provider configuration to .env")
     print("  Settings will be used on next image generation.")
 
 

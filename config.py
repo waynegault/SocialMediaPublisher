@@ -298,6 +298,9 @@ class SettingsModel(BaseSettings):
     duckduckgo_max_results: int = Field(
         default=10, ge=1, le=100, alias="DUCKDUCKGO_MAX_RESULTS"
     )
+    duckduckgo_region: str = Field(
+        default="wt-wt", alias="DUCKDUCKGO_REGION"
+    )  # wt-wt=worldwide, us-en=US, uk-en=UK, etc.
     llm_max_output_tokens: int = Field(
         default=8192, ge=1, alias="LLM_MAX_OUTPUT_TOKENS"
     )
