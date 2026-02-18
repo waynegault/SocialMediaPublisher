@@ -370,18 +370,9 @@ def create_standard_test_runner(
 
     def run_comprehensive_tests() -> bool:
         try:
-            result = module_test_function()
-            if result:
-                print("\u2705 Passed: 1")
-                print("\u274c Failed: 0")
-            else:
-                print("\u2705 Passed: 0")
-                print("\u274c Failed: 1")
-            return result
+            return module_test_function()
         except Exception as e:
             print(f"\u274c Test execution failed: {e}")
-            print("\u2705 Passed: 0")
-            print("\u274c Failed: 1")
             return False
 
     return run_comprehensive_tests
