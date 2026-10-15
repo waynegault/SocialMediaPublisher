@@ -38,6 +38,80 @@ debt has been found or eliminated.
 - Hard-coded Python executables in scripts, unresolved circular imports, suppressed
   errors elsewhere, and relevant log/diagnostic quality.
 
+## Follow-up TODO list
+
+These are proposed next work items, ordered to protect data and improve confidence
+before broad refactoring. Treat each item as its own reviewable batch and update
+the findings table with evidence, disposition, and targeted test results.
+
+### P0 — Test safety and trustworthy results
+
+- [ ] Audit every test and test helper for writes to the configured database,
+  image/output directories, credentials, network services, and other persistent
+  state. Replace real resources with temporary directories/databases and mocked
+  external services; prove isolation on both success and failure paths.
+- [ ] Identify and gate tests that contact real APIs, browsers, or LLM providers.
+  Unit-test provider selection and fallback using fakes; require explicit
+  integration mode for live calls and make skipped tests visible in the summary.
+- [ ] Make a clean `.venv` setup reproducible, then run the complete unit suite
+  and lint/type checks through `.venv` only. Record missing optional dependencies
+  separately instead of treating a partial run as full-suite validation.
+
+### P1 — Validate boundaries and cover LLM behavior
+
+- [ ] Inventory all HTTP request, database deserialization, configuration, and
+  LLM-output boundaries. Add strict Pydantic models where untrusted or serialized
+  data enters domain logic; reject unknown/malformed fields and test invalid
+  values before side effects.
+- [ ] Add deterministic text-LLM benchmark/evaluation coverage for search
+  distillation and story processing, verification, source/people extraction,
+  company mentions, and originality assessment. Use fixed cases and expected
+  quality criteria; report selected and fallback providers separately, latency,
+  failures, and output validity. Keep routine unit tests fully offline.
+- [ ] Audit success-shaped fallbacks and broad exception catches. Preserve
+  intended resilience, but distinguish unavailable/invalid output from valid
+  empty results; log or propagate failures with task/provider context and add
+  tests for each failure path.
+- [ ] Audit mutating operations for idempotency, especially publishing,
+  scheduling, story updates, migrations, and database writes. Define the
+  duplicate/retry behavior and verify repeated calls do not create duplicate
+  side effects.
+
+### P2 — Simplify structure and consolidate shared logic
+
+- [ ] Replace embedded production-module test suites and the custom test
+  registry with independently discoverable tests in dedicated test modules.
+  Keep a thin standard test command, preserve meaningful test outcomes, and
+  migrate incrementally so each batch remains runnable.
+- [ ] Decompose the largest mixed-responsibility modules, starting with
+  `linkedin_profile_lookup.py`, `main.py`, and `company_mention_enricher.py`.
+  Move cohesive responsibilities behind explicit interfaces; avoid changing
+  behavior in the same batch as structural moves and add characterization tests
+  before extraction.
+- [ ] Compare evidence, source credibility, organization/person classification,
+  and entity matching implementations. Consolidate only where semantics match;
+  document any intentional distinctions and remove duplicate models/helpers
+  once callers and tests are migrated.
+- [ ] Search for unfinished stubs, no-op code, dead branches, unused modules,
+  unnecessary compatibility shims, poorly named files, and hard-coded
+  interpreter paths. Remove or wire each confirmed case and test the resulting
+  command/API behavior.
+- [ ] Review import dependencies for cycles and oversized public interfaces.
+  Extract shared low-level types/helpers only where needed to remove a
+  demonstrated cycle or duplicated implementation.
+- [ ] Review logging and warning behavior for suppressed diagnostics, vague
+  messages, secrets/PII exposure, and swallowed cleanup failures. Keep expected
+  fallback warnings observable and add tests that verify important errors reach
+  logs or callers.
+
+### Deferred — History cleanup scripts
+
+- [ ] Decide whether to delete or rewrite `cleanup-history.ps1` and
+  `cleanup-history.sh`. Do not execute either script as-is: they rewrite Git
+  history and contain stale absolute paths. If retained, first make paths
+  repository-relative, remove global-Python fallbacks, correct the no-op
+  placeholder replacement, and document a dry-run/backup/recovery procedure.
+
 ## Verification and disposition
 
 The initial baseline was not valid: imports failed because declared packages
