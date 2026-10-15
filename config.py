@@ -12,51 +12,39 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _check_venv() -> None:
     """Check if running in the correct virtual environment."""
-    proj_root = Path(__file__).parent
+    venv_dir = Path(__file__).resolve().parent / ".venv"
     current_exe = Path(sys.executable).resolve()
 
-    # Check for both common venv directory names
-    venv_candidates = [(".venv", proj_root / ".venv"), ("venv", proj_root / "venv")]
-    existing_venvs = [(name, path) for name, path in venv_candidates if path.exists()]
-
-    if not existing_venvs:
-        # No venv directory found, skip check
+    if not venv_dir.exists():
         return
 
-    # Check if current interpreter is in ANY of the existing venvs
-    for venv_name, venv_dir in existing_venvs:
-        venv_scripts = venv_dir / ("Scripts" if os.name == "nt" else "bin")
-        if str(current_exe).startswith(str(venv_scripts.resolve())):
-            # Running in this venv - all good
-            return
+    if Path(sys.prefix).resolve() == venv_dir.resolve():
+        return
 
-    # Not running in any of the existing venvs - show error
-    # Use the first existing venv for the error message
-    venv_name, venv_dir = existing_venvs[0]
     venv_scripts = venv_dir / ("Scripts" if os.name == "nt" else "bin")
 
     print("=" * 60)
-    print(f"ERROR: Not running in the {venv_name} virtual environment!")
+    print("ERROR: Not running in the repository .venv virtual environment!")
     print("=" * 60)
     print(f"\nCurrent Python: {current_exe}")
     print(f"Expected venv:  {venv_scripts}")
     print("\nTo fix, either:")
     print("  1. Activate the venv first:")
     if os.name == "nt":  # pragma: no cover
-        print(f"     {venv_name}\\Scripts\\activate")
+        print("     .venv\\Scripts\\Activate.ps1")
     else:  # pragma: no cover
-        print(f"     source {venv_name}/bin/activate")
+        print("     source .venv/bin/activate")
     print("  2. Or run directly with venv Python:")
     if os.name == "nt":  # pragma: no cover
-        print(f"     {venv_name}\\Scripts\\python main.py")
+        print("     .venv\\Scripts\\python.exe main.py")
     else:  # pragma: no cover
-        print(f"     {venv_name}/bin/python main.py")
+        print("     .venv/bin/python main.py")
     print()
     sys.exit(1)
 
@@ -615,7 +603,7 @@ class SettingsModel(BaseSettings):
 # Create the settings instance (validates at import time)
 try:
     _settings = SettingsModel()
-except Exception as e:
+except ValidationError as e:
     print("=" * 60)
     print("ERROR: Configuration validation failed!")
     print("=" * 60)

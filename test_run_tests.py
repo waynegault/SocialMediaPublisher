@@ -41,16 +41,37 @@ def _create_module_tests() -> bool:
     def test_lint_failure_fails_process():
         with (
             patch.object(run_tests, "TEST_MODULES", []),
+            patch.object(run_tests, "_is_repository_venv", return_value=True),
             patch.object(run_tests, "_run_linter", return_value=False),
             patch.object(run_tests.sys, "argv", ["run_tests.py"]),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             assert run_tests.main() == 1
 
+    def test_repository_venv_detection():
+        expected_venv = run_tests._repository_venv_path()
+        with patch.object(run_tests.sys, "prefix", str(expected_venv)):
+            assert run_tests._is_repository_venv()
+        with patch.object(run_tests.sys, "prefix", str(expected_venv.parent)):
+            assert not run_tests._is_repository_venv()
+
+    def test_runner_rejects_non_repository_venv():
+        output = io.StringIO()
+        with (
+            patch.object(run_tests, "_is_repository_venv", return_value=False),
+            patch.object(run_tests, "_run_linter") as run_linter,
+            contextlib.redirect_stdout(output),
+        ):
+            assert run_tests.main() == 2
+        run_linter.assert_not_called()
+        assert "repository virtual environment" in output.getvalue()
+
     for name, test in [
         ("Missing test entrypoint fails", test_missing_entrypoint_fails),
         ("Missing Ruff fails lint gate", test_missing_ruff_fails_lint_gate),
         ("Linter timeout fails lint gate", test_linter_timeout_fails_lint_gate),
+        ("Repository venv detection", test_repository_venv_detection),
+        ("Rejects non-repository venv", test_runner_rejects_non_repository_venv),
         ("Lint failure fails process", test_lint_failure_fails_process),
     ]:
         suite.run_test(

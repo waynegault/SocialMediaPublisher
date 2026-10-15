@@ -8,9 +8,10 @@ intelligent quality assessment, and detailed performance analytics with
 automated test discovery and professional reporting for reliable system validation.
 
 Usage:
-    python run_tests.py                # Run all tests with detailed reporting
-    python run_tests.py --integration  # Run integration tests with live API access
-    python run_tests.py --skip-linter  # Skip linter checks
+    .venv\\Scripts\\python.exe run_tests.py                # Windows
+    .venv\\Scripts\\python.exe run_tests.py --integration  # Live API tests
+    .venv\\Scripts\\python.exe run_tests.py --skip-linter  # Skip lint checks
+    .venv/bin/python run_tests.py                         # Linux/macOS
 
 Modes:
     Default: Unit tests only, SKIP_LIVE_API_TESTS=true
@@ -44,6 +45,16 @@ def _cleanup_asyncio() -> None:
 
 
 atexit.register(_cleanup_asyncio)
+
+
+def _repository_venv_path() -> Path:
+    """Return the repository-local virtual environment path."""
+    return Path(__file__).resolve().parent / ".venv"
+
+
+def _is_repository_venv() -> bool:
+    """Return whether this process is using the repository's .venv interpreter."""
+    return Path(sys.prefix).resolve() == _repository_venv_path().resolve()
 
 
 # Module registry: (module_name, display_name)
@@ -183,6 +194,16 @@ def _run_module_tests(module_name: str, display_name: str) -> tuple[bool, float]
 
 def main() -> int:
     """Run all tests and return exit code."""
+    if not _is_repository_venv():
+        venv = _repository_venv_path()
+        python = (
+            venv / "Scripts" / "python.exe"
+            if os.name == "nt"
+            else venv / "bin" / "python"
+        )
+        print(f"ERROR: Run tests with the repository virtual environment: {python}")
+        return 2
+
     overall_start = time.time()
     skip_linter = "--skip-linter" in sys.argv
     integration_mode = "--integration" in sys.argv
