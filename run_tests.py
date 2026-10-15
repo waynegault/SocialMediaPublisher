@@ -49,6 +49,7 @@ atexit.register(_cleanup_asyncio)
 # Module registry: (module_name, display_name)
 TEST_MODULES: list[tuple[str, str]] = [
     ("test_run_tests", "Test Runner"),
+    ("test_story_update_api", "Story Update API"),
     ("config", "Configuration"),
     ("domain_credibility", "Domain Credibility"),
     ("url_utils", "URL Utilities"),

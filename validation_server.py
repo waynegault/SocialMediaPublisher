@@ -8,10 +8,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from flask import Flask, render_template_string, request, jsonify, send_from_directory
+from flask import Flask, jsonify, render_template_string, request, send_from_directory
+from pydantic import ValidationError
+from werkzeug.exceptions import BadRequest, UnsupportedMediaType
 
 from config import Config
 from database import Database
+from story_update import apply_story_update
 
 logger = logging.getLogger(__name__)
 
@@ -1862,27 +1865,22 @@ class ValidationServer:
                 if not story:
                     return jsonify({"error": "Story not found"}), 404
 
-                # Update fields
-                if "title" in data:
-                    story.title = data["title"]
-                if "summary" in data:
-                    story.summary = data["summary"]
-                if "hashtags" in data:
-                    story.hashtags = data["hashtags"]
-                if "promotion" in data:
-                    story.promotion = data["promotion"]
-                if "scheduled_time" in data:
-                    if data["scheduled_time"]:
-                        story.scheduled_time = datetime.fromisoformat(
-                            data["scheduled_time"]
-                        )
-                    else:
-                        story.scheduled_time = None
-
+                apply_story_update(story, data)
                 self.db.update_story(story)
 
                 # Return updated story
                 return jsonify(story.to_dict())
+            except ValidationError as e:
+                return jsonify(
+                    {
+                        "error": "Invalid story update",
+                        "details": e.errors(
+                            include_input=False, include_context=False
+                        ),
+                    }
+                ), 400
+            except (BadRequest, UnsupportedMediaType) as e:
+                return jsonify({"error": e.description}), e.code
             except Exception as e:
                 logger.exception(f"Failed to update story {story_id}")
                 return jsonify({"error": str(e)}), 500
@@ -2143,8 +2141,9 @@ class ValidationServer:
 
     def start(self):
         """Start the validation server and open browser."""
-        import werkzeug.serving
         import socket
+
+        import werkzeug.serving
 
         # Check if port is available, if not try to find an available one
         original_port = self.port

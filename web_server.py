@@ -37,6 +37,8 @@ from flask import (
     request,
     send_from_directory,
 )
+from pydantic import ValidationError
+from werkzeug.exceptions import BadRequest, UnsupportedMediaType
 
 try:
     from flask_cors import CORS
@@ -46,6 +48,7 @@ except ImportError:
 from config import Config
 from dashboard import DashboardMetrics, PipelineStatus
 from database import Database
+from story_update import apply_story_update
 
 logger = logging.getLogger(__name__)
 
@@ -387,24 +390,20 @@ def create_stories_api_blueprint(db: Database) -> Blueprint:
             if not story:
                 return jsonify({"error": "Story not found"}), 404
 
-            if "title" in data:
-                story.title = data["title"]
-            if "summary" in data:
-                story.summary = data["summary"]
-            if "hashtags" in data:
-                story.hashtags = data["hashtags"]
-            if "promotion" in data:
-                story.promotion = data["promotion"]
-            if "scheduled_time" in data:
-                if data["scheduled_time"]:
-                    story.scheduled_time = datetime.fromisoformat(
-                        data["scheduled_time"]
-                    )
-                else:
-                    story.scheduled_time = None
-
+            apply_story_update(story, data)
             db.update_story(story)
             return jsonify(story.to_dict())
+        except ValidationError as e:
+            return jsonify(
+                {
+                    "error": "Invalid story update",
+                    "details": e.errors(
+                        include_input=False, include_context=False
+                    ),
+                }
+            ), 400
+        except (BadRequest, UnsupportedMediaType) as e:
+            return jsonify({"error": e.description}), e.code
         except Exception as e:
             logger.exception(f"Failed to update story {story_id}")
             return jsonify({"error": str(e)}), 500
