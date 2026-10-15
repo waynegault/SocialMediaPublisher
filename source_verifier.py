@@ -10,22 +10,18 @@ import logging
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+from config import Config
 from database import Story
 from domain_credibility import (
     extract_domain,
-    get_domain_tier,
     get_credibility_score,
+    get_domain_tier,
     is_academic_domain,
     is_government_domain,
     is_primary_source,
 )
 
 logger = logging.getLogger(__name__)
-
-
-# Domain tier constants are now imported from domain_credibility.py
-# The following are kept for backward compatibility if imported directly:
-# - TIER_1_DOMAINS, TIER_2_DOMAINS, TIER_3_DOMAINS, LOW_CREDIBILITY_DOMAINS
 
 
 @dataclass
@@ -100,31 +96,21 @@ class SourceVerifier:
             min_credibility: Minimum average credibility score (0.0-1.0)
             require_tier1_or_2: Whether to require at least one tier 1 or 2 source
         """
-        # Import Config here to allow override
-        try:
-            from config import Config
-
-            self.min_sources = min_sources or getattr(
-                Config, "MIN_SOURCES_REQUIRED", self.DEFAULT_MIN_SOURCES
-            )
-            self.min_credibility = min_credibility or getattr(
-                Config, "MIN_SOURCE_CREDIBILITY", self.DEFAULT_MIN_CREDIBILITY
-            )
-            self.require_tier1_or_2 = (
-                require_tier1_or_2
-                if require_tier1_or_2 is not None
-                else getattr(
-                    Config, "REQUIRE_TIER1_OR_2_SOURCE", self.DEFAULT_REQUIRE_TIER1_OR_2
-                )
-            )
-        except ImportError:
-            self.min_sources = min_sources or self.DEFAULT_MIN_SOURCES
-            self.min_credibility = min_credibility or self.DEFAULT_MIN_CREDIBILITY
-            self.require_tier1_or_2 = (
-                require_tier1_or_2
-                if require_tier1_or_2 is not None
-                else self.DEFAULT_REQUIRE_TIER1_OR_2
-            )
+        self.min_sources = (
+            min_sources
+            if min_sources is not None
+            else Config.MIN_SOURCES_REQUIRED
+        )
+        self.min_credibility = (
+            min_credibility
+            if min_credibility is not None
+            else Config.MIN_SOURCE_CREDIBILITY
+        )
+        self.require_tier1_or_2 = (
+            require_tier1_or_2
+            if require_tier1_or_2 is not None
+            else Config.REQUIRE_TIER1_OR_2_SOURCE
+        )
 
     def check_source_credibility(self, url: str) -> SourceCredibilityResult:
         """
@@ -136,7 +122,10 @@ class SourceVerifier:
         Returns:
             SourceCredibilityResult with credibility details
         """
-        if not url:
+        if not isinstance(url, str):
+            raise TypeError("url must be a string")
+
+        if not url.strip():
             return SourceCredibilityResult(
                 url=url,
                 domain="",
@@ -149,105 +138,56 @@ class SourceVerifier:
                 notes=["Empty URL"],
             )
 
-        try:
-            # Use centralized domain extraction
-            domain = extract_domain(url)
+        domain = extract_domain(url)
+        notes: list[str] = []
+        tier = get_domain_tier(url)
+        score = get_credibility_score(url)
+        is_academic = is_academic_domain(url)
+        is_government = is_government_domain(url)
+        is_primary = is_primary_source(url)
 
-            notes: list[str] = []
+        parsed = urlparse(url)
+        has_primary_path = any(
+            path_part in parsed.path.lower()
+            for path_part in ("/press/", "/newsroom/", "/news/", "/media/")
+        )
+        is_primary = is_primary or has_primary_path
 
-            # Use centralized tier detection
-            tier = get_domain_tier(url)
-            score = get_credibility_score(url)
+        tier_notes = {
+            1: "Tier 1 source (highest credibility)",
+            2: "Tier 2 source (high credibility)",
+            3: "Tier 3 source (moderate credibility)",
+            4: "Low credibility source",
+        }
+        if tier in tier_notes:
+            notes.append(tier_notes[tier])
 
-            # Use centralized domain type detection
-            is_academic = is_academic_domain(url)
-            is_government = is_government_domain(url)
-            is_primary = is_primary_source(url)
+        is_low_cred = tier == 4
+        if tier == 0 and is_academic:
+            tier = 2
+            score = max(score, 0.75)
+            notes.append("Academic source")
+        if tier == 0 and is_government:
+            tier = 2
+            score = max(score, 0.8)
+            notes.append("Government source")
+        if is_primary:
+            notes.append("Primary source (company newsroom/press release)")
+            if tier == 0:
+                tier = 3
+                score = max(score, 0.5)
 
-            # Also check URL path for primary source indicators
-            parsed = urlparse(url)
-            has_primary_path = any(
-                path_part in parsed.path.lower()
-                for path_part in ("/press/", "/newsroom/", "/news/", "/media/")
-            )
-            is_primary = is_primary or has_primary_path
-
-            # Add notes based on tier
-            tier_notes = {
-                1: "Tier 1 source (highest credibility)",
-                2: "Tier 2 source (high credibility)",
-                3: "Tier 3 source (moderate credibility)",
-                4: "Low credibility source",
-            }
-            if tier in tier_notes:
-                notes.append(tier_notes[tier])
-
-            # Low credibility check
-            is_low_cred = tier == 4
-
-            # Apply bonuses for unknown domains with academic/government TLDs
-            if tier == 0 and is_academic:
-                tier = 2
-                score = max(score, 0.75)
-                notes.append("Academic source")
-
-            if tier == 0 and is_government:
-                tier = 2
-                score = max(score, 0.8)
-                notes.append("Government source")
-
-            if is_primary:
-                notes.append("Primary source (company newsroom/press release)")
-                if tier == 0:
-                    tier = 3
-                    score = max(score, 0.5)
-
-            return SourceCredibilityResult(
-                url=url,
-                domain=domain,
-                credibility_score=score,
-                tier=tier or 4,  # Unknown sources get tier 4
-                is_academic=is_academic,
-                is_government=is_government,
-                is_primary_source=is_primary,
-                is_low_credibility=is_low_cred,
-                notes=notes,
-            )
-
-        except Exception as e:
-            logger.warning(f"Error analyzing source URL {url}: {e}")
-            return SourceCredibilityResult(
-                url=url,
-                domain="",
-                credibility_score=0.2,
-                tier=4,
-                is_academic=False,
-                is_government=False,
-                is_primary_source=False,
-                is_low_credibility=False,
-                notes=[f"Parse error: {e}"],
-            )
-
-    def _is_domain_in_set(self, domain: str, domain_set: frozenset[str]) -> bool:
-        """Check if domain or any parent domain is in the set."""
-        # Direct match
-        if domain in domain_set:
-            return True
-
-        # Check parent domains (e.g., news.mit.edu -> mit.edu)
-        parts = domain.split(".")
-        for i in range(1, len(parts) - 1):
-            parent = ".".join(parts[i:])
-            if parent in domain_set:
-                return True
-
-        # Check for subdomain prefix patterns (e.g., "newsroom." matches "newsroom.company.com")
-        # These patterns must appear at the START of the domain
-        for pattern in domain_set:
-            if pattern.endswith(".") and domain.startswith(pattern):
-                return True
-
-        return False
+        return SourceCredibilityResult(
+            url=url,
+            domain=domain,
+            credibility_score=score,
+            tier=tier or 4,
+            is_academic=is_academic,
+            is_government=is_government,
+            is_primary_source=is_primary,
+            is_low_credibility=is_low_cred,
+            notes=notes,
+        )
 
     def verify_story_sources(self, story: Story) -> MultiSourceVerificationResult:
         """
@@ -260,9 +200,15 @@ class SourceVerifier:
             MultiSourceVerificationResult with verification details
         """
         source_urls = story.source_links or []
+        if not isinstance(source_urls, list):
+            raise TypeError("story source_links must be a list of strings")
 
-        # Filter out empty/invalid URLs
-        valid_urls = [url for url in source_urls if url and url.strip()]
+        valid_urls = []
+        for url in source_urls:
+            if not isinstance(url, str):
+                raise TypeError("story source_links must contain only strings")
+            if url.strip():
+                valid_urls.append(url)
 
         if not valid_urls:
             return MultiSourceVerificationResult(
@@ -285,7 +231,7 @@ class SourceVerifier:
         source_results = [self.check_source_credibility(url) for url in valid_urls]
 
         # Calculate metrics
-        unique_domains = set(r.domain for r in source_results if r.domain)
+        unique_domains = {r.domain for r in source_results if r.domain}
         credibility_scores = [r.credibility_score for r in source_results]
 
         avg_credibility = (
@@ -452,6 +398,32 @@ def _create_module_tests() -> bool:
         assert result.credibility_score == 0.0
         assert result.is_low_credibility
 
+    def test_invalid_url_input_is_visible():
+        verifier = SourceVerifier()
+        for invalid_url, expected_error in (
+            (123, TypeError),
+            ("https://[invalid-ipv6", ValueError),
+        ):
+            try:
+                verifier.check_source_credibility(invalid_url)
+            except expected_error:
+                continue
+            raise AssertionError(f"Invalid URL was hidden: {invalid_url!r}")
+
+    def test_invalid_story_source_type_is_visible():
+        story = Story(title="Invalid source", source_links=[123])
+        try:
+            SourceVerifier().verify_story_sources(story)
+        except TypeError as error:
+            assert "only strings" in str(error)
+        else:
+            raise AssertionError("Non-string source URL was hidden")
+
+    def test_zero_thresholds_are_preserved():
+        verifier = SourceVerifier(min_sources=0, min_credibility=0.0)
+        assert verifier.min_sources == 0
+        assert verifier.min_credibility == 0.0
+
     def test_primary_source():
         verifier = SourceVerifier()
         result = verifier.check_source_credibility(
@@ -540,105 +512,123 @@ def _create_module_tests() -> bool:
         test_func=test_tier1_nature,
         test_summary="Tests Tier 1 domain with nature.com scenario",
         method_description="Calls SourceVerifier and verifies the result",
-        expected_outcome="Function returns False or falsy value",
+        expected_outcome="Nature is tier 1, scores 1.0, and is not low credibility",
     )
     suite.run_test(
         test_name="Tier 1 domain - mit.edu",
         test_func=test_tier1_mit,
         test_summary="Tests Tier 1 domain with mit.edu scenario",
         method_description="Calls SourceVerifier and verifies the result",
-        expected_outcome="Function produces the correct result without errors",
+        expected_outcome="MIT is tier 1 and is classified as an academic source",
     )
     suite.run_test(
         test_name="Tier 2 domain - techcrunch",
         test_func=test_tier2_techcrunch,
         test_summary="Tests Tier 2 domain with techcrunch scenario",
         method_description="Calls SourceVerifier and verifies the result",
-        expected_outcome="Function produces the correct result without errors",
+        expected_outcome="TechCrunch is tier 2 with credibility score 0.8",
     )
     suite.run_test(
         test_name="Government source - doe.gov",
         test_func=test_government_source,
         test_summary="Tests Government source with doe.gov scenario",
         method_description="Calls SourceVerifier and verifies the result",
-        expected_outcome="Function produces the correct result without errors",
+        expected_outcome="DOE is tier 1 and is classified as a government source",
     )
     suite.run_test(
         test_name="Low credibility source",
         test_func=test_low_credibility,
         test_summary="Tests Low credibility source functionality",
         method_description="Calls SourceVerifier and verifies the result",
-        expected_outcome="Function produces the correct result without errors",
+        expected_outcome="Daily Mail is low credibility with score 0.1",
     )
     suite.run_test(
         test_name="Unknown domain - base score",
         test_func=test_unknown_domain,
         test_summary="Tests Unknown domain with base score scenario",
         method_description="Calls SourceVerifier and verifies the result",
-        expected_outcome="Function produces the correct result without errors",
+        expected_outcome="An unknown domain uses tier 4 and the base score 0.3",
     )
     suite.run_test(
         test_name="Empty URL handling",
         test_func=test_empty_url,
         test_summary="Tests Empty URL handling functionality",
         method_description="Calls SourceVerifier and verifies the result",
-        expected_outcome="Function handles empty or missing input gracefully",
+        expected_outcome="An empty URL has score 0 and is marked low credibility",
+    )
+    suite.run_test(
+        test_name="Invalid URL failures",
+        test_func=test_invalid_url_input_is_visible,
+        test_summary="Rejects invalid URL types and malformed authority syntax",
+        expected_outcome="Type and parsing failures are raised to the caller",
+    )
+    suite.run_test(
+        test_name="Invalid story source type",
+        test_func=test_invalid_story_source_type_is_visible,
+        test_summary="Rejects non-string values in persisted source links",
+        expected_outcome="Malformed story data raises a type error",
+    )
+    suite.run_test(
+        test_name="Zero verification thresholds",
+        test_func=test_zero_thresholds_are_preserved,
+        test_summary="Retains explicit zero thresholds instead of using defaults",
+        expected_outcome="Explicit threshold values are preserved",
     )
     suite.run_test(
         test_name="Primary source - newsroom",
         test_func=test_primary_source,
         test_summary="Tests Primary source with newsroom scenario",
         method_description="Calls SourceVerifier and verifies the result",
-        expected_outcome="Function produces the correct result without errors",
+        expected_outcome="Newsroom URLs are identified as primary sources",
     )
     suite.run_test(
         test_name="Story verification - multiple sources",
         test_func=test_story_multiple_sources,
         test_summary="Tests Story verification with multiple sources scenario",
         method_description="Calls Story and verifies the result",
-        expected_outcome="Function correctly processes multiple items",
+        expected_outcome="Both sources are scored and verification includes the tier 1 source",
     )
     suite.run_test(
         test_name="Story verification - no sources",
         test_func=test_story_no_sources,
         test_summary="Tests Story verification with no sources scenario",
         method_description="Calls Story and verifies the result",
-        expected_outcome="Function returns False or falsy value",
+        expected_outcome="Missing sources produce an unverified result and a clear issue",
     )
     suite.run_test(
         test_name="Story verification - low credibility",
         test_func=test_story_low_credibility,
         test_summary="Tests Story verification with low credibility scenario",
         method_description="Calls Story and verifies the result",
-        expected_outcome="Function returns False or falsy value",
+        expected_outcome="Low-credibility sources prevent verification and set the low-credibility flag",
     )
     suite.run_test(
         test_name="Average credibility calculation",
         test_func=test_average_credibility,
         test_summary="Tests Average credibility calculation functionality",
         method_description="Calls Story and verifies the result",
-        expected_outcome="Function produces the correct result without errors",
+        expected_outcome="Average credibility is the arithmetic mean of source scores",
     )
     suite.run_test(
         test_name="Subdomain handling",
         test_func=test_subdomain,
         test_summary="Tests Subdomain handling functionality",
         method_description="Calls SourceVerifier and verifies the result",
-        expected_outcome="Function produces the correct result without errors",
+        expected_outcome="Stanford subdomains are tier 1 academic sources",
     )
     suite.run_test(
         test_name="Source summary generation",
         test_func=test_source_summary,
         test_summary="Tests Source summary generation functionality",
         method_description="Calls Story and verifies the result",
-        expected_outcome="Function produces the correct result without errors",
+        expected_outcome="Summary includes verification status and credibility",
     )
     suite.run_test(
         test_name="Require tier 1 or 2 option",
         test_func=test_require_tier1_or_2,
         test_summary="Tests Require tier 1 or 2 option functionality",
         method_description="Calls Story and verifies the result",
-        expected_outcome="Function returns False or falsy value",
+        expected_outcome="A tier 1 or tier 2 source is required when configured",
     )
 
     return suite.finish_suite()

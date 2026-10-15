@@ -19,7 +19,6 @@ Usage:
 from typing import Literal
 from urllib.parse import urlparse
 
-
 # Tier 1: Most authoritative sources
 # Scientific publishers, major news organizations, top universities, government
 TIER_1_DOMAINS = frozenset(
@@ -167,14 +166,10 @@ def extract_domain(url: str) -> str:
     Returns:
         Lowercase domain without www. prefix
     """
-    try:
-        parsed = urlparse(url)
-        domain = parsed.netloc.lower()
-        if domain.startswith("www."):
-            domain = domain[4:]
-        return domain
-    except Exception:
-        return ""
+    if not isinstance(url, str):
+        raise TypeError("url must be a string")
+
+    return urlparse(url).netloc.lower().removeprefix("www.")
 
 
 def get_domain_tier(url: str) -> Literal[0, 1, 2, 3, 4]:
@@ -214,10 +209,10 @@ def get_domain_tier(url: str) -> Literal[0, 1, 2, 3, 4]:
             return 3
 
     # Check for academic/government TLDs
-    if domain.endswith(".edu") or domain.endswith(".ac.uk"):
+    if domain.endswith((".edu", ".ac.uk")):
         return 2  # Default academic to tier 2
 
-    if domain.endswith(".gov") or domain.endswith(".gov.uk"):
+    if domain.endswith((".gov", ".gov.uk")):
         return 1  # Government sources are tier 1
 
     # Check for tier 3 subdomain patterns (newsroom., blog., etc.)
@@ -272,13 +267,13 @@ def get_credibility_score(url: str) -> float:
 def is_academic_domain(url: str) -> bool:
     """Check if URL is from an academic institution."""
     domain = extract_domain(url)
-    return domain.endswith(".edu") or domain.endswith(".ac.uk")
+    return domain.endswith((".edu", ".ac.uk"))
 
 
 def is_government_domain(url: str) -> bool:
     """Check if URL is from a government source."""
     domain = extract_domain(url)
-    return domain.endswith(".gov") or domain.endswith(".gov.uk")
+    return domain.endswith((".gov", ".gov.uk"))
 
 
 def is_primary_source(url: str) -> bool:
@@ -344,6 +339,14 @@ def _create_module_tests() -> bool:
 
     def test_extract_domain_without_www():
         assert extract_domain("https://techcrunch.com/news") == "techcrunch.com"
+
+    def test_extract_domain_rejects_non_string():
+        try:
+            extract_domain(123)
+        except TypeError as error:
+            assert "url must be a string" in str(error)
+        else:
+            raise AssertionError("Non-string URL input was hidden")
 
     def test_primary_source_newsroom():
         assert is_primary_source("https://newsroom.google.com/article") is True
@@ -451,6 +454,12 @@ def _create_module_tests() -> bool:
         test_summary="extract_domain behavior with without www input",
         method_description="Testing extract_domain with without www input using equality assertions",
         expected_outcome="extract_domain returns the expected value",
+    )
+    suite.run_test(
+        test_name="extract_domain rejects non-strings",
+        test_func=test_extract_domain_rejects_non_string,
+        test_summary="Rejects values that cannot be parsed as URL strings",
+        expected_outcome="Raises a type error instead of returning an empty domain",
     )
     suite.run_test(
         test_name="is_primary_source - newsroom",
