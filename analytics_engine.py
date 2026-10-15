@@ -14,11 +14,10 @@ TASK 2.4: LinkedIn Analytics Integration
 
 import logging
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
-from pathlib import Path
-from typing import Optional
 
 import httpx
 
@@ -58,7 +57,7 @@ class PostMetrics:
     comments: int = 0
     shares: int = 0
     engagement_rate: float = 0.0
-    fetched_at: Optional[datetime] = None
+    fetched_at: datetime | None = None
 
     def calculate_engagement_rate(self) -> float:
         """Calculate engagement rate."""
@@ -92,8 +91,8 @@ class ProfileMetrics:
     followers: int = 0
     connections: int = 0
     search_appearances: int = 0
-    period_start: Optional[datetime] = None
-    period_end: Optional[datetime] = None
+    period_start: datetime | None = None
+    period_end: datetime | None = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -119,7 +118,7 @@ class ContentPerformance:
     total_engagement: int = 0
     avg_impressions: float = 0.0
     avg_engagement_rate: float = 0.0
-    best_performing_post_id: Optional[str] = None
+    best_performing_post_id: str | None = None
     recommended_frequency: str = ""  # high, medium, low
 
 
@@ -150,8 +149,8 @@ class AnalyticsEngine:
 
     def __init__(
         self,
-        db_path: Optional[str] = None,
-        access_token: Optional[str] = None,
+        db_path: str | None = None,
+        access_token: str | None = None,
     ) -> None:
         """Initialize the analytics engine.
 
@@ -159,12 +158,12 @@ class AnalyticsEngine:
             db_path: Path to database for storing analytics
             access_token: LinkedIn API access token
         """
-        self.db_path = db_path or str(Path(__file__).parent / "content_engine.db")
+        self.db_path = db_path or Config.DB_NAME
         self.access_token = access_token or Config.LINKEDIN_ACCESS_TOKEN
         self.author_urn = Config.LINKEDIN_AUTHOR_URN
 
         # HTTP client for API calls
-        self._http_client: Optional[httpx.Client] = None
+        self._http_client: httpx.Client | None = None
 
         # Rate limiter for API calls
         self.rate_limiter = AdaptiveRateLimiter(
@@ -178,7 +177,7 @@ class AnalyticsEngine:
 
     def _ensure_tables(self) -> None:
         """Ensure required database tables exist."""
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             # Post metrics table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS post_metrics (
@@ -238,7 +237,7 @@ class AnalyticsEngine:
             )
         return self._http_client
 
-    def fetch_post_metrics(self, post_urn: str) -> Optional[PostMetrics]:
+    def fetch_post_metrics(self, post_urn: str) -> PostMetrics | None:
         """Fetch metrics for a specific post from LinkedIn API.
 
         Args:
@@ -282,7 +281,7 @@ class AnalyticsEngine:
             else:
                 logger.warning(f"Failed to fetch metrics: {response.status_code}")
 
-        except Exception as e:
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError) as e:
             logger.error(f"Error fetching post metrics: {e}")
 
         return None
@@ -311,8 +310,8 @@ class AnalyticsEngine:
                     metrics.shares = stats.get("shareCount", 0)
                     metrics.calculate_engagement_rate()
 
-        except Exception as e:
-            logger.debug(f"Could not fetch share statistics: {e}")
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError) as e:
+            logger.warning(f"Could not fetch share statistics: {e}")
 
     def save_metrics(self, story_id: int, metrics: PostMetrics) -> bool:
         """Save post metrics to database.
@@ -325,7 +324,7 @@ class AnalyticsEngine:
             True if successful
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with closing(sqlite3.connect(self.db_path)) as conn, conn:
                 conn.execute(
                     """
                     INSERT INTO post_metrics
@@ -343,44 +342,41 @@ class AnalyticsEngine:
                         metrics.engagement_rate,
                     ),
                 )
-                conn.commit()
 
             # Also update the stories table
-            conn = sqlite3.connect(self.db_path)
-            conn.execute(
-                """
-                UPDATE stories
-                SET linkedin_impressions = ?,
-                    linkedin_clicks = ?,
-                    linkedin_likes = ?,
-                    linkedin_comments = ?,
-                    linkedin_shares = ?,
-                    linkedin_engagement = ?,
-                    linkedin_analytics_fetched_at = ?
-                WHERE id = ?
-                """,
-                (
-                    metrics.impressions,
-                    metrics.clicks,
-                    metrics.likes,
-                    metrics.comments,
-                    metrics.shares,
-                    metrics.engagement_rate,
-                    datetime.now().isoformat(),
-                    story_id,
-                ),
-            )
-            conn.commit()
-            conn.close()
+            with closing(sqlite3.connect(self.db_path)) as conn, conn:
+                conn.execute(
+                    """
+                    UPDATE stories
+                    SET linkedin_impressions = ?,
+                        linkedin_clicks = ?,
+                        linkedin_likes = ?,
+                        linkedin_comments = ?,
+                        linkedin_shares = ?,
+                        linkedin_engagement = ?,
+                        linkedin_analytics_fetched_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        metrics.impressions,
+                        metrics.clicks,
+                        metrics.likes,
+                        metrics.comments,
+                        metrics.shares,
+                        metrics.engagement_rate,
+                        datetime.now().isoformat(),
+                        story_id,
+                    ),
+                )
 
             logger.info(f"Saved metrics for story {story_id}")
             return True
 
-        except Exception as e:
+        except sqlite3.Error as e:
             logger.error(f"Failed to save metrics: {e}")
             return False
 
-    def fetch_profile_metrics(self) -> Optional[ProfileMetrics]:
+    def fetch_profile_metrics(self) -> ProfileMetrics | None:
         """Fetch profile performance metrics."""
         if not self.access_token:
             logger.warning("No LinkedIn access token configured")
@@ -408,7 +404,7 @@ class AnalyticsEngine:
 
                 return metrics
 
-        except Exception as e:
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError) as e:
             logger.error(f"Error fetching profile metrics: {e}")
 
         return None
@@ -426,7 +422,7 @@ class AnalyticsEngine:
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
 
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with closing(sqlite3.connect(self.db_path)) as conn, conn:
                 conn.row_factory = sqlite3.Row
 
                 # Get overall metrics
@@ -512,7 +508,7 @@ class AnalyticsEngine:
                 # Generate recommendations
                 summary.recommendations = self._generate_recommendations(summary)
 
-        except Exception as e:
+        except sqlite3.Error as e:
             logger.error(f"Failed to analyze performance: {e}")
 
         return summary
@@ -610,7 +606,7 @@ class AnalyticsEngine:
         updated = 0
 
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with closing(sqlite3.connect(self.db_path)) as conn, conn:
                 conn.row_factory = sqlite3.Row
 
                 # Get stories that need metrics update
@@ -641,7 +637,7 @@ class AnalyticsEngine:
                         logger.info("Reached batch limit, stopping update")
                         break
 
-        except Exception as e:
+        except sqlite3.Error as e:
             logger.error(f"Failed to batch update metrics: {e}")
 
         logger.info(f"Updated metrics for {updated} stories")
@@ -658,7 +654,7 @@ class AnalyticsEngine:
 # Module-level convenience instance
 # =============================================================================
 
-_analytics_engine: Optional[AnalyticsEngine] = None
+_analytics_engine: AnalyticsEngine | None = None
 
 
 def get_analytics_engine() -> AnalyticsEngine:
@@ -781,37 +777,49 @@ def _create_module_tests() -> bool:
 
     def test_analytics_engine_init():
         """Test AnalyticsEngine initialization."""
-        import tempfile
         import os
+        import tempfile
+        from unittest.mock import patch
 
-        tmpdir = tempfile.mkdtemp()
-        db_path = os.path.join(tmpdir, "test_init.db")
-        engine = AnalyticsEngine(db_path=db_path, access_token="test-token")
-        try:
-            assert engine.db_path == db_path
-            assert engine.access_token == "test-token"
-        finally:
-            engine.close()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test_init.db")
+            engine = AnalyticsEngine(db_path=db_path, access_token="test-token")
+            try:
+                assert engine.db_path == db_path
+                assert engine.access_token == "test-token"
+            finally:
+                engine.close()
+
+        with patch.object(AnalyticsEngine, "_ensure_tables"):
+            engine = AnalyticsEngine()
+        assert engine.db_path == Config.DB_NAME
 
     def test_analytics_engine_close():
         """Test AnalyticsEngine close method."""
-        import tempfile
         import os
+        import tempfile
 
-        tmpdir = tempfile.mkdtemp()
-        db_path = os.path.join(tmpdir, "test_close.db")
-        engine = AnalyticsEngine(db_path=db_path)
-        engine.close()
-        assert engine._http_client is None
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test_close.db")
+            engine = AnalyticsEngine(db_path=db_path)
+            engine.close()
+            assert engine._http_client is None
 
     def test_get_analytics_engine_singleton():
-        """Test get_analytics_engine returns singleton."""
+        """Test get_analytics_engine returns a singleton without opening a database."""
+        from unittest.mock import patch
+
         global _analytics_engine
-        _analytics_engine = None  # Reset for test
-        engine1 = get_analytics_engine()
-        engine2 = get_analytics_engine()
-        assert engine1 is engine2
-        _analytics_engine = None  # Cleanup
+        original_engine = _analytics_engine
+        try:
+            _analytics_engine = None
+            with patch(__name__ + ".AnalyticsEngine") as engine_class:
+                engine1 = get_analytics_engine()
+                engine2 = get_analytics_engine()
+                assert engine1 is engine2
+                engine_class.assert_called_once_with()
+        finally:
+            _analytics_engine = original_engine
 
     suite.run_test(
         test_name="MetricType enum",
