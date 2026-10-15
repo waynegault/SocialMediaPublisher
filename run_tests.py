@@ -19,53 +19,28 @@ Modes:
 
 import atexit
 import importlib
-import io
 import logging
 import os
 import signal
 import subprocess
 import sys
 import time
-import warnings
+import traceback
 from pathlib import Path
 from typing import Final
 
 from test_framework import Colors, Icons, suppress_logging
 
-# Suppress asyncio warnings about pending tasks (nodriver/websockets cleanup issue)
-warnings.filterwarnings("ignore", message=".*Task was destroyed.*")
-warnings.filterwarnings("ignore", message=".*Event loop is closed.*")
-warnings.filterwarnings("ignore", message=".*coroutine.*was never awaited.*")
-
-# On Windows, switch to SelectorEventLoop to avoid the ProactorEventLoop IOCP
-# thread ("asyncio_0") which persists after loop.close() and blocks process exit.
-if sys.platform == "win32":
-    import asyncio
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
 SEPARATOR_LINE: Final[str] = "=" * 70
-SECTION_SEPARATOR: Final[str] = "\n" + SEPARATOR_LINE
-
-
-def _suppress_unraisable_hook(unraisable: "sys.UnraisableHookArgs") -> None:
-    """Suppress nodriver/websockets cleanup errors at exit."""
-    exc_value = getattr(unraisable, "exc_value", None)
-    err_str = str(exc_value) if exc_value else ""
-    if any(x in err_str for x in ["closed pipe", "Event loop is closed"]):
-        return
-    sys.__unraisablehook__(unraisable)
-
-
-sys.unraisablehook = _suppress_unraisable_hook
 
 
 def _cleanup_asyncio() -> None:
-    """Clean up asyncio resources at exit to prevent warnings."""
-    try:
-        from linkedin_profile_lookup import LinkedInCompanyLookup
-        LinkedInCompanyLookup.close_shared_browser()
-    except Exception:
-        pass
+    """Close the shared browser if its module was loaded during the test run."""
+    module = sys.modules.get("linkedin_profile_lookup")
+    if module is not None:
+        lookup = getattr(module, "LinkedInCompanyLookup", None)
+        if lookup is not None:
+            lookup.close_shared_browser()
 
 
 atexit.register(_cleanup_asyncio)
@@ -73,6 +48,7 @@ atexit.register(_cleanup_asyncio)
 
 # Module registry: (module_name, display_name)
 TEST_MODULES: list[tuple[str, str]] = [
+    ("test_run_tests", "Test Runner"),
     ("config", "Configuration"),
     ("domain_credibility", "Domain Credibility"),
     ("url_utils", "URL Utilities"),
@@ -150,8 +126,8 @@ def _run_linter() -> bool:
     print(f"{Colors.CYAN}{SEPARATOR_LINE}{Colors.RESET}\n")
 
     if not _ruff_available():
-        print(f"{Colors.YELLOW}⚠️ Ruff not available, skipping linter checks{Colors.RESET}")
-        return True
+        print(f"{Colors.RED}❌ Ruff is required but not available in this environment{Colors.RESET}")
+        return False
 
     try:
         result = subprocess.run(
@@ -163,21 +139,23 @@ def _run_linter() -> bool:
             print(f"{Colors.GREEN}✅ Linter: No issues found{Colors.RESET}")
             return True
         else:
-            lines = [ln for ln in result.stdout.splitlines() if ln.strip()][-30:]
+            output = "\n".join(
+                part for part in (result.stdout, result.stderr) if part
+            )
+            lines = [ln for ln in output.splitlines() if ln.strip()][-30:]
             for ln in lines:
                 print(ln)
             print(f"\n{Colors.RED}❌ Linter: Issues found{Colors.RESET}")
             return False
-    except subprocess.TimeoutExpired:
-        print(f"{Colors.YELLOW}⚠️ Linter timed out{Colors.RESET}")
-        return True
+    except subprocess.TimeoutExpired as e:
+        print(f"{Colors.RED}❌ Linter timed out after {e.timeout} seconds{Colors.RESET}")
+        return False
 
 
 def _run_module_tests(module_name: str, display_name: str) -> tuple[bool, float]:
     """Import a module and run its test function.
 
-    Prefers ``run_comprehensive_tests`` (ancestry pattern) and falls back to
-    ``_create_module_tests`` for backwards-compatibility.
+    Requires the single supported ``run_comprehensive_tests`` entry point.
 
     Returns:
         Tuple of (success, duration_seconds)
@@ -188,14 +166,16 @@ def _run_module_tests(module_name: str, display_name: str) -> tuple[bool, float]
         if hasattr(module, "run_comprehensive_tests"):
             success = module.run_comprehensive_tests()
             return success, time.time() - start
-        elif hasattr(module, "_create_module_tests"):
-            success = module._create_module_tests()
-            return success, time.time() - start
         else:
-            print(f"{Colors.YELLOW}⚠️ {display_name}: no test function found{Colors.RESET}")
-            return True, time.time() - start
-    except Exception as e:
+            print(
+                f"{Colors.RED}❌ {display_name}: "
+                "required run_comprehensive_tests entry point not found"
+                f"{Colors.RESET}"
+            )
+            return False, time.time() - start
+    except Exception as e:  # noqa: BLE001 - isolate failures and continue other suites
         duration = time.time() - start
+        traceback.print_exc()
         print(f"{Colors.RED}❌ {display_name}: Failed to load - {e}{Colors.RESET}")
         return False, duration
 
@@ -226,20 +206,18 @@ def main() -> int:
     failed_modules = 0
     failed_names: list[str] = []
 
-    # Save original signal handlers so we can restore after tests
-    _orig_sigint = signal.getsignal(signal.SIGINT)
-
-    with suppress_logging(logging.ERROR):
-        for module_name, display_name in TEST_MODULES:
-            success, duration = _run_module_tests(module_name, display_name)
-            if success:
-                passed_modules += 1
-            else:
-                failed_modules += 1
-                failed_names.append(display_name)
-
-    # Restore default SIGINT handler (tests may have overridden it)
-    signal.signal(signal.SIGINT, _orig_sigint)
+    original_sigint_handler = signal.getsignal(signal.SIGINT)
+    try:
+        with suppress_logging(logging.ERROR):
+            for module_name, display_name in TEST_MODULES:
+                success, _ = _run_module_tests(module_name, display_name)
+                if success:
+                    passed_modules += 1
+                else:
+                    failed_modules += 1
+                    failed_names.append(display_name)
+    finally:
+        signal.signal(signal.SIGINT, original_sigint_handler)
 
     # Remove any rogue logging handlers added by imported modules
     # (e.g. publish_daemon.py's logging.basicConfig adds FileHandlers)
@@ -267,21 +245,15 @@ def main() -> int:
     if not linter_ok:
         print(f"{Colors.YELLOW}⚠️ Linter issues detected{Colors.RESET}")
 
-    if failed_modules == 0:
-        if not linter_ok:
-            print(f"\n{Colors.GREEN}{Colors.BOLD}{Icons.PASS} ALL TESTS PASSED{Colors.RESET} {Colors.YELLOW}(linter warnings){Colors.RESET}")
-        else:
-            print(f"\n{Colors.GREEN}{Colors.BOLD}{Icons.PASS} ALL TESTS PASSED{Colors.RESET}")
+    if failed_modules == 0 and linter_ok:
+        print(f"\n{Colors.GREEN}{Colors.BOLD}{Icons.PASS} ALL TESTS PASSED{Colors.RESET}")
     else:
-        print(f"\n{Colors.RED}{Colors.BOLD}{Icons.FAIL} SOME TESTS FAILED{Colors.RESET}")
+        print(f"\n{Colors.RED}{Colors.BOLD}{Icons.FAIL} QUALITY GATES FAILED{Colors.RESET}")
 
     print(f"{Colors.CYAN}{SEPARATOR_LINE}{Colors.RESET}\n")
 
-    return 0 if failed_modules == 0 else 1
+    return 0 if failed_modules == 0 and linter_ok else 1
 
 
 if __name__ == "__main__":
-    result = main()
-    sys.stdout.flush()
-    sys.stderr = io.StringIO()
-    os._exit(result)
+    raise SystemExit(main())
