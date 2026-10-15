@@ -9,6 +9,7 @@ This module provides Pydantic-based configuration validation with:
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -755,9 +756,17 @@ def _test_config_validate() -> None:
 
 
 def _test_config_ensure_directories() -> None:
-    """Test that ensure_directories creates IMAGE_DIR."""
-    Config.ensure_directories()
-    assert os.path.isdir(Config.IMAGE_DIR)
+    """Test directory creation without touching the configured image directory."""
+    settings = Config.get_settings()
+    original_image_dir = settings.image_dir
+
+    with tempfile.TemporaryDirectory(prefix="config-test-") as temporary_directory:
+        settings.image_dir = str(Path(temporary_directory) / "images")
+        try:
+            Config.ensure_directories()
+            assert Path(settings.image_dir).is_dir()
+        finally:
+            settings.image_dir = original_image_dir
 
 
 def _test_config_publish_hours_valid() -> None:
@@ -914,10 +923,10 @@ def _create_module_tests() -> bool:
         suite.run_test(
             test_name="Config ensure directories",
             test_func=_test_config_ensure_directories,
-            test_summary="Verify ensure_directories creates IMAGE_DIR",
+            test_summary="Verify ensure_directories creates a temporary image directory",
             functions_tested="Config.ensure_directories()",
-            method_description="Call ensure_directories and verify IMAGE_DIR exists",
-            expected_outcome="IMAGE_DIR directory exists on disk",
+            method_description="Create a temporary image directory and verify it exists",
+            expected_outcome="The temporary image directory exists and is removed afterward",
         )
         suite.run_test(
             test_name="Config publish hours valid",
