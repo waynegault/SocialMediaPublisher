@@ -13,11 +13,12 @@ Features:
 TASK 1.4: Entity Extraction & Named Entity Recognition
 """
 
+import importlib.util
 import logging
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from entity_constants import (
     INVALID_ORG_NAMES,
@@ -28,41 +29,20 @@ from entity_constants import (
 
 logger = logging.getLogger(__name__)
 
-# Type hints for optional dependencies
-if TYPE_CHECKING:
-    import numpy as np
-    import spacy
-    from sentence_transformers import SentenceTransformer
-    from spacy.language import Language
-    from spacy.tokens import Doc, Span
-
-# Optional spaCy import - gracefully degrade if not installed
-try:
-    import spacy
-    from spacy.language import Language
-    from spacy.tokens import Doc, Span
-
-    SPACY_AVAILABLE = True
-except ImportError:
-    SPACY_AVAILABLE = False
-    spacy = None  # type: ignore[assignment]
-    Doc = None  # type: ignore[assignment, misc]
-    Span = None  # type: ignore[assignment, misc]
-    Language = None  # type: ignore[assignment, misc]
+# Optional dependencies. Availability is probed without importing them:
+# sentence-transformers pulls torch, and importing it here costs ~40 s on every
+# run whether or not the engine is used. Each library is imported where it is used.
+SPACY_AVAILABLE = importlib.util.find_spec("spacy") is not None
+if not SPACY_AVAILABLE:
     logger.warning(
         "spaCy not installed - pip install spacy && python -m spacy download en_core_web_sm"
     )
 
-# Optional sentence-transformers for semantic similarity
-try:
-    import numpy as np
-    from sentence_transformers import SentenceTransformer
-
-    TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    TRANSFORMERS_AVAILABLE = False
-    SentenceTransformer = None  # type: ignore[assignment, misc]
-    np = None  # type: ignore[assignment]
+TRANSFORMERS_AVAILABLE = (
+    importlib.util.find_spec("numpy") is not None
+    and importlib.util.find_spec("sentence_transformers") is not None
+)
+if not TRANSFORMERS_AVAILABLE:
     logger.debug("sentence-transformers not available for semantic similarity")
 
 
@@ -358,11 +338,15 @@ class NEREngine:
         self._entity_cache: dict[str, Entity] = {}
 
         # Initialize spaCy if available
-        if SPACY_AVAILABLE and spacy is not None:
+        if SPACY_AVAILABLE:
             try:
+                import spacy
+
                 self.nlp = spacy.load(model_name)
                 self._add_custom_patterns()
                 logger.debug(f"NER engine initialized with spaCy model: {model_name}")
+            except ImportError:
+                logger.warning("spaCy import failed - using regex fallback")
             except OSError:
                 logger.warning(
                     f"spaCy model '{model_name}' not found. "
@@ -372,12 +356,10 @@ class NEREngine:
             logger.warning("spaCy not available - using regex fallback")
 
         # Initialize transformer model for semantic similarity
-        if (
-            use_transformers
-            and TRANSFORMERS_AVAILABLE
-            and SentenceTransformer is not None
-        ):
+        if use_transformers and TRANSFORMERS_AVAILABLE:
             try:
+                from sentence_transformers import SentenceTransformer
+
                 self.similarity_model = SentenceTransformer("all-MiniLM-L6-v2")
                 logger.info("Sentence transformer loaded for entity similarity")
             except Exception as e:
@@ -738,8 +720,10 @@ class NEREngine:
         threshold: float,
     ) -> Optional[str]:
         """Find similar entity using semantic similarity."""
-        if not self.similarity_model or np is None:
+        if not self.similarity_model:
             return self._fuzzy_match(query, candidates, threshold)
+
+        import numpy as np
 
         # Encode query and candidates
         query_embedding = self.similarity_model.encode([query])

@@ -96,6 +96,29 @@ def _create_module_tests() -> bool:
         assert "live probe" in output.getvalue()
         assert "needs --integration" in output.getvalue()
 
+    def test_light_imports_do_not_pull_torch():
+        """Importing the ML-backed modules must not import torch, which costs ~40 s."""
+        script = (
+            "import sys\n"
+            "import ner_engine, intent_classifier, rag_engine\n"
+            "heavy = sorted(\n"
+            "    name for name in\n"
+            "    ('torch', 'sentence_transformers', 'transformers', 'spacy')\n"
+            "    if name in sys.modules\n"
+            ")\n"
+            "print('heavy=' + ','.join(heavy))\n"
+            "raise SystemExit(1 if heavy else 0)\n"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=Path(__file__).resolve().parent,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        assert completed.returncode == 0, completed.stdout[-2000:]
+
     for name, test in [
         ("Missing test entrypoint fails", test_missing_entrypoint_fails),
         ("Missing Ruff fails lint gate", test_missing_ruff_fails_lint_gate),
@@ -123,6 +146,13 @@ def _create_module_tests() -> bool:
         test_func=test_skipped_tests_are_reported_and_pass,
         test_summary="Verify a skipped test is named and does not fail the suite",
         expected_outcome="The suite passes and the skip is reported with its reason",
+    )
+
+    suite.run_test(
+        test_name="Light imports stay light",
+        test_func=test_light_imports_do_not_pull_torch,
+        test_summary="Verify importing the ML-backed modules does not import torch",
+        expected_outcome="torch, transformers, sentence-transformers and spacy stay out of sys.modules",
     )
 
     return suite.finish_suite()

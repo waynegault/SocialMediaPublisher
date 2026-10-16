@@ -12,26 +12,20 @@ Features:
 TASK 1.3: Intent Recognition for Job-Relevant Story Filtering
 """
 
+import importlib.util
 import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Type hints for optional dependencies
-if TYPE_CHECKING:
-    from transformers import pipeline
-
-# Optional transformers import for DistilBERT
-try:
-    from transformers import pipeline
-
-    TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    TRANSFORMERS_AVAILABLE = False
-    pipeline = None  # type: ignore[assignment]
+# Optional transformers import for DistilBERT. Probed without importing it:
+# transformers pulls torch, which costs ~40 s at import time, so it is imported
+# where it is used instead.
+TRANSFORMERS_AVAILABLE = importlib.util.find_spec("transformers") is not None
+if not TRANSFORMERS_AVAILABLE:
     logger.debug("transformers not available - using keyword-based classification")
 
 
@@ -327,8 +321,10 @@ class IntentClassifier:
         self._add_domain_keywords()
 
         # Initialize transformer if available and requested
-        if self.use_transformers and pipeline is not None:
+        if self.use_transformers:
             try:
+                from transformers import pipeline
+
                 self.sentiment_pipeline = pipeline(
                     "sentiment-analysis",  # type: ignore[arg-type]
                     model=model_name,

@@ -12,43 +12,28 @@ Features:
 TASK 1.1: RAG for Personalized Content Generation
 """
 
+import importlib.util
 import json
 import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from config import Config
 
 logger = logging.getLogger(__name__)
 
-# Type hints for optional dependencies
-if TYPE_CHECKING:
-    import chromadb
-    from chromadb.config import Settings
-    from sentence_transformers import SentenceTransformer
-
-# Optional ChromaDB import
-try:
-    import chromadb
-    from chromadb.config import Settings
-
-    CHROMADB_AVAILABLE = True
-except ImportError:
-    CHROMADB_AVAILABLE = False
-    chromadb = None  # type: ignore[assignment]
-    Settings = None  # type: ignore[assignment, misc]
+# Optional ChromaDB import. Probed without importing it: the library is heavy and
+# is only needed when the RAG store is actually initialised.
+CHROMADB_AVAILABLE = importlib.util.find_spec("chromadb") is not None
+if not CHROMADB_AVAILABLE:
     logger.debug("chromadb not available - pip install chromadb")
 
-# Optional sentence-transformers for embeddings
-try:
-    from sentence_transformers import SentenceTransformer
-
-    EMBEDDINGS_AVAILABLE = True
-except ImportError:
-    EMBEDDINGS_AVAILABLE = False
-    SentenceTransformer = None  # type: ignore[assignment, misc]
+# Optional sentence-transformers for embeddings. Probed without importing it:
+# it pulls torch, ~40 s at import time, and is only needed if embeddings are used.
+EMBEDDINGS_AVAILABLE = importlib.util.find_spec("sentence_transformers") is not None
+if not EMBEDDINGS_AVAILABLE:
     logger.debug("sentence-transformers not available for embeddings")
 
 
@@ -181,20 +166,21 @@ class RAGEngine:
     def _initialize(self) -> None:
         """Initialize ChromaDB and embedding model."""
         # Initialize embedding model (skip during tests to avoid network calls)
-        if (
-            not self._skip_embeddings
-            and EMBEDDINGS_AVAILABLE
-            and SentenceTransformer is not None
-        ):
+        if not self._skip_embeddings and EMBEDDINGS_AVAILABLE:
             try:
+                from sentence_transformers import SentenceTransformer
+
                 self.embedding_model = SentenceTransformer(self.embedding_model_name)
                 logger.info(f"Loaded embedding model: {self.embedding_model_name}")
             except Exception as e:
                 logger.warning(f"Failed to load embedding model: {e}")
 
         # Initialize ChromaDB
-        if CHROMADB_AVAILABLE and chromadb is not None and Settings is not None:
+        if CHROMADB_AVAILABLE:
             try:
+                import chromadb
+                from chromadb.config import Settings
+
                 os.makedirs(self.persist_directory, exist_ok=True)
                 self.chroma_client = chromadb.Client(
                     Settings(
