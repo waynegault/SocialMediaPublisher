@@ -12,13 +12,14 @@ Features:
 TASK 2.2: LinkedIn Connection Request Automation
 """
 
+import contextlib
 import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 from config import Config
 from rate_limiter import AdaptiveRateLimiter
@@ -28,6 +29,21 @@ logger = logging.getLogger(__name__)
 # Weekly connection limit (LinkedIn's soft limit) - use Config with fallback
 WEEKLY_CONNECTION_LIMIT = Config.LINKEDIN_WEEKLY_CONNECTION_LIMIT
 DAILY_CONNECTION_LIMIT = Config.LINKEDIN_DAILY_CONNECTION_LIMIT
+
+
+@contextlib.contextmanager
+def _connection(db_path: str) -> Iterator[sqlite3.Connection]:
+    """Yield a connection that commits on success and always closes.
+
+    ``with sqlite3.connect(...) as conn`` commits but does not close, which keeps
+    a file handle open on Windows and blocks the database file from being removed.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 # =============================================================================
@@ -184,7 +200,7 @@ class LinkedInNetworking:
             my_name: Author's name for personalization
             my_role: Author's role for message templates
         """
-        self.db_path = db_path or str(Path(__file__).parent / "content_engine.db")
+        self.db_path = db_path or str(Path(__file__).parent / Config.DB_NAME)
         self.my_name = my_name or Config.LINKEDIN_AUTHOR_NAME
         self.my_role = my_role or f"{Config.DISCIPLINE.title()} Professional"
 
@@ -201,7 +217,7 @@ class LinkedInNetworking:
 
     def _ensure_tables(self) -> None:
         """Ensure required database tables exist."""
-        with sqlite3.connect(self.db_path) as conn:
+        with _connection(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS connection_requests (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -367,7 +383,7 @@ class LinkedInNetworking:
         request.sent_at = datetime.now()
 
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with _connection(self.db_path) as conn:
                 cursor = conn.execute(
                     """
                     INSERT INTO connection_requests
@@ -426,7 +442,7 @@ class LinkedInNetworking:
                 else None
             )
 
-            with sqlite3.connect(self.db_path) as conn:
+            with _connection(self.db_path) as conn:
                 conn.execute(
                     """
                     UPDATE connection_requests
@@ -453,7 +469,7 @@ class LinkedInNetworking:
         requests = []
 
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with _connection(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
                     """
@@ -491,7 +507,7 @@ class LinkedInNetworking:
         stats = ConnectionStats()
 
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with _connection(self.db_path) as conn:
                 # Get counts by status
                 cursor = conn.execute("""
                     SELECT status, COUNT(*) as count
@@ -616,7 +632,9 @@ def _create_module_tests() -> bool:
 
     import os
     import tempfile
+    from unittest.mock import patch
 
+    import config as config_module
     from test_framework import TestSuite
 
     suite = TestSuite("LinkedIn Networking Tests", "linkedin_networking.py")
@@ -722,11 +740,22 @@ def _create_module_tests() -> bool:
     def test_get_linkedin_networking_singleton():
         """Test get_linkedin_networking returns singleton."""
         global _networking
-        _networking = None  # Reset for test
-        n1 = get_linkedin_networking()
-        n2 = get_linkedin_networking()
-        assert n1 is n2
-        _networking = None  # Cleanup
+        with tempfile.TemporaryDirectory() as tmpdir:
+            isolated = os.path.join(tmpdir, "singleton.db")
+            _networking = None  # Reset for test
+            try:
+                # The singleton constructs with no db_path, so point the configured
+                # database at a temporary file. Config.DB_NAME cannot be patched
+                # directly: the metaclass routes assignment onto the settings
+                # object, so the name never lands in Config.__dict__ and patch
+                # cannot undo it. Patch that backing setting instead.
+                with patch.object(config_module._settings, "db_name", isolated):
+                    n1 = get_linkedin_networking()
+                    n2 = get_linkedin_networking()
+                    assert n1 is n2
+                    assert n1.db_path == isolated, n1.db_path
+            finally:
+                _networking = None  # Cleanup
 
     suite.run_test(
         test_name="ConnectionStatus enum",

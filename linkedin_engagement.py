@@ -12,6 +12,7 @@ Features:
 TASK 2.3: Comment Engagement Automation
 """
 
+import contextlib
 import json
 import logging
 import random
@@ -21,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 from config import Config
 from content_validation import COMMENT_SPAM_PATTERNS as SPAM_PATTERNS
@@ -33,6 +34,21 @@ logger = logging.getLogger(__name__)
 DAILY_COMMENT_LIMIT = Config.LINKEDIN_DAILY_COMMENT_LIMIT
 HOURLY_COMMENT_LIMIT = Config.LINKEDIN_HOURLY_COMMENT_LIMIT
 MIN_COMMENT_INTERVAL_SECONDS = Config.LINKEDIN_MIN_COMMENT_INTERVAL
+
+
+@contextlib.contextmanager
+def _connection(db_path: str) -> Iterator[sqlite3.Connection]:
+    """Yield a connection that commits on success and always closes.
+
+    ``with sqlite3.connect(...) as conn`` commits but does not close, which keeps
+    a file handle open on Windows and blocks the database file from being removed.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 # =============================================================================
@@ -181,7 +197,7 @@ class LinkedInEngagement:
             target_keywords: Keywords to monitor for relevant posts
             target_companies: Companies to prioritize for engagement
         """
-        self.db_path = db_path or str(Path(__file__).parent / "content_engine.db")
+        self.db_path = db_path or str(Path(__file__).parent / Config.DB_NAME)
 
         # Target monitoring configuration
         discipline_field = Config.DISCIPLINE.replace(
@@ -229,7 +245,7 @@ class LinkedInEngagement:
 
     def _ensure_tables(self) -> None:
         """Ensure required database tables exist."""
-        with sqlite3.connect(self.db_path) as conn:
+        with _connection(self.db_path) as conn:
             # Target posts table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS engagement_targets (
@@ -277,7 +293,7 @@ class LinkedInEngagement:
             Post ID if added successfully
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with _connection(self.db_path) as conn:
                 cursor = conn.execute(
                     """
                     INSERT OR IGNORE INTO engagement_targets
@@ -472,7 +488,7 @@ class LinkedInEngagement:
         )
 
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with _connection(self.db_path) as conn:
                 cursor = conn.execute(
                     """
                     INSERT INTO engagement_actions
@@ -541,7 +557,7 @@ class LinkedInEngagement:
         action.executed_time = datetime.now()
 
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with _connection(self.db_path) as conn:
                 conn.execute(
                     """
                     UPDATE engagement_actions
@@ -567,7 +583,7 @@ class LinkedInEngagement:
         try:
             now = datetime.now().isoformat()
 
-            with sqlite3.connect(self.db_path) as conn:
+            with _connection(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
                     """
@@ -602,7 +618,7 @@ class LinkedInEngagement:
         stats = EngagementStats()
 
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with _connection(self.db_path) as conn:
                 # Total comments
                 cursor = conn.execute("""
                     SELECT COUNT(*) FROM engagement_actions
@@ -701,7 +717,9 @@ def _create_module_tests() -> bool:
 
     import os
     import tempfile
+    from unittest.mock import patch
 
+    import config as config_module
     from test_framework import TestSuite
 
     suite = TestSuite("LinkedIn Engagement Tests", "linkedin_engagement.py")
@@ -817,11 +835,22 @@ def _create_module_tests() -> bool:
     def test_get_linkedin_engagement_singleton():
         """Test get_linkedin_engagement returns singleton."""
         global _engagement
-        _engagement = None  # Reset for test
-        e1 = get_linkedin_engagement()
-        e2 = get_linkedin_engagement()
-        assert e1 is e2
-        _engagement = None  # Cleanup
+        with tempfile.TemporaryDirectory() as tmpdir:
+            isolated = os.path.join(tmpdir, "singleton.db")
+            _engagement = None  # Reset for test
+            try:
+                # The singleton constructs with no db_path, so point the configured
+                # database at a temporary file. Config.DB_NAME cannot be patched
+                # directly: the metaclass routes assignment onto the settings
+                # object, so the name never lands in Config.__dict__ and patch
+                # cannot undo it. Patch that backing setting instead.
+                with patch.object(config_module._settings, "db_name", isolated):
+                    e1 = get_linkedin_engagement()
+                    e2 = get_linkedin_engagement()
+                    assert e1 is e2
+                    assert e1.db_path == isolated, e1.db_path
+            finally:
+                _engagement = None  # Cleanup
 
     suite.run_test(
         test_name="EngagementType enum",
