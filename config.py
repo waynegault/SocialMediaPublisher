@@ -8,11 +8,12 @@ This module provides Pydantic-based configuration validation with:
 """
 
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 from pydantic import Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -896,6 +897,20 @@ def _test_pydantic_huggingface_token_fallback() -> None:
     assert isinstance(token, str)
 
 
+def _test_env_example_parses_completely() -> None:
+    """Every binding in .env.example must parse, so a copied .env drops no setting."""
+    example = Path(__file__).resolve().parent / ".env.example"
+    raw_names = {
+        match.group(1)
+        for line in example.read_text(encoding="utf-8").splitlines()
+        if (match := re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=", line))
+    }
+    unparseable = sorted(raw_names - set(dotenv_values(example)))
+    assert not unparseable, (
+        f".env.example has bindings python-dotenv cannot parse: {unparseable}"
+    )
+
+
 def _create_module_tests() -> bool:
     """Comprehensive test suite for config.py"""
     from test_framework import TestSuite, suppress_logging
@@ -1001,6 +1016,14 @@ def _create_module_tests() -> bool:
             functions_tested="SettingsModel.effective_huggingface_token",
             method_description="Access the property and verify it returns a string",
             expected_outcome="Token is a string (possibly empty)",
+        )
+        suite.run_test(
+            test_name="Env example parses completely",
+            test_func=_test_env_example_parses_completely,
+            test_summary="Verify every .env.example binding parses",
+            functions_tested=".env.example",
+            method_description="Compare raw KEY= names with the names dotenv parses",
+            expected_outcome="No binding is silently dropped when the file is copied",
         )
 
     return suite.finish_suite()

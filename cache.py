@@ -1020,12 +1020,17 @@ def _create_module_tests() -> bool:
     def test_sqlite_cache_ttl():
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_cache.db"
-            cache = SQLiteCache(db_path=db_path, default_ttl=0.1)
+            # The pre-expiry read needs a comfortable TTL: with a 0.1 s default, a
+            # loaded machine can expire the entry between set() and get(), which
+            # fails an assertion that has nothing to do with expiry. Expiry is
+            # exercised on its own key below, where sleeping longer cannot hurt.
+            cache = SQLiteCache(db_path=db_path, default_ttl=30.0)
             try:
                 cache.set("key1", "value1")
                 assert cache.get("key1") == "value1"
+                cache.set("key2", "value2", ttl=0.1)
                 time.sleep(0.15)
-                assert cache.get("key1") is None
+                assert cache.get("key2") is None
             finally:
                 cache.close()
 

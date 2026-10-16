@@ -3,6 +3,8 @@
 import contextlib
 import io
 import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -66,6 +68,22 @@ def _create_module_tests() -> bool:
         run_linter.assert_not_called()
         assert "repository virtual environment" in output.getvalue()
 
+    def test_unit_suite_does_not_read_stdin():
+        """A unit-mode test that waits on stdin would wedge the CI step for hours."""
+        script = (
+            "import linkedin_profile_lookup as m; "
+            "raise SystemExit(0 if m.run_comprehensive_tests() else 1)"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=Path(__file__).resolve().parent,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        assert completed.returncode == 0, completed.stdout[-2000:]
+
     for name, test in [
         ("Missing test entrypoint fails", test_missing_entrypoint_fails),
         ("Missing Ruff fails lint gate", test_missing_ruff_fails_lint_gate),
@@ -80,6 +98,13 @@ def _create_module_tests() -> bool:
             test_summary=f"Verify {name.lower()}",
             expected_outcome="The quality gate reports failure",
         )
+
+    suite.run_test(
+        test_name="Unit suite does not read stdin",
+        test_func=test_unit_suite_does_not_read_stdin,
+        test_summary="Verify the unit suite completes with stdin closed",
+        expected_outcome="The suite finishes without waiting for input",
+    )
 
     return suite.finish_suite()
 
