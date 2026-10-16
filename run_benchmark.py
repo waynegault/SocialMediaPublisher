@@ -258,7 +258,7 @@ def main() -> None:
         output_dir.mkdir(exist_ok=True)
 
     total_combos = len(providers) * len(args.sizes) * args.runs
-    print(f"\n🚀 Image Provider Benchmark")
+    print("\n🚀 Image Provider Benchmark")
     print(f"   Providers : {', '.join(providers)}")
     print(f"   Sizes     : {', '.join(args.sizes)}")
     print(f"   Runs/combo: {args.runs}")
@@ -293,7 +293,7 @@ def main() -> None:
                     print(f" {result.time_seconds:.1f}s", end="", flush=True)
                 else:
                     summary.failures += 1
-                    print(f" ✗", end="", flush=True)
+                    print(" ✗", end="", flush=True)
 
                 # Brief pause between runs to be polite to APIs
                 if i < args.runs - 1:
@@ -303,7 +303,7 @@ def main() -> None:
             if summary.successes > 0:
                 print(f"  → median {summary.median_time:.1f}s")
             else:
-                print(f"  → all failed")
+                print("  → all failed")
 
             summaries.append(summary)
 
