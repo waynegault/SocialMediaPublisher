@@ -19,14 +19,21 @@ jobs:
           python-version: "3.13"
           cache: pip
 
+      - name: Create the repository environment
+        # run_tests.py refuses to run under any interpreter but the checkout's
+        # own .venv ("Run tests with the repository virtual environment: ..."),
+        # the same rule the developer's machine follows. The gate builds that
+        # environment rather than weakening the rule.
+        run: python -m venv .venv
+
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
       - name: Tests
         # The repository's own runner in its declared default mode: unit tests
         # with the live browser and API tests switched off, which is what this
-        # file's usage note documents. Its --integration mode needs real
+        # runner's usage note documents. Its --integration mode needs real
         # authenticated sessions, so it stays a local concern.
-        run: python run_tests.py
+        run: .\.venv\Scripts\python.exe run_tests.py
