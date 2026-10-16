@@ -1,0 +1,32 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    # The application drives browsers and Windows tooling, so the gate runs on
+    # Windows to match the checkout's own environment.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Tests
+        # The repository's own runner in its declared default mode: unit tests
+        # with the live browser and API tests switched off, which is what this
+        # file's usage note documents. Its --integration mode needs real
+        # authenticated sessions, so it stays a local concern.
+        run: python run_tests.py
