@@ -24,6 +24,8 @@ debt has been found or eliminated.
 | P2 | The LLM benchmark coverage is incomplete: the only benchmark entry point is for image providers, while text LLM work is performed by multiple pipeline components. | `run_benchmark.py:1-4`; text/LLM pipeline modules include `searcher.py`, `verifier.py`, and `company_mention_enricher.py`. | Open |
 | P2 | Source verification and domain extraction caught every exception and returned normal-looking low-credibility/empty-domain results, conflating invalid input with programming/runtime failures. The constructor also used truthiness defaults, silently discarding explicit zero thresholds, and retained an unused duplicate domain matcher. | `source_verifier.py`; `domain_credibility.py:160-176`. | Fixed: invalid source types and URL parse failures propagate, malformed story source lists fail explicitly, configuration imports no longer fall back, zero thresholds are preserved, and the unused matcher is removed. Added regression tests and corrected contradictory expected-outcome text. |
 | P2 | Repository tests are embedded in production modules and share a custom runner, rather than using independently discoverable tests. This makes test discovery and outcomes dependent on the bespoke orchestration path. | `run_tests.py` module registry; `_create_module_tests`/`run_comprehensive_tests` repeated across modules. | Investigate |
+| P1 | `LOCAL_LLM_SEARCH_PROMPT` in `.env.example` cannot be parsed by python-dotenv: its multi-line quoted value contains a JSON example whose double quotes were not escaped, so the first of them terminated the value and the whole binding was dropped. A copied `.env` silently lost a prompt that `searcher.py` formats, and this file is now what CI copies. | `dotenv.main.parse_stream` reports an error at line 227 with `key=None`; raw `KEY=` names 147 vs 146 parsed, `LOCAL_LLM_SEARCH_PROMPT` missing; the value is used at `searcher.py:874` and `searcher.py:1677`. | Fixed: the inner quotes are escaped, `.env.example` now parses 147/147 with no warning, and `config.py` gained a regression test asserting every binding parses. |
+| P2 | A cache test was racy by construction. `test_sqlite_cache_ttl` gave its pre-expiry read only a 0.1 s default TTL, so on a loaded machine the entry could expire between `set()` and the first `get()`, failing an assertion that has nothing to do with expiry. A latent source of random CI failures. | `cache.py` `test_sqlite_cache_ttl`; failed in a 427 s full-suite run whose only failure was `Cache` / "SQLite cache TTL", and again in isolation while the machine was busy; passed three times when idle, and the TTL logic itself was verified correct. | Fixed: the pre-expiry read uses a 30 s default TTL, and expiry is exercised on a second key with `ttl=0.1` — deterministic on an idle or a loaded machine. |
 
 ## Still to investigate
 
@@ -50,9 +52,13 @@ the findings table with evidence, disposition, and targeted test results.
   image/output directories, credentials, network services, and other persistent
   state. Replace real resources with temporary directories/databases and mocked
   external services; prove isolation on both success and failure paths.
-- [ ] Identify and gate tests that contact real APIs, browsers, or LLM providers.
-  Unit-test provider selection and fallback using fakes; require explicit
-  integration mode for live calls and make skipped tests visible in the summary.
+- [x] Identify and gate tests that contact real APIs, browsers, or LLM providers.
+  The `linkedin_profile_lookup` live test now runs only in `--integration` mode,
+  and a regression test pins that (`8e3397a`). Two parts of this item remain
+  open: `run_tests.py` either registers a test or not, so a skipped live test is
+  not named in the final summary (making it visible needs a skip concept in
+  `TestSuite`), and provider selection/fallback is not yet unit-tested with
+  fakes.
 - [ ] Make a clean `.venv` setup reproducible, then run the complete unit suite
   and lint/type checks through `.venv` only. Record missing optional dependencies
   separately instead of treating a partial run as full-suite validation.
@@ -118,4 +124,110 @@ The initial baseline was not valid: imports failed because declared packages
 were absent from the newly created repository `.venv`. Installing the complete
 requirements pulled in a large optional ML stack and was stopped after more
 than 16 minutes; lightweight dependencies were installed for targeted tests.
-Every validation command uses `.venv\\Scripts\\python.exe`.
+
+### Review and verification on `main` (2026-10-15)
+
+The eight fixing commits were landed on `main` by fast-forward (`main` was the
+merge base; the branch was 0 behind, 8 ahead). Verification used the complete
+repository interpreter
+`C:\Users\wayne\GitHub\Python\Projects\SocialMediaPublisher\.venv\Scripts\python.exe`
+(Python 3.13.15) rather than the audit worktree `.venv` (Python 3.14.7), which is
+missing `google-genai`.
+
+- Targeted re-run of every module the branch changed — `test_run_tests`,
+  `test_story_update_api`, `config`, `domain_credibility`, `source_verifier`,
+  `find_indirect_people`, `analytics_engine` — passed **7/7**.
+- The **full** `run_tests.py` run does **not** complete on `main`. It wedges in
+  `linkedin_profile_lookup` (test 12, "Lookup person URN - no driver") on a real
+  browser launch followed by a blocking `After logging in, press Enter to
+  continue...` prompt; the run was terminated after 600 s. In the audit worktree
+  this module failed to import (`google.genai` absent), so its tests never ran
+  and the hang was invisible — a complete local `.venv` is what reproduces it.
+- The persisted databases were byte-identical before and after the interrupted
+  run (`sha256` compared for `content_engine.db`, `cache.db`, `socialmedia.db`,
+  `social_publisher.db`), so no user data was touched by the partial run.
+- `run_benchmark.py` carried three `F541` violations. Because the linter now
+  gates the exit code they became build-breaking at merge time, so they were
+  auto-fixed (`ruff check run_benchmark.py --fix`); `ruff check .` now reports
+  `All checks passed!`.
+
+#### The lint gate is environment-dependent (new finding)
+
+The gate's outcome depends on the installed Ruff version: `requirements.txt`
+pins only `ruff>=0.5.0`, and the repository carries **no** Ruff configuration
+(no `pyproject.toml`, `ruff.toml` or `.ruff.toml` in the tree or any parent, and
+no user-level config under `%APPDATA%\ruff`).
+
+- Ruff **0.15.0** (the interpreter above): 3 errors, all `F541`.
+- Ruff **0.17.0** (the audit worktree): **1104 errors**, even under `--isolated`
+  — `BLE001` (364), `UP045` (343), `UP017` (59), `I001` (59), `S110` (57), and
+  roughly 30 further codes.
+
+Either interpreter pointed at the other tree reproduces the same 3-vs-1104
+result, so this is a change in Ruff's default rule selection, not a property of
+the code. Until the rule set is pinned or declared explicitly, "the linter
+passes" only holds for whichever Ruff happens to be installed.
+
+**Resolved (2026-10-16).** `requirements.txt` pins `ruff==0.17.1` and
+`ruff.toml` declares the rule set explicitly, so the gate no longer depends on
+which Ruff is installed. The declared set is the pyflakes/structural core the
+repository already enforced, plus import sorting and a few families with no
+behavioural risk; the families left out (`E501`, `UP`, `BLE`, `S`, `B`, `SIM`,
+`N`, `PYI`, `SLF`) are named in the file with the reason, so the choice is
+explicit rather than accidental. Applying it surfaced 117 findings, all
+mechanical — import sorting, a redundant `pass` after a docstring, trailing
+whitespace on blank lines, a missing newline at EOF, parenthesised implicit
+concatenation, and single-call `startswith`/`endswith`. `ruff check .` now
+reports `All checks passed!` under 0.17.1 and under 0.15.0 alike.
+
+### Review and verification on `main` (2026-10-16) — the CI gate
+
+`main` had no CI. Adding one exposed three defects in sequence, all now fixed;
+run 38932536707 is `success` in 3m30s with `Modules Passed: 57/57` in 109.5 s.
+
+- The suite could not finish at all — the P0 above. The live test is now opt-in
+  and the job is bounded at 30 minutes (`8e3397a`).
+- The lint step failed with 1104 findings, because `ruff>=0.5.0` resolved to a
+  Ruff whose default rule set is far wider than this repository's. Now pinned and
+  declared (`3880bcc`).
+- Three prompt-building tests failed on an empty prompt because the runner had no
+  `.env`; the job now copies `.env.example` (`f168a42`). The three `F541`
+  findings in `run_benchmark.py`, build-breaking once lint gates the exit code,
+  were landed (`a28d207`).
+- A fourth defect appeared only under load: `test_sqlite_cache_ttl` was racy by
+  construction — a 0.1 s TTL on its pre-expiry read — which would have reddened
+  the gate at random. Fixed by giving that read a comfortable TTL and exercising
+  expiry on a second key.
+
+Two regression tests were added so these failures cannot return silently: the
+unit suite must complete with stdin closed (`test_run_tests.py` — it would have
+caught the wedge in seconds rather than a 29-minute job), and every `KEY=`
+binding in `.env.example` must parse (`config.py`).
+
+### Test-safety audit (P0) — evidence gathered
+
+Auditing tests for writes to persistent state (the first P0 item) produced three
+confirmed, reproducible problems, all observed through the repository `.venv`
+interpreter on `main`.
+
+| Priority | Finding | Evidence | Status |
+| --- | --- | --- | --- |
+| P0 | A unit-test module launches a real browser and blocks on stdin. The `linkedin_profile_lookup` suite reaches a real LinkedIn login prompt and waits for input, so `run_tests.py` cannot finish; there is no timeout and no gate on the integration flag. | Full `run_tests.py` run on a complete `.venv` wedged for >600 s at test 12 of `linkedin_profile_lookup`. | Fixed (2026-10-16): the live test is registered only when `SKIP_LIVE_API_TESTS=false` (`--integration`); the CI job is bounded at 30 minutes; and a regression test runs the unit suite with stdin closed, which fails in seconds instead of wedging. |
+| P1 | Tests create a real application database file. The `linkedin_engagement`/`linkedin_networking` suites construct their classes with no `db_path`, and both default to `Path(__file__).parent / "content_engine.db"`; a worktree run left a fresh 24 KB `content_engine.db` holding `connection_requests`, `engagement_actions` and `engagement_targets`. This is the defect class already fixed in `analytics_engine.py`, and the hard-coded path also ignores `Config.DB_NAME`. | `linkedin_engagement.py:184`, `linkedin_networking.py:187`; file created during a `run_tests.py` run. | Open |
+| P2 | Importing one module performs ~3 minutes of I/O. `import ner_engine` measured **170.0 s** (`browser` 3.1 s, `undetected_chromedriver` 0.0 s); it pulls spaCy and sentence-transformers/torch at import time and dominates every suite run. | `python -c "import time; t=time.time(); import ner_engine; print(time.time()-t)"`. | Open |
+
+Observed but not yet reproduced: the loaded `.env` reports empty LLM prompt
+templates (`SEARCH_PROMPT`, `SEARCH_INSTRUCTION_PROMPT`, `VERIFICATION_PROMPT`,
+`IMAGE_REFINEMENT_PROMPT`, `IMAGE_FALLBACK_PROMPT`, `IMAGE_STYLE`), so the text
+and image LLM paths appear misconfigured in this checkout.
+
+**Explained and fixed (2026-10-16).** The templates were not empty, they were
+absent: the local `.env` defines none of the seven prompt keys, so configuration
+reported them empty and the three prompt-building tests failed. A clean checkout
+has no `.env` at all (it is ignored), which is exactly why CI failed the same
+way. Fixed on both sides — the CI job copies the committed `.env.example`
+(`f168a42`), and the local `.env` was reconciled for prompt templates: 21 of the
+29 `*_PROMPT`/`*_STYLE` keys in the example were absent, and all are now
+present (every one round-tripped exactly, and no credential key was touched).
+Reconciling them surfaced the `.env.example` parsing defect recorded in the
+confirmed findings above.
