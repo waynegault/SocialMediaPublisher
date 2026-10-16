@@ -32,6 +32,12 @@ jobs:
           .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
       - name: Tests
+        env:
+          # The runner prints an emoji in its banner, and a hosted Windows console
+          # defaults to cp1252, so print() raised UnicodeEncodeError and killed the
+          # step. Handling UTF-8 is the environment's job, not the runner's: its
+          # output stays exactly as written.
+          PYTHONUTF8: "1"
         # The repository's own runner in its declared default mode: unit tests
         # with the live browser and API tests switched off, which is what this
         # runner's usage note documents. Its --integration mode needs real
