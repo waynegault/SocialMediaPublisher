@@ -76,7 +76,6 @@ class BrowserBackend(ABC):
         Returns:
             Page source HTML or None if search failed
         """
-        pass
 
     @abstractmethod
     def navigate(self, url: str, timeout: int = 30) -> Optional[str]:
@@ -90,22 +89,18 @@ class BrowserBackend(ABC):
         Returns:
             Page source HTML or None if navigation failed
         """
-        pass
 
     @abstractmethod
     def get_current_url(self) -> Optional[str]:
         """Get the current page URL."""
-        pass
 
     @abstractmethod
     def close(self) -> None:
         """Close the browser session."""
-        pass
 
     @abstractmethod
     def is_alive(self) -> bool:
         """Check if the browser session is still alive."""
-        pass
 
 
 # ============================================================================

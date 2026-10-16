@@ -16,10 +16,10 @@ Requirements:
     - ~10GB disk space for the model
 """
 
-import sys
+import argparse
 import os
 import subprocess
-import argparse
+import sys
 
 
 def check_python_version():

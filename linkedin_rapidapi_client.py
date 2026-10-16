@@ -23,10 +23,10 @@ HOW TO GET RAPIDAPI KEY:
 API Documentation: https://rapidapi.com/freshdata-freshdata-default/api/fresh-linkedin-profile-data
 """
 
-import logging
 import hashlib
+import logging
 import time
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
 
 import requests
 

@@ -16,7 +16,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote_plus
 
-
 # =============================================================================
 # Data Classes
 # =============================================================================
@@ -453,13 +452,13 @@ def extract_publication_date(content: str) -> datetime | None:
         # ISO format: 2024-01-15
         r"(\d{4}-\d{2}-\d{2})",
         # US format: January 15, 2024 or Jan 15, 2024
-        r"((?:January|February|March|April|May|June|July|August|"
+        (r"((?:January|February|March|April|May|June|July|August|"
         r"September|October|November|December|"
         r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
-        r"\s+\d{1,2},?\s+\d{4})",
+        r"\s+\d{1,2},?\s+\d{4})"),
         # European format: 15 January 2024
-        r"(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|"
-        r"September|October|November|December)\s+\d{4})",
+        (r"(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|"
+        r"September|October|November|December)\s+\d{4})"),
     ]
 
     for pattern in patterns:

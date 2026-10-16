@@ -18,12 +18,12 @@ import socket
 import subprocess
 import threading
 import webbrowser
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, jsonify, render_template_string, request
 from flask_cors import CORS  # type: ignore
 
 from database import Database

@@ -6,20 +6,20 @@ import re
 import time
 from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
-from ddgs import DDGS
-import requests
 
+import requests
+from ddgs import DDGS
 from google import genai  # type: ignore
 from openai import OpenAI
 
+from api_client import api_client
 from config import Config
 from database import Database, Story
 from domain_credibility import get_domain_tier
 from entity_constants import clean_org_name, is_invalid_org_name
 from error_handling import with_enhanced_recovery
-from api_client import api_client
 from text_utils import calculate_similarity
-from url_utils import validate_url, extract_path_keywords
+from url_utils import extract_path_keywords, validate_url
 
 logger = logging.getLogger(__name__)
 
@@ -687,7 +687,7 @@ class StorySearcher:
             logger.debug(f"Searching for source URL for: {title[:50]}...")
 
             # Use Gemini with grounding to find the article
-            from google.genai.types import Tool, GoogleSearch
+            from google.genai.types import GoogleSearch, Tool
 
             lookup_prompt = Config.SOURCE_URL_LOOKUP_PROMPT.format(
                 title=title,
@@ -1056,7 +1056,7 @@ class StorySearcher:
             return True
 
         # If it starts with code block markers but no title key, it's code not JSON
-        if stripped.startswith("#") or stripped.startswith("```"):
+        if stripped.startswith(("#", "```")):
             if not has_title_key:
                 return False
 

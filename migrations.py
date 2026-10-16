@@ -103,7 +103,6 @@ class Migration(ABC):
         Args:
             cursor: Database cursor for executing SQL
         """
-        pass
 
     @abstractmethod
     def down(self, cursor: sqlite3.Cursor) -> None:
@@ -112,7 +111,6 @@ class Migration(ABC):
         Args:
             cursor: Database cursor for executing SQL
         """
-        pass
 
     def get_checksum(self) -> str:
         """Get a checksum for this migration's code."""
@@ -192,7 +190,7 @@ class Migration002AddPostMetadata(Migration):
 
     def down(self, cursor: sqlite3.Cursor) -> None:
         """Remove metadata columns."""
-        pass  # Keep columns on rollback for data safety
+        # Keep columns on rollback for data safety
 
 
 class Migration003AddContentHash(Migration):
@@ -242,7 +240,7 @@ class Migration004AddSourceCredibility(Migration):
 
     def down(self, cursor: sqlite3.Cursor) -> None:
         """Remove credibility columns."""
-        pass  # Keep for data safety
+        # Keep for data safety
 
 
 class Migration005AddSchedulingInfo(Migration):
@@ -270,7 +268,7 @@ class Migration005AddSchedulingInfo(Migration):
 
     def down(self, cursor: sqlite3.Cursor) -> None:
         """Remove scheduling columns."""
-        pass  # Keep for data safety
+        # Keep for data safety
 
 
 class Migration006AddHumanApproval(Migration):
@@ -294,7 +292,7 @@ class Migration006AddHumanApproval(Migration):
 
     def down(self, cursor: sqlite3.Cursor) -> None:
         """Remove human approval columns."""
-        pass  # Keep for data safety
+        # Keep for data safety
 
 
 # =============================================================================

@@ -699,9 +699,10 @@ def _create_module_tests() -> bool:
     if TYPE_CHECKING:
         from test_framework import TestSuite
 
-    from test_framework import TestSuite
-    import tempfile
     import os
+    import tempfile
+
+    from test_framework import TestSuite
 
     suite = TestSuite("LinkedIn Engagement Tests", "linkedin_engagement.py")
     suite.start_suite()

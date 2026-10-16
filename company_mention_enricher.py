@@ -12,30 +12,30 @@ BATCH PROCESSING OPTIMIZATION (2026-02-15):
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
+import requests
 from google import genai  # type: ignore
 from openai import OpenAI
-import requests
-import re
 
 from api_client import api_client
-from text_utils import calculate_similarity, strip_markdown_code_block
 from config import Config
 from database import Database, Story
-from url_utils import validate_linkedin_url
 
 # Import shared entity validation constants from entity_constants (no optional dependencies)
 from entity_constants import (
-    VALID_SINGLE_WORD_ORGS,
     INVALID_PERSON_NAMES,
+    VALID_SINGLE_WORD_ORGS,
+    clean_org_name,
     is_invalid_org_name,
     is_invalid_person_name,
-    clean_org_name,
 )
+from text_utils import calculate_similarity, strip_markdown_code_block
+from url_utils import validate_linkedin_url
 
 # Batch processor integration (optional)
 try:
@@ -1595,40 +1595,40 @@ class CompanyMentionEnricher:
         self, stories: list[Story]
     ) -> list[tuple[list[dict], set[str]]]:
         """GPU-batched NER extraction for multiple stories.
-        
+
         Uses batch-processor skill when available for 1.5-2x speedup.
         Falls back to single processing if batch processor unavailable.
-        
+
         Args:
             stories: List of stories to process
-            
+
         Returns:
             List of (people, organizations) tuples, one per story
         """
         if not stories:
             return []
-        
+
         # Try batched processing first
         if BATCH_NER_AVAILABLE:
             try:
                 logger.info(f"Using batched NER for {len(stories)} stories")
                 batched_ner = BatchedNER()
-                
+
                 # Prepare texts for batch processing
                 texts = []
                 for story in stories:
                     text = f"{story.title or ''}\n\n{story.summary or ''}"
                     texts.append(text)
-                
+
                 # Process in batches
                 entities_list = batched_ner.extract_batch(texts)
-                
+
                 # Convert to expected format
                 results = []
                 for entities in entities_list:
                     people: list[dict] = []
                     organizations: set[str] = set()
-                    
+
                     for entity in entities:
                         if entity.label in ("PERSON",):
                             metadata = getattr(entity, "metadata", {}) or {}
@@ -1649,16 +1649,16 @@ class CompanyMentionEnricher:
                             org_name = getattr(entity, "normalized", "") or getattr(entity, "text", "")
                             if org_name:
                                 organizations.add(org_name)
-                    
+
                     normalized_people = self._normalize_people_records(people, source="direct")
                     results.append((normalized_people, organizations))
-                
+
                 logger.info(f"Batched NER complete: {len(results)} stories processed")
                 return results
-                
+
             except Exception as e:
                 logger.warning(f"Batched NER failed, falling back to single: {e}")
-        
+
         # Fallback to single processing
         logger.info(f"Using single NER for {len(stories)} stories")
         results = []

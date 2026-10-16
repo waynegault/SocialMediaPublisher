@@ -11,10 +11,11 @@ from datetime import datetime
 from pathlib import Path
 
 import torch
+from tqdm import tqdm
+
 from generate_image import get_optimal_settings
 from image_providers import get_image_provider
 from image_providers.z_image import ZImageProvider
-from tqdm import tqdm
 
 
 @dataclass
@@ -122,7 +123,7 @@ def main():
     for size, steps, guidance in progress_bar:
         width, height = size
         progress_bar.set_postfix_str(f"{width}x{height}, {steps} steps, {guidance} CFG")
-        
+
         result = run_test(args.prompt, width, height, steps, guidance)
         results.append(result)
 

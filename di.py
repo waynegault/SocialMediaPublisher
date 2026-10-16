@@ -131,7 +131,6 @@ class ServiceProtocol(ABC, Generic[T]):
     @abstractmethod
     def get_instance(self) -> T:
         """Get the service instance."""
-        pass
 
 
 # =============================================================================
@@ -430,7 +429,6 @@ class ServiceProvider(ABC):
         Args:
             container: The service container
         """
-        pass
 
     def boot(self, container: ServiceContainer) -> None:
         """Boot the provider after all services are registered.
@@ -438,7 +436,6 @@ class ServiceProvider(ABC):
         Args:
             container: The service container
         """
-        pass
 
 
 class CoreServicesProvider(ServiceProvider):
@@ -496,7 +493,6 @@ class CacheServicesProvider(ServiceProvider):
 
     def boot(self, container: ServiceContainer) -> None:
         """Boot caching services - no initialization needed."""
-        pass
 
 
 class DatabaseServicesProvider(ServiceProvider):
@@ -510,8 +506,8 @@ class DatabaseServicesProvider(ServiceProvider):
         """Register database services."""
 
         def create_database(db_path: str | None = None) -> "Database":
-            from database import Database
             from config import Config
+            from database import Database
 
             path = db_path or Config.DB_NAME
             return Database(path)
@@ -527,8 +523,8 @@ class DatabaseServicesProvider(ServiceProvider):
 
 # Type hints for lazy imports
 if TYPE_CHECKING:
-    from cache import LinkedInCache
     from api_client import RateLimitedAPIClient
+    from cache import LinkedInCache
     from database import Database
 
 

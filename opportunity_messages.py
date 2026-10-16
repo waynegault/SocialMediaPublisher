@@ -6,6 +6,7 @@ professional, and engaging manner suitable for any professional discipline.
 """
 
 import random
+
 from config import Config
 
 

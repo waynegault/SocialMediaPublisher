@@ -8,12 +8,12 @@ on URL structure, validation, and normalization.
 import logging
 import re
 from typing import Optional
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 
-from config import Config
 from api_client import api_client
+from config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +151,7 @@ def resolve_relative_url(relative_url: str, base_url: str) -> str:
         return "https:" + relative_url
 
     # Already absolute
-    if relative_url.startswith("http://") or relative_url.startswith("https://"):
+    if relative_url.startswith(("http://", "https://")):
         return relative_url
 
     # Use urljoin for proper resolution

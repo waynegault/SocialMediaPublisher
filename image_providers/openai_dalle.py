@@ -7,8 +7,8 @@ Environment variables:
     OPENAI_API_KEY: OpenAI API key
 """
 
-import os
 import logging
+import os
 from typing import Optional
 
 import requests

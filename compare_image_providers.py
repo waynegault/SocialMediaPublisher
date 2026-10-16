@@ -11,15 +11,16 @@ Usage:
 Generated images are saved to ./generated_images/provider_comparison/ by default.
 """
 
+import argparse
+import logging
 import sys
 import time
-import logging
-import argparse
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
+
 from image_providers import get_image_provider, list_available_providers
 from image_providers.base import ImageProviderError
 

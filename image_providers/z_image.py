@@ -24,12 +24,12 @@ Model info:
     - High diversity in composition, faces, and lighting
 """
 
+import io
 import logging
 import os
-import io
 from typing import Optional
 
-from .base import ImageProvider, ImageProviderError, GenerationResult
+from .base import GenerationResult, ImageProvider, ImageProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -152,8 +152,8 @@ class ZImageProvider(ImageProvider):
 
         try:
             # Try optimum-quanto for INT8 quantization
-            from optimum.quanto import quantize, freeze  # type: ignore[import-unresolved]
             import torch
+            from optimum.quanto import freeze, quantize  # type: ignore[import-unresolved]
 
             logger.info("Applying INT8 quantization (experimental)...")
 

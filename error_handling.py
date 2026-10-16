@@ -32,7 +32,6 @@ R = TypeVar("R")
 class FrameworkError(Exception):
     """Base exception class for all framework errors."""
 
-    pass
 
 
 class RetryableError(FrameworkError):
@@ -155,7 +154,6 @@ class CircuitBreakerConfig:
 class CircuitBreakerOpenError(Exception):
     """Exception raised when circuit breaker is open."""
 
-    pass
 
 
 class CircuitBreaker:

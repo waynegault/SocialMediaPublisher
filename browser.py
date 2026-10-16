@@ -27,8 +27,8 @@ UC_AVAILABLE = False
 try:
     import undetected_chromedriver as _uc
     from selenium.webdriver.common.by import By as _By
-    from selenium.webdriver.support.ui import WebDriverWait as _WebDriverWait
     from selenium.webdriver.support import expected_conditions as _EC
+    from selenium.webdriver.support.ui import WebDriverWait as _WebDriverWait
 
     uc = _uc
     By = _By

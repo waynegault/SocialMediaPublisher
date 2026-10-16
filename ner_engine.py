@@ -30,17 +30,17 @@ logger = logging.getLogger(__name__)
 
 # Type hints for optional dependencies
 if TYPE_CHECKING:
-    import spacy
-    from spacy.tokens import Doc, Span
-    from spacy.language import Language
-    from sentence_transformers import SentenceTransformer
     import numpy as np
+    import spacy
+    from sentence_transformers import SentenceTransformer
+    from spacy.language import Language
+    from spacy.tokens import Doc, Span
 
 # Optional spaCy import - gracefully degrade if not installed
 try:
     import spacy
-    from spacy.tokens import Doc, Span
     from spacy.language import Language
+    from spacy.tokens import Doc, Span
 
     SPACY_AVAILABLE = True
 except ImportError:
@@ -55,8 +55,8 @@ except ImportError:
 
 # Optional sentence-transformers for semantic similarity
 try:
-    from sentence_transformers import SentenceTransformer
     import numpy as np
+    from sentence_transformers import SentenceTransformer
 
     TRANSFORMERS_AVAILABLE = True
 except ImportError:

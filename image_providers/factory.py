@@ -17,8 +17,8 @@ Environment variables:
 Provider-specific variables - see individual provider modules.
 """
 
-import os
 import logging
+import os
 import subprocess
 import sys
 from typing import Optional

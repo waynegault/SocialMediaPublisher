@@ -26,7 +26,7 @@ import json
 import smtplib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -183,17 +183,14 @@ class NotificationChannel(ABC):
     @abstractmethod
     def name(self) -> str:
         """Get the channel name."""
-        pass
 
     @abstractmethod
     def send(self, notification: Notification) -> NotificationResult:
         """Send a notification through this channel."""
-        pass
 
     @abstractmethod
     def test_connection(self) -> bool:
         """Test if the channel is properly configured."""
-        pass
 
 
 class SlackChannel(NotificationChannel):

@@ -9,9 +9,10 @@ Optional environment variable:
 
 import logging
 import time
+
 import requests
 
-from .base import ImageProvider, ImageProviderError, GenerationResult
+from .base import GenerationResult, ImageProvider, ImageProviderError
 
 logger = logging.getLogger(__name__)
 

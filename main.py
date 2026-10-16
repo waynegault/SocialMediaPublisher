@@ -4,27 +4,27 @@ Social Media Publisher - Main Entry Point
 Automated news story discovery, image generation, and LinkedIn publishing.
 """
 
-import time
-import logging
 import argparse
-import requests
+import logging
 import os
 import subprocess
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import requests
 from google import genai  # type: ignore
 from openai import OpenAI
 
 from api_client import api_client
+from company_mention_enricher import CompanyMentionEnricher, get_validation_cache
 from config import Config
 from database import Database
-from searcher import StorySearcher
 from image_generator import ImageGenerator
-from verifier import ContentVerifier
-from company_mention_enricher import CompanyMentionEnricher, get_validation_cache
-from scheduler import Scheduler
 from linkedin_publisher import LinkedInPublisher
+from scheduler import Scheduler
+from searcher import StorySearcher
+from verifier import ContentVerifier
 
 # Setup logging
 logging.basicConfig(
@@ -2828,8 +2828,8 @@ def _offer_connection_requests(engine: ContentEngine) -> None:
 
             # Delay between requests
             if i < len(selected_people) - 1:
-                import time
                 import random
+                import time
 
                 delay = 5.0 + random.random() * 3
                 time.sleep(delay)
@@ -3018,8 +3018,8 @@ def _extract_topic_from_story(title: str, summary: str) -> str:
 
 def _process_connection_queue(engine: ContentEngine) -> None:
     """Process queued connection requests via browser automation."""
-    import time
     import random
+    import time
 
     print("\n--- Process Connection Queue ---")
 
@@ -4402,25 +4402,27 @@ def _analyze_trends(engine: ContentEngine) -> None:
 
 def _analyze_intent_classification(engine: ContentEngine) -> None:
     """Analyze story intent and career alignment.
-    
+
     Uses batched processing when batch-processor skill is available
     for GPU-accelerated classification (1.5-2x speedup).
     """
     print("\n--- Intent Classification Analysis ---")
-    
+
     # Try to use batched classifier first
     BatchedIntent = None
     try:
         import sys
         sys.path.insert(0, r"C:\Users\wayne\.openclaw\workspace")
-        from skills.batch_processor.integrate_smp import BatchedIntent  # type: ignore[import-not-found]
+        from skills.batch_processor.integrate_smp import (
+            BatchedIntent,  # type: ignore[import-not-found]
+        )
         BATCH_AVAILABLE = True
     except ImportError:
         BATCH_AVAILABLE = False
 
     try:
         from intent_classifier import IntentClassifier
-        
+
         # Use batched classifier if available
         if BATCH_AVAILABLE and BatchedIntent is not None:
             print("Using GPU-batched intent classification...")
@@ -4462,7 +4464,7 @@ def _analyze_intent_classification(engine: ContentEngine) -> None:
             "negative": "Could harm professional image",
             "irrelevant": "Not career-relevant",
         }
-        
+
         # Process stories (batched if available)
         if BATCH_AVAILABLE and hasattr(classifier, 'classify_batch'):
             # Prepare texts for batch processing
@@ -4471,23 +4473,23 @@ def _analyze_intent_classification(engine: ContentEngine) -> None:
                 title = row["title"] or ""
                 summary = row["summary"] or ""
                 texts.append(f"{title}\n\n{summary}")
-            
+
             # Batch classify
             batch_results = classifier.classify_batch(texts)  # type: ignore[attr-defined]
-            
+
             for row, result in zip(rows, batch_results):
                 results.append((row, result))
-                
+
                 # Track primary intent only (avoids inflated counts)
                 primary = result.primary_intent.value if hasattr(result.primary_intent, 'value') else str(result.primary_intent)
                 intent_counts[primary] = intent_counts.get(primary, 0) + 1
-                
+
                 # Display
                 title = row["title"] or ""
                 title_short = title[:50] if title else "Untitled"
                 career_pct = result.career_alignment_score
                 career_icon = "✓" if career_pct >= 0.7 else "✗"
-                
+
                 print(f"[{row['id']}] {title_short}")
                 print(
                     f"    {career_icon} Primary intent: {primary.replace('_', ' ')} | Career alignment: {career_pct:.0%}"
@@ -4543,7 +4545,7 @@ def _analyze_intent_classification(engine: ContentEngine) -> None:
                 desc = intent_descriptions.get(intent_name, "")
                 if desc:
                     print(f"  • {intent_name.replace('_', ' ')}: {desc}")
-        
+
         if BATCH_AVAILABLE:
             print("\n⚡ GPU-batched processing enabled")
 
@@ -4562,8 +4564,8 @@ def _test_notifications(engine: ContentEngine) -> None:
 
     try:
         from notifications import (
-            Notification,
             ConsoleChannel,
+            Notification,
             SlackChannel,
         )
 
@@ -5455,8 +5457,8 @@ def _save_env_values(updates: dict[str, str]) -> None:
 def _configure_image_provider() -> None:
     """Configure image generation provider and model."""
     from image_providers.factory import (
-        PROVIDERS,
         DEFAULT_MODELS,
+        PROVIDERS,
         list_available_providers,
     )
 

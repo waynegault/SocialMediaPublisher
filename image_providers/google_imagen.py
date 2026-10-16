@@ -9,8 +9,8 @@ Environment variables:
     IMAGE_ASPECT_RATIO: Aspect ratio (default: 1:1)
 """
 
-import os
 import logging
+import os
 from typing import Optional
 
 from .base import ImageProvider, ImageProviderError

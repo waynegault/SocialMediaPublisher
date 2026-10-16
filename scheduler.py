@@ -1,7 +1,7 @@
 """Publication scheduling for stories."""
 
-import random
 import logging
+import random
 from datetime import datetime, timedelta
 
 from config import Config

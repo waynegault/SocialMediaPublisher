@@ -182,8 +182,8 @@ def meets_common_name_threshold(
     if signals_present < required:
         return (
             False,
-            f"Common name '{first_name} {last_name}' needs {required} signals, "
-            f"only has {signals_present}",
+            (f"Common name '{first_name} {last_name}' needs {required} signals, "
+            f"only has {signals_present}"),
         )
     return True, ""
 
@@ -1290,8 +1290,9 @@ class ProfileMatcher:
             return False, {}
 
         try:
-            from selenium.webdriver.common.by import By
             import time
+
+            from selenium.webdriver.common.by import By
 
             # Navigate to profile page
             logger.info(f"Verifying profile: {candidate.linkedin_url}")

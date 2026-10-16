@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
+from api_client import api_client
 from config import Config
 from database import Database, Story
-from api_client import api_client
 from url_utils import extract_linkedin_public_id
 
 logger = logging.getLogger(__name__)
@@ -214,7 +214,7 @@ class LinkedInPublisher:
         if response.status_code == 401:
             return True
         text = response.text.strip()
-        if text.startswith("<!") or text.startswith("<html"):
+        if text.startswith(("<!", "<html")):
             return True
         return False
 

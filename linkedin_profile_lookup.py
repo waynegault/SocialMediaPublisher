@@ -18,26 +18,25 @@ from typing import TYPE_CHECKING, Any, List, Optional, Tuple, TypedDict
 import requests
 from google import genai  # type: ignore
 
-from text_utils import (
-    build_context_keywords,
-    is_common_name,
-    normalize_name,
-    get_name_variants,
-    names_could_match,
-)
-
 from api_client import api_client
-from cache import get_linkedin_cache, LinkedInCache
+from cache import LinkedInCache, get_linkedin_cache
 from config import Config
-from error_handling import with_enhanced_recovery
-from organization_aliases import ORG_ALIASES as _ORG_ALIASES
-from rate_limiter import AdaptiveRateLimiter
 
 # Import shared constants from entity_constants (no optional dependencies)
 from entity_constants import (
     INVALID_ORG_NAMES,
     INVALID_ORG_PATTERNS,
     is_invalid_person_name,
+)
+from error_handling import with_enhanced_recovery
+from organization_aliases import ORG_ALIASES as _ORG_ALIASES
+from rate_limiter import AdaptiveRateLimiter
+from text_utils import (
+    build_context_keywords,
+    get_name_variants,
+    is_common_name,
+    names_could_match,
+    normalize_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -2119,8 +2118,8 @@ class LinkedInCompanyLookup:
         """
         try:
             from selenium.webdriver.common.by import By
-            from selenium.webdriver.support.ui import WebDriverWait
             from selenium.webdriver.support import expected_conditions as EC
+            from selenium.webdriver.support.ui import WebDriverWait
 
             # Wait for page to be ready
             WebDriverWait(driver, 15).until(
@@ -2327,8 +2326,8 @@ class LinkedInCompanyLookup:
             )
 
         from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
         from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.support.ui import WebDriverWait
 
         driver = self._get_uc_driver()
         if not driver:
@@ -3097,7 +3096,7 @@ class LinkedInCompanyLookup:
             "plc",
         ]
         has_suffix = any(
-            company_lower.endswith(f" {s}") or company_lower.endswith(f", {s}")
+            company_lower.endswith((f" {s}", f", {s}"))
             for s in existing_suffixes
         )
 
@@ -5860,8 +5859,8 @@ MATCHING TIPS FOR RESEARCHER PROFILE:
             - connection_result_message: Description of connection result
         """
         from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
         from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.support.ui import WebDriverWait
 
         if not profile_url or "linkedin.com/in/" not in profile_url:
             return (None, False, "Invalid profile URL")

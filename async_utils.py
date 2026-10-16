@@ -19,7 +19,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Optional, TypeVar, ParamSpec
+from typing import Any, Awaitable, Callable, Optional, ParamSpec, TypeVar
 
 logger = logging.getLogger(__name__)
 

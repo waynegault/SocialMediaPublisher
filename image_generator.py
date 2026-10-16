@@ -7,19 +7,19 @@ TASK 6.3: Multi-Model Image Generation
 - Auto-fallback on model failures
 """
 
-import os
-import time
 import logging
+import os
 import random
 import re
+import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Optional
 
 from google import genai
-from openai import OpenAI
 from huggingface_hub import InferenceClient  # type: ignore
+from openai import OpenAI
 from PIL import Image, ImageDraw, ImageFont
 
 from api_client import api_client
@@ -28,7 +28,6 @@ from database import Database, Story
 from image_quality import ImageQualityAssessor, QualityScore
 from rate_limiter import AdaptiveRateLimiter
 from url_utils import resolve_relative_url
-
 
 # =============================================================================
 # Multi-Model Configuration (TASK 6.3)
@@ -721,8 +720,9 @@ class ImageGenerator:
 
         Returns (file_path, prompt_used) if successful, or None.
         """
-        import requests
         from urllib.parse import quote
+
+        import requests
 
         logger.info("🎨 Trying Pollinations.ai (free, unlimited)...")
 
@@ -868,7 +868,7 @@ class ImageGenerator:
         from io import BytesIO
 
         try:
-            from image_providers import get_image_provider, ImageProviderError
+            from image_providers import ImageProviderError, get_image_provider
         except ImportError as e:
             logger.warning(f"⚠️ Extensible provider not available: {e}")
             return None
@@ -1729,8 +1729,9 @@ def _create_module_tests() -> bool:
     import os
     import tempfile
 
-    from test_framework import TestSuite
     from PIL import Image
+
+    from test_framework import TestSuite
 
     suite = TestSuite("Image Generator Tests", "image_generator.py")
     suite.start_suite()

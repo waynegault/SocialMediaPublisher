@@ -4,10 +4,10 @@ All providers must implement this interface, ensuring consistent behaviour
 across different backends (Cloudflare, AI Horde, Pollinations, etc.).
 """
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
-import logging
 
 logger = logging.getLogger(__name__)
 

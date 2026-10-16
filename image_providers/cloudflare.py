@@ -9,6 +9,7 @@ Required environment variables:
 """
 
 import logging
+
 import requests
 
 from .base import ImageProvider, ImageProviderError

@@ -27,12 +27,12 @@ import requests
 
 from api_client import api_client
 from config import Config
-from models import LinkedInProfile, LinkedInOrganization
+from models import LinkedInOrganization, LinkedInProfile
 from profile_matcher import score_person_candidate
 
 # Import unified cache (optional - falls back to dict if not available)
 try:
-    from cache import get_linkedin_cache, LinkedInCache
+    from cache import LinkedInCache, get_linkedin_cache
 
     _UNIFIED_CACHE_AVAILABLE = True
 except ImportError:
@@ -1398,11 +1398,11 @@ def _try_read_cookie_db() -> tuple[str, str]:
     Only works when the browser is *not* running (file not locked).
     Handles AES-256-GCM decryption via Windows DPAPI.
     """
-    import os
-    import json
     import base64
-    import sqlite3
+    import json
+    import os
     import shutil
+    import sqlite3
     import tempfile
 
     try:

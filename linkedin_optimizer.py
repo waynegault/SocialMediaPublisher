@@ -288,7 +288,7 @@ class LinkedInOptimizer:
                 return True
 
         # Check if first line ends with a question or exclamation
-        if first_line.endswith("?") or first_line.endswith("!"):
+        if first_line.endswith(("?", "!")):
             return True
 
         # Check if first line is short and punchy (under 100 chars)

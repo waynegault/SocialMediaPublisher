@@ -36,8 +36,8 @@ from typing import (
     Generic,
     TypeVar,
 )
-from urllib.request import Request, urlopen
 from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 if TYPE_CHECKING:
     pass

@@ -1,7 +1,7 @@
 """Content verification using AI to ensure quality and appropriateness."""
 
-import logging
 import base64
+import logging
 from pathlib import Path
 from typing import Callable
 
@@ -9,9 +9,9 @@ from google import genai  # type: ignore
 from openai import OpenAI
 from PIL import Image
 
+from api_client import api_client
 from config import Config
 from database import Database, Story
-from api_client import api_client
 from originality_checker import OriginalityChecker
 from source_verifier import SourceVerifier
 
@@ -403,8 +403,8 @@ class ContentVerifier:
         elif linkedin_count < min_profiles_for_engagement:
             return (
                 False,
-                f"Insufficient LinkedIn coverage: only {linkedin_count} profiles found "
-                f"(need at least {min_profiles_for_engagement} for meaningful engagement)",
+                (f"Insufficient LinkedIn coverage: only {linkedin_count} profiles found "
+                f"(need at least {min_profiles_for_engagement} for meaningful engagement)"),
             )
         else:
             return (True, f"{linkedin_count}/{relevant_count} LinkedIn profiles found")
@@ -419,7 +419,7 @@ class ContentVerifier:
         if text.startswith("```"):
             parts = text.split("```")
             text = parts[1] if len(parts) > 1 else text
-            if text.startswith("json") or text.startswith("text"):
+            if text.startswith(("json", "text")):
                 text = text.split("\n", 1)[-1]
             text = text.strip()
 

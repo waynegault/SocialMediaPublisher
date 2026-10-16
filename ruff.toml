@@ -1,0 +1,38 @@
+# Repository-wide Ruff configuration.
+#
+# requirements.txt pins an exact Ruff version because Ruff's default rule
+# selection changes between releases: left unpinned, this gate's verdict depended
+# on whichever Ruff happened to be installed (the drift recorded in
+# architecture-audit-findings.md: 3 errors under Ruff 0.15.0, 1101 under 0.17.1).
+# The rule set is declared explicitly here for the same reason.
+
+target-version = "py313"
+line-length = 100
+
+[lint]
+# Adopted: the pyflakes and structural core the repository already enforced,
+# plus import sorting and a few families with no behavioural risk.
+select = [
+    "E4", "E7", "E9", # structural errors
+    "F",              # pyflakes
+    "W",              # warnings, e.g. invalid escape sequences
+    "I",              # import sorting
+    "C4",             # comprehension hygiene
+    "PIE",            # flake8-pie
+    "ISC",            # implicit string concatenation
+    "RSE",            # raise-with-argument
+    "TID",            # tidy imports
+    "FLY",            # flynt
+    "FA",             # future annotations
+    "EXE",            # executable
+]
+
+# Deliberately not adopted yet. Each is a bounded piece of work on its own, and
+# listing them here keeps the choice explicit rather than accidental:
+#
+#   E501   355 long lines, mostly long strings and log messages
+#   UP     ~460, mostly Optional[X] -> X | None churn; UP017 additionally turns a
+#          naive datetime into an aware one
+#   BLE    364 broad `except Exception` handlers, each needing review at the site
+#   S      57 + 12 silent pass/continue inside handlers
+#   B, SIM, N, PYI, SLF  bugbear, style, naming, stub-only and private-access

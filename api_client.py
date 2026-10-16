@@ -23,9 +23,10 @@ Usage:
 
 import logging
 import re
+from typing import Any, Optional
+
 import requests
 from requests.adapters import HTTPAdapter
-from typing import Any, Optional
 from urllib3.util.retry import Retry
 
 from rate_limiter import AdaptiveRateLimiter

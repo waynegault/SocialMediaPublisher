@@ -725,8 +725,9 @@ def _create_module_tests() -> bool:
     if TYPE_CHECKING:
         from test_framework import TestSuite
 
-    from test_framework import TestSuite
     import tempfile
+
+    from test_framework import TestSuite
 
     suite = TestSuite("RAG Engine Tests", "rag_engine.py")
     suite.start_suite()

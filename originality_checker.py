@@ -421,9 +421,9 @@ def _create_module_tests() -> bool:
             summary="From my perspective as an engineer, the breakthrough in catalyst design "
             "represents a significant step forward for industrial hydrogen production.",
             source_texts=[
-                "Scientists at MIT have developed a new catalyst that improves "
+                ("Scientists at MIT have developed a new catalyst that improves "
                 "hydrogen production efficiency by 40%. The research was published "
-                "in Nature Chemistry."
+                "in Nature Chemistry.")
             ],
         )
         assert result.is_original, f"Should be original: {result.recommendation}"

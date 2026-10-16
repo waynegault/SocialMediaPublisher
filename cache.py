@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
-
 # Type variable for generic cached functions
 T = TypeVar("T")
 
@@ -911,7 +910,7 @@ class LinkedInCache:
     def clear_person_cache(self) -> None:
         """Clear all person cache entries (requires cache iteration)."""
         # Note: This is expensive - only use for debugging/testing
-        pass  # TwoLevelCache doesn't support prefix deletion yet
+        # TwoLevelCache doesn't support prefix deletion yet
 
     def get_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
@@ -957,8 +956,9 @@ def get_linkedin_cache() -> LinkedInCache:
 
 def _create_module_tests() -> bool:
     """Create unit tests for cache module."""
-    from test_framework import TestSuite
     import tempfile
+
+    from test_framework import TestSuite
 
     suite = TestSuite("Cache Tests", "cache.py")
     suite.start_suite()
