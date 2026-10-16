@@ -84,6 +84,18 @@ def _create_module_tests() -> bool:
         )
         assert completed.returncode == 0, completed.stdout[-2000:]
 
+    def test_skipped_tests_are_reported_and_pass():
+        """A gated live test must be named in the summary, not silently absent."""
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            suite = TestSuite("Skip probe", "probe.py")
+            suite.start_suite()
+            suite.skip("live probe", "needs --integration")
+            result = suite.finish_suite()
+        assert result is True
+        assert "live probe" in output.getvalue()
+        assert "needs --integration" in output.getvalue()
+
     for name, test in [
         ("Missing test entrypoint fails", test_missing_entrypoint_fails),
         ("Missing Ruff fails lint gate", test_missing_ruff_fails_lint_gate),
@@ -104,6 +116,13 @@ def _create_module_tests() -> bool:
         test_func=test_unit_suite_does_not_read_stdin,
         test_summary="Verify the unit suite completes with stdin closed",
         expected_outcome="The suite finishes without waiting for input",
+    )
+
+    suite.run_test(
+        test_name="Skipped tests are reported",
+        test_func=test_skipped_tests_are_reported_and_pass,
+        test_summary="Verify a skipped test is named and does not fail the suite",
+        expected_outcome="The suite passes and the skip is reported with its reason",
     )
 
     return suite.finish_suite()

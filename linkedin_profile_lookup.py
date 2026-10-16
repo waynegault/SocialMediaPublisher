@@ -6775,6 +6775,13 @@ def _create_module_tests() -> bool:
             method_description="Calls LinkedInCompanyLookup and verifies the result",
             expected_outcome="Function returns None as expected",
         )
+    else:
+        # Named rather than omitted, so the summary shows what the unit gate
+        # does not cover.
+        suite.skip(
+            "Lookup person URN - no driver",
+            "live test: opens a browser and waits for a LinkedIn login; run --integration",
+        )
     suite.run_test(
         test_name="URN cache operations",
         test_func=test_urn_cache,

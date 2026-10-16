@@ -149,8 +149,10 @@ class TestSuite:
         self.tests_run = 0
         self.tests_passed = 0
         self.tests_failed = 0
+        self.tests_skipped = 0
         self.warnings = 0
         self.test_results: list[dict[str, Any]] = []
+        self.skipped_tests: list[dict[str, str]] = []
 
     def start_suite(self) -> None:
         """Initialize the test suite with formatted header."""
@@ -258,6 +260,17 @@ class TestSuite:
         self.warnings += 1
         print(f"  {Colors.YELLOW}{Icons.WARNING} WARNING: {message}{Colors.RESET}")
 
+    def skip(self, test_name: str, reason: str) -> None:
+        """Record a test that is deliberately not run, and why.
+
+        A skipped test is not a failure, but it must be named. A test that is
+        simply never registered hides what the gate does not cover, which is how
+        a live browser test went unnoticed while the suite "passed".
+        """
+        self.tests_skipped += 1
+        self.skipped_tests.append({"name": test_name, "reason": reason})
+        print(f"{Colors.YELLOW}{Icons.WARNING} Skipped: {test_name} - {reason}{Colors.RESET}")
+
     def finish_suite(self) -> bool:
         """Complete the test suite and print summary. Returns True if all passed."""
         total_duration = time.time() - self.start_time if self.start_time else 0
@@ -279,6 +292,16 @@ class TestSuite:
         print(f"{status_color}{status_icon} Status: {status_text}{Colors.RESET}")
         print(f"{Colors.GREEN}{Icons.PASS} Passed: {self.tests_passed}{Colors.RESET}")
         print(f"{Colors.RED}{Icons.FAIL} Failed: {self.tests_failed}{Colors.RESET}")
+        if self.tests_skipped > 0:
+            print(
+                f"{Colors.YELLOW}{Icons.WARNING} "
+                f"Skipped: {self.tests_skipped}{Colors.RESET}"
+            )
+            for skipped in self.skipped_tests:
+                print(
+                    f"  {Colors.YELLOW}• {skipped['name']} - "
+                    f"{skipped['reason']}{Colors.RESET}"
+                )
         if self.warnings > 0:
             print(f"{Colors.YELLOW}{Icons.WARNING} Warnings: {self.warnings}{Colors.RESET}")
 
