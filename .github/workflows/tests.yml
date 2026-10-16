@@ -34,6 +34,12 @@ jobs:
           .\.venv\Scripts\python.exe -m pip install --upgrade pip
           .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
+      - name: Provide the application's environment file
+        # .env is gitignored, so a clean checkout has none and the prompt
+        # templates config.py needs are empty; the committed example carries the
+        # real templates, which is what a new developer copies too.
+        run: Copy-Item .env.example .env
+
       - name: Tests
         env:
           # The runner prints an emoji in its banner, and a hosted Windows console
