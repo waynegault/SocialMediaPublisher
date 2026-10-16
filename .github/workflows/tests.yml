@@ -11,6 +11,9 @@ jobs:
     # The application drives browsers and Windows tooling, so the gate runs on
     # Windows to match the checkout's own environment.
     runs-on: windows-latest
+    # A wedged module is a failure, not a hang: without this the step would sit
+    # until GitHub's 360-minute default. See the P0 in architecture-audit-findings.md.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 

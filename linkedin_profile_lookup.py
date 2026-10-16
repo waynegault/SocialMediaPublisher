@@ -6764,13 +6764,18 @@ def _create_module_tests() -> bool:
         method_description="Calls LinkedInCompanyLookup and verifies the result",
         expected_outcome="Function returns None as expected",
     )
-    suite.run_test(
-        test_name="Lookup person URN - no driver",
-        test_func=test_lookup_person_urn_no_driver,
-        test_summary="Tests Lookup person URN with no driver scenario",
-        method_description="Calls LinkedInCompanyLookup and verifies the result",
-        expected_outcome="Function returns None as expected",
-    )
+    # This test calls lookup_person_urn with a real profile URL, which launches a
+    # browser and, with no credentials, blocks on input() prompting the operator to
+    # log in. That is live work, so the test runs only in --integration mode, which
+    # run_tests.py signals by setting SKIP_LIVE_API_TESTS=false.
+    if os.environ.get("SKIP_LIVE_API_TESTS", "true").strip().lower() == "false":
+        suite.run_test(
+            test_name="Lookup person URN - no driver",
+            test_func=test_lookup_person_urn_no_driver,
+            test_summary="Tests Lookup person URN with no driver scenario",
+            method_description="Calls LinkedInCompanyLookup and verifies the result",
+            expected_outcome="Function returns None as expected",
+        )
     suite.run_test(
         test_name="URN cache operations",
         test_func=test_urn_cache,
