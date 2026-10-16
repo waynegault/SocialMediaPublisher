@@ -54,11 +54,11 @@ the findings table with evidence, disposition, and targeted test results.
   external services; prove isolation on both success and failure paths.
 - [x] Identify and gate tests that contact real APIs, browsers, or LLM providers.
   The `linkedin_profile_lookup` live test now runs only in `--integration` mode,
-  and a regression test pins that (`8e3397a`). Two parts of this item remain
-  open: `run_tests.py` either registers a test or not, so a skipped live test is
-  not named in the final summary (making it visible needs a skip concept in
-  `TestSuite`), and provider selection/fallback is not yet unit-tested with
-  fakes.
+  and a regression test pins that (`8e3397a`). The gated test is now *named* in the
+  summary rather than omitted: `TestSuite.skip()` records it with its reason,
+  `finish_suite()` lists skipped tests separately from failures, and the runner
+  reports them per module. One part of this item remains open: provider
+  selection/fallback is not yet unit-tested with fakes.
 - [ ] Make a clean `.venv` setup reproducible, then run the complete unit suite
   and lint/type checks through `.venv` only. Record missing optional dependencies
   separately instead of treating a partial run as full-suite validation.
